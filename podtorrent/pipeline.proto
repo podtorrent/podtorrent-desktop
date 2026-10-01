@@ -1,0 +1,52 @@
+syntax = "proto3";
+package podtorrent;
+
+service Pipeline {
+  // One long-lived stream per host; requests are processed in order.
+  rpc Forward(stream ForwardRequest) returns (stream ForwardResponse);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatReply);
+  rpc Info(InfoRequest) returns (NodeInfo);
+  // Fetch + load a layer range; streams progress until phase == ready|error.
+  rpc Load(LoadRequest) returns (stream LoadProgress);
+}
+
+message ForwardRequest {
+  string request_id = 1;
+  bytes hidden = 2;          // fp16, shape [1, seq, hidden]
+  repeated int32 shape = 3;
+  bool release = 4;          // drop this request's KV cache (hidden empty)
+}
+
+message ForwardResponse {
+  string request_id = 1;
+  bytes hidden = 2;
+  repeated int32 shape = 3;
+  float compute_ms = 4;      // local compute time on the worker
+}
+
+message HeartbeatRequest { int64 sent_ns = 1; }
+message HeartbeatReply { int64 sent_ns = 1; }
+message InfoRequest {}
+message NodeInfo {
+  string name = 1;
+  int32 layer_lo = 2;
+  int32 layer_hi = 3;
+  float mem_active_gb = 4;
+  float mem_peak_gb = 5;
+  float mem_total_gb = 6;
+  bool loaded = 7;
+  int64 requests_served = 8;
+}
+
+message LoadRequest {
+  string repo = 1;
+  int32 layer_lo = 2;
+  int32 layer_hi = 3;
+}
+
+message LoadProgress {
+  string phase = 1;          // downloading | loading | ready | error
+  int64 done = 2;
+  int64 total = 3;
+  string message = 4;
+}

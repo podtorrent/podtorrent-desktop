@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PodTorrent</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f7f9;--card:#fff;--fg:#16181d;--mut:#6b7280;--line:#e5e7eb;--acc:#2563eb;
+--host:#2563eb;--worker:#0d9488;--net:#d97706;--ok:#16a34a;--bad:#dc2626;--warn:#d97706}
+@media(prefers-color-scheme:dark){:root{--bg:#0e0f12;--card:#17191e;--fg:#e8eaee;--mut:#9aa1ad;--line:#2a2d35;--acc:#60a5fa;
+--host:#60a5fa;--worker:#2dd4bf;--net:#fbbf24;--ok:#4ade80;--bad:#f87171;--warn:#fbbf24}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,-apple-system,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--card);flex-wrap:wrap}
+h1{font-size:16px;margin:0}
+.pill{padding:2px 9px;border-radius:99px;font-size:12px;background:var(--line);color:var(--mut)}
+.pill.ok{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.pill.bad{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
+.pill.warn{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+main{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:12px;padding:12px 16px;max-width:1300px;margin:auto}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+h2{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--mut);margin:0 0 10px;font-weight:600}
+#chatcol{display:flex;flex-direction:column;gap:12px}
+#log{height:340px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+.msg{padding:8px 11px;border-radius:8px;white-space:pre-wrap;word-break:break-word}
+.msg.u{background:color-mix(in srgb,var(--acc) 14%,transparent);align-self:flex-end;max-width:85%}
+.msg.a{background:var(--bg);border:1px solid var(--line)}
+form{display:flex;gap:8px;margin-top:10px}
+input,button{font:inherit;color:inherit}
+input[type=text]{flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg)}
+input[type=number]{width:64px;padding:6px 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg)}
+button{padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--acc);color:#fff;cursor:pointer;border-color:transparent}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
+.node{padding:8px 0;border-bottom:1px solid var(--line)}.node:last-child{border:0}
+.row{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+.mut{color:var(--mut);font-size:12px}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:5px 0}
+.bar>i{display:block;height:100%;background:var(--acc);transition:width .3s}
+.layers{display:flex;height:26px;border-radius:6px;overflow:hidden;border:1px solid var(--line);margin:6px 0 10px}
+.layers>div{display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;white-space:nowrap}
+.tt{display:flex;align-items:flex-end;gap:2px;height:90px}
+.tt>div{flex:1;display:flex;flex-direction:column-reverse;min-width:3px}
+.tt i{display:block}
+.legend{display:flex;gap:12px;margin-top:8px;font-size:12px;color:var(--mut)}
+.legend b{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
+.stat b{display:block;font-size:17px;font-variant-numeric:tabular-nums}
+#err{color:var(--bad);margin:6px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>PodTorrent</h1>
+  <span id="conn" class="pill">connecting…</span>
+  <span id="model" class="pill">model not loaded</span>
+  <span style="flex:1"></span>
+  <label class="mut">split at layer <input id="split" type="number" min="1" max="47" value="24"></label>
+  <button id="start" disabled>Load model</button>
+</header>
+<div id="err"></div>
+<main>
+  <div id="chatcol">
+    <section>
+      <h2>Chat</h2>
+      <div id="log"></div>
+      <form id="f"><input id="q" type="text" placeholder="Ask something…" autocomplete="off" disabled><button id="send" disabled>Send</button></form>
+    </section>
+    <section>
+      <h2>Per-token timing <span class="mut" style="text-transform:none">(last 60 tokens, ms)</span></h2>
+      <div class="tt" id="tt"></div>
+      <div class="legend" id="legend"></div>
+      <div class="stats">
+        <div class="stat"><b id="s-tps">–</b><span class="mut">tokens/s</span></div>
+        <div class="stat"><b id="s-ttft">–</b><span class="mut">first token</span></div>
+        <div class="stat"><b id="s-bytes">–</b><span class="mut">bytes/token</span></div>
+        <div class="stat"><b id="s-net">–</b><span class="mut">network ms</span></div>
+      </div>
+    </section>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <section><h2>Nodes</h2><div id="nodes"><span class="mut">Waiting for nodes…</span></div></section>
+    <section><h2>Layer map</h2><div id="map"><span class="mut">Assigned when the model loads.</span></div></section>
+  </div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const nodes={},mem={},load={},stat={};let layerMap=null,timings=[];
+const COLORS={};const PAL=['--host','--worker','--net'];
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const gb=x=>x==null?'–':x.toFixed(2)+' GiB';
+const mb=b=>(b/2**20).toFixed(0)+' MiB';
+
+function render(){
+  // nodes
+  const names=Object.keys(nodes);
+  $('nodes').innerHTML=names.length?names.map(n=>{
+    const nd=nodes[n],s=stat[n]||{},m=mem[n],l=load[n];
+    const st=nd.role==='host'?'host':(s.status||'joined');
+    const cls=st==='ready'||st==='host'?'ok':st==='lost'?'bad':st==='loading'?'warn':'';
+    const hb=s.heartbeat_ts?((Date.now()/1000-s.heartbeat_ts)).toFixed(0)+'s ago':'–';
+    const memPct=m?Math.min(100,100*m.active_gb/m.total_gb):0;
+    const lp=l&&l.total?100*l.done/l.total:(l&&l.phase==='ready'?100:0);
+    return `<div class="node"><div class="row"><b>${n}</b><span class="pill ${cls}">${st}</span></div>
+    <div class="mut">${nd.address} · RTT ${s.rtt_ms!=null?s.rtt_ms.toFixed(1)+' ms':'–'} · heartbeat ${hb}</div>
+    ${m?`<div class="row mut"><span>memory ${gb(m.active_gb)} / ${m.total_gb.toFixed(0)} GiB</span><span>peak ${gb(m.peak_gb)}</span></div>
+    <div class="bar"><i style="width:${memPct}%;background:var(--worker)"></i></div>`:''}
+    ${l?`<div class="row mut"><span>${l.phase}${l.total?` · ${mb(l.done)} / ${mb(l.total)}`:''}</span><span>${lp.toFixed(0)}%</span></div>
+    <div class="bar"><i style="width:${lp}%"></i></div>`:''}
+    ${nd.status_url?`<a class="mut" href="${nd.status_url}" target="_blank">worker status page</a>`:''}</div>`}).join(''):'<span class="mut">Waiting for nodes…</span>';
+  // layer map
+  if(layerMap){
+    const cs=['var(--host)','var(--worker)','var(--net)'];
+    $('map').innerHTML=`<div class="layers">${layerMap.assignments.map((a,i)=>`<div style="flex:${a.hi-a.lo};background:${cs[i%3]}">${a.node}: ${a.lo}–${a.hi-1}</div>`).join('')}</div>`+
+    layerMap.assignments.map(a=>{const m=mem[a.node];return `<div class="row"><span><b>${a.node}</b> <span class="mut">layers ${a.lo}–${a.hi-1} (${a.hi-a.lo})${a.roles.length?' · '+a.roles.join(', '):''}</span></span><span class="mut">${m?gb(m.active_gb):'–'}</span></div>
+    <div class="bar"><i style="width:${m?Math.min(100,100*m.active_gb/m.total_gb):0}%;background:var(--worker)"></i></div>`}).join('');
+  }
+  const hasWorker=names.some(n=>nodes[n].role==='worker'&&(stat[n]||{}).status!=='lost');
+  $('start').disabled=!hasWorker||$('model').dataset.ready==='1';
+}
+
+function drawTimings(){
+  const t=timings.slice(-60),max=Math.max(1,...t.map(x=>x.stages.reduce((a,s)=>a+s.compute_ms,0)));
+  const keys=t.length?t[0].stages.map(s=>s.node):[];
+  const col=(i)=>css(PAL[i%3]);
+  $('tt').innerHTML=t.map(x=>`<div title="token ${x.index}: ${x.stages.map(s=>s.node+' '+s.compute_ms.toFixed(1)+'ms').join(' · ')}">${x.stages.map((s,i)=>`<i style="height:${Math.max(1,90*s.compute_ms/max)}px;background:${col(i)}"></i>`).join('')}</div>`).join('');
+  $('legend').innerHTML=keys.map((k,i)=>`<span><b style="background:${col(i)}"></b>${k}${k==='network'?'':' compute'}</span>`).join('');
+  if(t.length){const l=t[t.length-1];$('s-bytes').textContent=l.bytes;const n=l.stages.find(s=>s.node==='network');$('s-net').textContent=n?n.compute_ms.toFixed(1):'–'}
+}
+
+let ws,cur=null;
+function connect(){
+  ws=new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen=()=>{$('conn').textContent='live';$('conn').className='pill ok'};
+  ws.onclose=()=>{$('conn').textContent='disconnected';$('conn').className='pill bad';setTimeout(connect,1500)};
+  ws.onmessage=e=>{const m=JSON.parse(e.data);
+    switch(m.type){
+      case 'node_joined':nodes[m.node]=m;break;
+      case 'node_status':stat[m.node]=m;break;
+      case 'memory':mem[m.node]=m;break;
+      case 'load_progress':load[m.node]=m;break;
+      case 'layer_map':layerMap=m;break;
+      case 'ready':$('model').textContent='model ready';$('model').className='pill ok';$('model').dataset.ready='1';
+        $('q').disabled=$('send').disabled=false;$('err').textContent='';break;
+      case 'token':if(!cur){cur=document.createElement('div');cur.className='msg a';$('log').append(cur)}
+        cur.textContent+=m.text;$('log').scrollTop=1e9;break;
+      case 'token_timing':timings.push(m);drawTimings();break;
+      case 'done':cur=null;$('send').disabled=false;
+        $('s-tps').textContent=m.tok_s.toFixed(1);$('s-ttft').textContent=(m.ttft_ms/1000).toFixed(2)+' s';break;
+      case 'error':$('err').textContent=m.message;$('send').disabled=false;break;
+    }
+    render();};
+}
+$('start').onclick=async()=>{
+  $('err').textContent='';$('model').textContent='loading…';$('model').className='pill warn';
+  const r=await fetch('/api/start',{method:'POST',body:JSON.stringify({split:+$('split').value})});
+  if(!r.ok){$('err').textContent=(await r.json()).error;$('model').textContent='model not loaded';$('model').className='pill'}};
+$('f').onsubmit=async ev=>{ev.preventDefault();const p=$('q').value.trim();if(!p)return;
+  $('q').value='';const u=document.createElement('div');u.className='msg u';u.textContent=p;$('log').append(u);cur=null;timings=[];
+  $('send').disabled=true;
+  const r=await fetch('/api/chat',{method:'POST',body:JSON.stringify({prompt:p})});
+  if(!r.ok){$('err').textContent=(await r.json()).error;$('send').disabled=false}};
+setInterval(render,1000);connect();render();
+</script>
+</body>
+</html>
