@@ -25,30 +25,29 @@
     <input id="addr" placeholder="192.168.1.10:8000">
     <button id="join">Join Host</button>
   </div>
-  <details><summary style="color:#999;font-size:12px">Project folder</summary><input id="dir"></details>
   <div id="msg"></div>
 </main>
 <script>
 const { invoke } = window.__TAURI__.core;
 const $ = id => document.getElementById(id);
 const msg = t => $("msg").textContent = t;
-invoke("project_dir").then(d => { $("dir").value = localStorage.dir || d; });
 $("addr").value = localStorage.addr || "";
 
 async function go(mode, port) {
   const addr = $("addr").value.trim();
-  localStorage.dir = $("dir").value; localStorage.addr = addr;
+  localStorage.addr = addr;
   document.querySelectorAll("button").forEach(b => b.disabled = true);
   msg("Starting engine (first run installs dependencies)…");
   try {
-    await invoke("start_engine", { dir: $("dir").value, mode, addr });
+    await invoke("start_engine", { mode, addr });
   } catch (e) { msg(String(e)); document.querySelectorAll("button").forEach(b => b.disabled = false); return; }
   const url = `http://localhost:${port}/`;
   for (let i = 0; i < 300; i++) {
     try { await fetch(url, { mode: "no-cors" }); location.href = url; return; } catch {}
+    if (i % 2 == 0) msg("Starting engine… " + (await invoke("engine_log")).split("\n").pop().slice(0, 90));
     await new Promise(r => setTimeout(r, 1000));
   }
-  msg("Engine did not come up. Is uv installed and the project folder right?");
+  msg("Engine did not come up. See ~/.podtorrent/engine.log");
   document.querySelectorAll("button").forEach(b => b.disabled = false);
 }
 $("host").onclick = () => go("host", 8000);

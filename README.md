@@ -77,12 +77,12 @@ Runs 20 prompts through a host and a worker process and requires token-exact out
 
 ## Desktop app (Tauri)
 
-`app/` wraps the engine in a Mac app: pick **Host** or **Join**, and it runs `uv run podtorrent ...` in the project folder, then opens the dashboard in-window. Closing the app stops the engine. Needs Rust, Node and `uv` on the Mac.
+`app/` builds a self-contained Mac app (Apple Silicon). It bundles `uv` and the Python backend; on first launch it installs its Python environment into `~/.podtorrent/venv` (needs internet, one-time), then runs the engine itself. No terminal on the second Mac: copy `PodTorrent.app`, open it, click **Join Host**, type the host's address.
 
 ```bash
 cd app && npm install
-npm run dev      # run in dev mode
-npm run build    # app/src-tauri/target/release/bundle/macos/PodTorrent.app
+npm run dev      # dev mode
+npm run build    # app/src-tauri/target/release/bundle/macos/PodTorrent.app (also .dmg)
 ```
 
-The app defaults to the repo it was built from; change the path under "Project folder" if you copy the .app to another Mac (clone the repo there and `uv sync` first).
+Engine output goes to `~/.podtorrent/engine.log`. The app is unsigned: on another Mac, right-click > Open the first time (or `xattr -dr com.apple.quarantine PodTorrent.app`).
