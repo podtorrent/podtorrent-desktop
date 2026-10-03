@@ -1,0 +1,56 @@
+<!doctype html>
+<meta charset="utf-8"><title>PodTorrent</title>
+<style>
+  body{font:15px -apple-system,system-ui,sans-serif;background:#111;color:#eee;display:grid;place-items:center;height:100vh;margin:0}
+  main{width:420px}
+  h1{margin:0 0 4px}p{color:#999;margin:0 0 20px}
+  .card{background:#1c1c1e;border-radius:12px;padding:16px;margin-bottom:12px}
+  button{background:#0a84ff;color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:15px;cursor:pointer;width:100%}
+  button:disabled{opacity:.5}
+  input{width:100%;box-sizing:border-box;padding:9px;border-radius:8px;border:1px solid #333;background:#000;color:#eee;margin:6px 0 10px;font-size:14px}
+  label{font-size:12px;color:#999}
+  #msg{color:#ff9f0a;min-height:20px;font-size:13px}
+</style>
+<main>
+  <h1>PodTorrent</h1>
+  <p>Pool two Macs to run one model.</p>
+  <div class="card">
+    <b>Host</b> — this Mac runs the dashboard and first layers.
+    <div style="height:10px"></div>
+    <button id="host">Start as Host</button>
+  </div>
+  <div class="card">
+    <b>Join</b> — contribute this Mac as a worker.
+    <label>Host address (IP:8000, LAN or mesh)</label>
+    <input id="addr" placeholder="192.168.1.10:8000">
+    <button id="join">Join Host</button>
+  </div>
+  <details><summary style="color:#999;font-size:12px">Project folder</summary><input id="dir"></details>
+  <div id="msg"></div>
+</main>
+<script>
+const { invoke } = window.__TAURI__.core;
+const $ = id => document.getElementById(id);
+const msg = t => $("msg").textContent = t;
+invoke("project_dir").then(d => { $("dir").value = localStorage.dir || d; });
+$("addr").value = localStorage.addr || "";
+
+async function go(mode, port) {
+  const addr = $("addr").value.trim();
+  localStorage.dir = $("dir").value; localStorage.addr = addr;
+  document.querySelectorAll("button").forEach(b => b.disabled = true);
+  msg("Starting engine (first run installs dependencies)…");
+  try {
+    await invoke("start_engine", { dir: $("dir").value, mode, addr });
+  } catch (e) { msg(String(e)); document.querySelectorAll("button").forEach(b => b.disabled = false); return; }
+  const url = `http://localhost:${port}/`;
+  for (let i = 0; i < 300; i++) {
+    try { await fetch(url, { mode: "no-cors" }); location.href = url; return; } catch {}
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  msg("Engine did not come up. Is uv installed and the project folder right?");
+  document.querySelectorAll("button").forEach(b => b.disabled = false);
+}
+$("host").onclick = () => go("host", 8000);
+$("join").onclick = () => { if (!$("addr").value.trim()) return msg("Enter the host address"); go("join", 8001); };
+</script>

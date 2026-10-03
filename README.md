@@ -74,3 +74,15 @@ Runs 20 prompts through a host and a worker process and requires token-exact out
 - `podtorrent/worker.py`, `host.py`: gRPC pipeline ends
 - `podtorrent/server.py`, `static/index.html`: dashboard and event API
 - `podtorrent/pipeline.proto`: wire protocol (regenerate with `grpc_tools.protoc`)
+
+## Desktop app (Tauri)
+
+`app/` wraps the engine in a Mac app: pick **Host** or **Join**, and it runs `uv run podtorrent ...` in the project folder, then opens the dashboard in-window. Closing the app stops the engine. Needs Rust, Node and `uv` on the Mac.
+
+```bash
+cd app && npm install
+npm run dev      # run in dev mode
+npm run build    # app/src-tauri/target/release/bundle/macos/PodTorrent.app
+```
+
+The app defaults to the repo it was built from; change the path under "Project folder" if you copy the .app to another Mac (clone the repo there and `uv sync` first).
