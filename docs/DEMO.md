@@ -6,6 +6,7 @@ Mac 1 = **host** (dashboard, tokenizer, embeddings, lm_head, layers 0-23). Mac 2
 
 - Apple Silicon, 16 GB, macOS with the same major version if possible
 - About 12 GB free disk and an internet connection (first run only: Python packages, then the model slice)
+- Tailscale installed on both (Part B)
 - Plugged in, lid open, no heavy apps running (close browsers; the slice needs about 8.5 GB plus KV cache)
 - Recommended: a Hugging Face token for faster downloads (see step A3)
 
@@ -38,22 +39,19 @@ A 16 GB Mac caps GPU memory at roughly 10-11 GB, which can be tight for an 8.5 G
 sudo sysctl iogpu.wired_limit_mb=13000   # resets on reboot
 ```
 
-## Part B: Connect the Macs
+## Part B: Connect the Macs (Tailscale required)
 
-Both Macs must reach each other directly.
+The two Macs are on different networks, so they connect over a Tailscale mesh. Both directions matter: Mac 2 registers with Mac 1 (port 8000), then Mac 1 connects back to Mac 2 (port 50051).
 
-- **Same Wi-Fi/LAN:** works as is. Make sure the Wi-Fi does not use "client isolation" (common on guest and office networks). A phone hotspot shared by both Macs also works.
-- **Different networks:** install Tailscale on both Macs, sign in to the same tailnet, and use the host's Tailscale IP (100.x.x.x) in place of the LAN IP below.
+1. On both Macs: install Tailscale (`brew install --cask tailscale` or tailscale.com/download), open it, and sign in to the **same** tailnet (same account, or share one Mac's device with the other).
+2. Confirm each Mac shows as connected in the Tailscale menu bar app.
+3. On Mac 1, get its Tailscale IP (not shown in the PodTorrent app yet): Tailscale menu > the device name > copy IP, or run `tailscale ip -4` (CLI: `/Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4`). It looks like `100.x.y.z`. This is the address Mac 2 enters.
+4. Test from Mac 2 before starting: `curl http://100.x.y.z:8000` should connect once the host is running (or `ping 100.x.y.z`).
+5. Disable any other VPN on both Macs; it can make the worker advertise the wrong IP.
 
-Find Mac 1's address (this is not shown in the app yet). On Mac 1, run in Terminal:
+If Tailscale falls back to a relay (DERP), it still works but adds latency; the dashboard timing panel will show it as network time.
 
-```bash
-ipconfig getifaddr en0      # Wi-Fi; or: tailscale ip -4
-```
-
-Or System Settings > Wi-Fi > Details > IP address. Write it down, for example `192.168.1.10`.
-
-Ports used: 8000 (host dashboard and join API), 50051 (worker gRPC, host connects to it), 8001 (worker status page). If macOS asks "Allow incoming network connections?", click **Allow** on both Macs. Everything is unauthenticated: use only a trusted LAN or private mesh.
+Ports used (over the tailnet, no router changes needed): 8000 (host dashboard and join API), 50051 (worker gRPC, host connects to it), 8001 (worker status page). If macOS asks "Allow incoming network connections?", click **Allow** on both Macs. Everything is unauthenticated: use only over the private tailnet.
 
 Keep both Macs awake: System Settings > Battery > Options > prevent sleep when the display is off (or run `caffeinate -dis` in a terminal).
 
@@ -67,7 +65,7 @@ Keep both Macs awake: System Settings > Battery > Options > prevent sleep when t
 
 ### 2. Mac 2: join as worker
 
-1. Open **PodTorrent**, enter Mac 1's address with port 8000 (for example `192.168.1.10:8000`), click **Join Host**.
+1. Open **PodTorrent**, enter Mac 1's Tailscale address with port 8000 (for example `100.101.102.103:8000`), click **Join Host**.
 2. First run: the same Python install wait. Then the window shows the worker status page.
 3. Mac 2 should now appear in Mac 1's dashboard node list (name, address, status, RTT, heartbeat). If it does not, see Troubleshooting.
 
@@ -93,11 +91,11 @@ Quit PodTorrent on both Macs (Cmd+Q). This stops the engine. The model cache and
 | Symptom | Fix |
 | --- | --- |
 | "Engine did not come up" | Read `~/.podtorrent/engine.log` on that Mac. Usually no internet during the first Python install, or a port already in use (quit other copies of the app). |
-| Worker never appears on the host dashboard | Wrong IP, different networks without Tailscale, Wi-Fi client isolation, or the firewall blocked incoming connections. From Mac 2 run `curl http://<host-ip>:8000` to test. |
+| Worker never appears on the host dashboard | Wrong IP, Tailscale not connected on one Mac, or the macOS firewall blocked incoming connections. From Mac 2 run `curl http://<host-ip>:8000` to test. |
 | Worker listed but host cannot reach it | The worker auto-detects its IP. If it picked a wrong one (VPN active), disconnect the VPN or use the CLI: `uv run podtorrent join <host>:8000 --advertise <mac2-ip>` from a repo checkout. |
 | Out-of-memory when loading | Quit other apps, raise `iogpu.wired_limit_mb` (above), or move the split so each Mac holds fewer layers. |
 | Download stalls or errors | Add a Hugging Face token (A3). Re-click **Load model**; finished tensors are cached. |
-| Very slow tokens across networks | Expected: each token pays one round trip. Compare LAN against Tailscale in the timing panel. |
+| Very slow tokens across networks | Expected: each token pays one internet round trip. Check the compute-vs-network split in the timing panel. |
 | Mac sleeps mid-run | Use `caffeinate -dis` or the Battery setting above. |
 
 ## Known gaps (PoC)
