@@ -21,6 +21,19 @@ from .worker import GB, GRPC_OPTS
 STATIC = Path(__file__).parent / "static"
 
 
+def host_addresses():
+    """IPv4 addresses a worker could dial, Tailscale (100.64/10) first."""
+    import re
+    import subprocess
+    try:
+        out = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=3).stdout
+    except Exception:  # noqa: BLE001
+        return []
+    ips = [i for i in re.findall(r"inet (\d+\.\d+\.\d+\.\d+)", out) if not i.startswith(("127.", "169.254."))]
+    ts = [i for i in ips if i.startswith("100.") and 64 <= int(i.split(".")[1]) <= 127]
+    return ts + [i for i in ips if i not in ts]
+
+
 class HostApp:
     def __init__(self, repo: str, model_dir: Path, n_layers: int, name: str = "host"):
         self.repo, self.model_dir, self.n_layers, self.name = repo, model_dir, n_layers, name
@@ -222,6 +235,7 @@ def run_host(repo, model_dir, n_layers, port, open_browser=True):
     async def on_start(a):
         app_state.loop = asyncio.get_running_loop()
         app_state.emit("node_joined", key="node:host", node="host", address=f"localhost:{port}", role="host")
+        app_state.emit("host_info", key="host_info", addresses=host_addresses(), port=port)
         app_state.host_memory_event()
         a["hb"] = asyncio.create_task(app_state.heartbeat_loop())
 

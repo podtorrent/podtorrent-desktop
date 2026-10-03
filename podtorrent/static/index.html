@@ -36,6 +36,13 @@ button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
 .node{padding:8px 0;border-bottom:1px solid var(--line)}.node:last-child{border:0}
 .row{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
 .mut{color:var(--mut);font-size:12px}
+.step{display:flex;gap:9px;align-items:flex-start;padding:5px 0}
+.step i{flex:none;width:18px;height:18px;border-radius:50%;border:2px solid var(--line);font-style:normal;font-size:11px;line-height:14px;text-align:center;margin-top:1px}
+.step.done i{background:var(--ok);border-color:var(--ok);color:#fff}
+.step.active i{border-color:var(--warn);color:var(--warn)}
+.step.bad i{border-color:var(--bad);color:var(--bad)}
+.next{margin-top:8px;padding:8px 10px;border-radius:8px;background:color-mix(in srgb,var(--warn) 14%,transparent);font-size:13px}
+.next.ok{background:color-mix(in srgb,var(--ok) 16%,transparent)}
 .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:5px 0}
 .bar>i{display:block;height:100%;background:var(--acc);transition:width .3s}
 .layers{display:flex;height:26px;border-radius:6px;overflow:hidden;border:1px solid var(--line);margin:6px 0 10px}
@@ -80,13 +87,14 @@ button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
     </section>
   </div>
   <div style="display:flex;flex-direction:column;gap:12px">
+    <section><h2>Readiness</h2><div id="ready"></div></section>
     <section><h2>Nodes</h2><div id="nodes"><span class="mut">Waiting for nodes…</span></div></section>
     <section><h2>Layer map</h2><div id="map"><span class="mut">Assigned when the model loads.</span></div></section>
   </div>
 </main>
 <script>
 const $=id=>document.getElementById(id);
-const nodes={},mem={},load={},stat={};let layerMap=null,timings=[];
+const nodes={},mem={},load={},stat={};let hostInfo=null,lastErr='';let layerMap=null,timings=[];
 const COLORS={};const PAL=['--host','--worker','--net'];
 const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const gb=x=>x==null?'–':x.toFixed(2)+' GiB';
@@ -117,9 +125,41 @@ function render(){
     <div class="bar"><i style="width:${m?Math.min(100,100*m.active_gb/m.total_gb):0}%;background:var(--worker)"></i></div>`}).join('');
   }
   const hasWorker=names.some(n=>nodes[n].role==='worker'&&(stat[n]||{}).status!=='lost');
+  drawReady();
   $('start').disabled=!hasWorker||$('model').dataset.ready==='1';
 }
 
+function loadStep(label,node,loadingNow){
+  const l=load[node];
+  if(!l)return{s:loadingNow?'active':'todo',t:`${label}: not started`};
+  if(l.phase==='ready')return{s:'done',t:`${label}: loaded in memory${mem[node]?' ('+gb(mem[node].active_gb)+')':''}`};
+  if(l.phase==='error')return{s:'bad',t:`${label}: error`};
+  if(l.phase==='downloading')return{s:'active',t:`${label}: downloading ${mb(l.done)} / ${mb(l.total)} (${l.total?(100*l.done/l.total).toFixed(0):0}%)`};
+  return{s:'active',t:`${label}: ${l.phase} into memory…`};
+}
+function drawReady(){
+  const names=Object.keys(nodes),w=names.find(n=>nodes[n].role==='worker');
+  const wlost=w&&(stat[w]||{}).status==='lost',ready=$('model').dataset.ready==='1';
+  const split=+$('split').value||24,loading=$('model').textContent==='loading…';
+  const wl=w?loadStep('Worker '+w,w,loading):{s:'todo',t:'Worker slice: waiting for a worker'};
+  const hl=loadStep('Host slice (layers 0–'+(split-1)+')','host',loading);
+  const steps=[
+    {s:$('conn').textContent==='live'?'done':'bad',t:'Host engine running'},
+    {s:w?(wlost?'bad':'done'):'active',t:w?`Worker ${w} ${wlost?'unreachable':'joined'} (${nodes[w].address})`:'Worker joined: waiting'},
+    {s:ready||loading||Object.keys(load).length?'done':(w&&!wlost?'active':'todo'),t:'Model load requested'},
+    hl,
+    wl,
+    {s:ready?'done':'todo',t:'Pipeline connected, chat unlocked'}];
+  let next,ok=false;
+  if(ready){next='Ready: type a prompt in the chat box.';ok=true}
+  else if(lastErr)next='Error: '+lastErr;
+  else if(!w){const a=hostInfo&&hostInfo.addresses.length?hostInfo.addresses[0]+':'+hostInfo.port:'<this Mac\'s IP>:8000';
+    next=`Waiting for a worker. On Mac 2 open PodTorrent, choose Join Host and enter ${a}`+(hostInfo&&hostInfo.addresses.length>1?` (other addresses: ${hostInfo.addresses.slice(1).join(', ')})`:'')}
+  else if(wlost)next='Worker is unreachable: check Tailscale and that PodTorrent is open on Mac 2.';
+  else if(!loading&&!Object.keys(load).length)next='Worker joined. Click "Load model" (top right) to download and load each Mac\'s layers.';
+  else next='Loading: each Mac downloads its own layers, then loads them. Chat unlocks when both finish.';
+  $('ready').innerHTML=steps.map(x=>`<div class="step ${x.s}"><i>${x.s==='done'?'✓':x.s==='bad'?'!':x.s==='active'?'…':''}</i><span>${x.t}</span></div>`).join('')+`<div class="next ${ok?'ok':''}">${next}</div>`;
+}
 function drawTimings(){
   const t=timings.slice(-60),max=Math.max(1,...t.map(x=>x.stages.reduce((a,s)=>a+s.compute_ms,0)));
   const keys=t.length?t[0].stages.map(s=>s.node):[];
@@ -141,6 +181,7 @@ function connect(){
       case 'memory':mem[m.node]=m;break;
       case 'load_progress':load[m.node]=m;break;
       case 'layer_map':layerMap=m;break;
+      case 'host_info':hostInfo=m;break;
       case 'ready':$('model').textContent='model ready';$('model').className='pill ok';$('model').dataset.ready='1';
         $('q').disabled=$('send').disabled=false;$('err').textContent='';break;
       case 'token':if(!cur){cur=document.createElement('div');cur.className='msg a';$('log').append(cur)}
@@ -148,7 +189,7 @@ function connect(){
       case 'token_timing':timings.push(m);drawTimings();break;
       case 'done':cur=null;$('send').disabled=false;
         $('s-tps').textContent=m.tok_s.toFixed(1);$('s-ttft').textContent=(m.ttft_ms/1000).toFixed(2)+' s';break;
-      case 'error':$('err').textContent=m.message;$('send').disabled=false;break;
+      case 'error':lastErr=m.message;$('err').textContent=m.message;$('send').disabled=false;break;
     }
     render();};
 }
