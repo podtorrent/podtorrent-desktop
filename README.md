@@ -2,6 +2,8 @@
 
 Two Apple Silicon Macs jointly serve a model neither can hold alone (Qwen3-30B-A3B, 4-bit MLX), split by layer range. One Mac is the **host** (dashboard, tokenizer, embeddings, lm_head, first layers). The other is the **worker** (remaining layers). Each Mac downloads only its own tensors from Hugging Face.
 
+Two-Mac demo walkthrough: [docs/DEMO.md](docs/DEMO.md).
+
 Status and plan: [PodTorrent PoC Plan and Build Checklist.md](PodTorrent%20PoC%20Plan%20and%20Build%20Checklist.md).
 
 ## Setup (both Macs)
