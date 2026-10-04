@@ -29,6 +29,13 @@ def main():
     j.add_argument("--status-port", type=int, default=8001)
     j.add_argument("--advertise", help="IP the host should dial (default: auto)")
 
+    d = sub.add_parser("download", help="download this Mac's layers only (no peer needed)")
+    d.add_argument("role", choices=["host", "worker"])
+    d.add_argument("--split", type=int, default=24, help="host gets layers [0, split), worker the rest")
+    d.add_argument("--model", default=DEFAULT_REPO)
+    d.add_argument("--model-dir")
+    d.add_argument("--layers", type=int, default=48)
+
     w = sub.add_parser("worker-static", help="(tests) serve a preloaded layer range")
     w.add_argument("--model-dir", required=True)
     w.add_argument("--lo", type=int, required=True)
@@ -39,6 +46,9 @@ def main():
     if a.cmd == "host":
         from .server import run_host
         run_host(a.model, a.model_dir or default_dir(a.model), a.layers, a.port, not a.no_open)
+    elif a.cmd == "download":
+        from .download import run_download
+        run_download(a.role, a.model, a.model_dir or default_dir(a.model), a.split, a.layers)
     elif a.cmd == "join":
         from .worker import run_join
         run_join(a.addr, a.model_dir or default_dir(a.model), a.name, a.grpc_port, a.status_port, a.advertise)
