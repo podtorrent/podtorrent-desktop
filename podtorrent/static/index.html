@@ -42,16 +42,23 @@ button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
 .step .body{flex:1;min-width:0}
 .step .ttl{font-weight:600}
 .step .det{font-size:12px;color:var(--mut)}
-.step .badge{flex:none;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--line);color:var(--mut)}
+.chip{display:inline-flex;align-items:center;gap:6px;flex:none;font-size:12px;font-weight:600;padding:3px 10px 3px 8px;border-radius:99px;border:1px solid var(--line);background:var(--bg);color:var(--mut);white-space:nowrap}
+.chip::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor;opacity:.55}
+.chip.done{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,transparent);background:color-mix(in srgb,var(--ok) 12%,transparent)}
+.chip.done::before{opacity:1}
+.chip.wait{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,transparent);background:color-mix(in srgb,var(--warn) 12%,transparent)}
+.chip.wait::before{opacity:1;animation:pulse 1.4s ease-in-out infinite}
+.chip.active{color:var(--acc);border-color:color-mix(in srgb,var(--acc) 45%,transparent);background:color-mix(in srgb,var(--acc) 12%,transparent)}
+.chip.active::before{opacity:1;animation:pulse 1s ease-in-out infinite}
+.chip.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,transparent);background:color-mix(in srgb,var(--bad) 12%,transparent)}
+.chip.bad::before{opacity:1}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+@keyframes pulse{50%{opacity:.25}}
 .step.todo .ttl{color:var(--mut);font-weight:500}
 .step.done i{background:var(--ok);border-color:var(--ok);color:#fff}
-.step.done .badge{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
 .step.wait i{border-color:var(--warn);border-style:dashed;color:var(--warn)}
-.step.wait .badge{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
 .step.active i{border-color:var(--acc) var(--line) var(--line) var(--acc);animation:spin 1s linear infinite;color:transparent}
-.step.active .badge{background:color-mix(in srgb,var(--acc) 18%,transparent);color:var(--acc)}
 .step.bad i{background:var(--bad);border-color:var(--bad);color:#fff}
-.step.bad .badge{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
 @keyframes spin{to{transform:rotate(360deg)}}
 .step .bar{margin:4px 0 0}
 .next{margin-top:8px;padding:8px 10px;border-radius:8px;background:color-mix(in srgb,var(--warn) 14%,transparent);font-size:13px}
@@ -175,7 +182,10 @@ function drawReady(){
   else if(!started)next='Worker joined. Click "Load model" (top right) to download and load each Mac\'s layers.';
   else next='Loading: each Mac downloads its own layers, then loads them. Chat unlocks when both finish.';
   const ic={done:'✓',bad:'!',wait:'',active:'',todo:''};
-  $('ready').innerHTML=steps.map(x=>`<div class="step ${x.s}"><i>${ic[x.s]}</i><div class="body"><div class="ttl">${x.t}</div><div class="det">${x.d}</div>${x.pc!=null?`<div class="bar"><i style="width:${x.pc}%"></i></div>`:''}</div><span class="badge">${x.b}</span></div>`).join('')+`<div class="next ${ok?'ok':''}">${next}</div>`;
+  const cnt={};steps.forEach(x=>cnt[x.s]=(cnt[x.s]||0)+1);
+  const lab={done:'Done',active:'In progress',wait:'Waiting',bad:'Problem',todo:'Not started'};
+  const summary='<div class="chips">'+['done','active','wait','bad','todo'].filter(k=>cnt[k]).map(k=>`<span class="chip ${k}">${cnt[k]} ${lab[k]}</span>`).join('')+'</div>';
+  $('ready').innerHTML=summary+steps.map(x=>`<div class="step ${x.s}"><i>${ic[x.s]}</i><div class="body"><div class="ttl">${x.t}</div><div class="det">${x.d}</div>${x.pc!=null?`<div class="bar"><i style="width:${x.pc}%"></i></div>`:''}</div><span class="chip ${x.s}">${x.b}</span></div>`).join('')+`<div class="next ${ok?'ok':''}">${next}</div>`;
 }
 function drawTimings(){
   const t=timings.slice(-60),max=Math.max(1,...t.map(x=>x.stages.reduce((a,s)=>a+s.compute_ms,0)));
