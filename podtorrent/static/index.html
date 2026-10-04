@@ -36,11 +36,24 @@ button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
 .node{padding:8px 0;border-bottom:1px solid var(--line)}.node:last-child{border:0}
 .row{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
 .mut{color:var(--mut);font-size:12px}
-.step{display:flex;gap:9px;align-items:flex-start;padding:5px 0}
-.step i{flex:none;width:18px;height:18px;border-radius:50%;border:2px solid var(--line);font-style:normal;font-size:11px;line-height:14px;text-align:center;margin-top:1px}
+.step{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--line)}
+.step:last-of-type{border:0}
+.step i{flex:none;width:20px;height:20px;border-radius:50%;border:2px solid var(--line);font-style:normal;font-size:12px;line-height:16px;text-align:center;margin-top:1px;color:var(--mut)}
+.step .body{flex:1;min-width:0}
+.step .ttl{font-weight:600}
+.step .det{font-size:12px;color:var(--mut)}
+.step .badge{flex:none;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;background:var(--line);color:var(--mut)}
+.step.todo .ttl{color:var(--mut);font-weight:500}
 .step.done i{background:var(--ok);border-color:var(--ok);color:#fff}
-.step.active i{border-color:var(--warn);color:var(--warn)}
-.step.bad i{border-color:var(--bad);color:var(--bad)}
+.step.done .badge{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.step.wait i{border-color:var(--warn);border-style:dashed;color:var(--warn)}
+.step.wait .badge{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
+.step.active i{border-color:var(--acc) var(--line) var(--line) var(--acc);animation:spin 1s linear infinite;color:transparent}
+.step.active .badge{background:color-mix(in srgb,var(--acc) 18%,transparent);color:var(--acc)}
+.step.bad i{background:var(--bad);border-color:var(--bad);color:#fff}
+.step.bad .badge{background:color-mix(in srgb,var(--bad) 18%,transparent);color:var(--bad)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.step .bar{margin:4px 0 0}
 .next{margin-top:8px;padding:8px 10px;border-radius:8px;background:color-mix(in srgb,var(--warn) 14%,transparent);font-size:13px}
 .next.ok{background:color-mix(in srgb,var(--ok) 16%,transparent)}
 .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:5px 0}
@@ -129,36 +142,40 @@ function render(){
   $('start').disabled=!hasWorker||$('model').dataset.ready==='1';
 }
 
-function loadStep(label,node,loadingNow){
+function loadStep(title,node,loadingNow){
   const l=load[node];
-  if(!l)return{s:loadingNow?'active':'todo',t:`${label}: not started`};
-  if(l.phase==='ready')return{s:'done',t:`${label}: loaded in memory${mem[node]?' ('+gb(mem[node].active_gb)+')':''}`};
-  if(l.phase==='error')return{s:'bad',t:`${label}: error`};
-  if(l.phase==='downloading')return{s:'active',t:`${label}: downloading ${mb(l.done)} / ${mb(l.total)} (${l.total?(100*l.done/l.total).toFixed(0):0}%)`};
-  return{s:'active',t:`${label}: ${l.phase} into memory…`};
+  if(!l)return loadingNow?{s:'active',b:'Starting',t:title,d:'Starting…'}:{s:'todo',b:'Not started',t:title,d:'Starts after you click Load model'};
+  if(l.phase==='ready')return{s:'done',b:'Loaded',t:title,d:mem[node]?'In memory: '+gb(mem[node].active_gb):'In memory'};
+  if(l.phase==='error')return{s:'bad',b:'Error',t:title,d:'See the error above'};
+  if(l.phase==='downloading'){const pc=l.total?100*l.done/l.total:0;
+    return{s:'active',b:'Downloading '+pc.toFixed(0)+'%',t:title,d:mb(l.done)+' of '+mb(l.total),pc}}
+  return{s:'active',b:'Loading',t:title,d:'Reading the downloaded layers into memory'};
 }
 function drawReady(){
   const names=Object.keys(nodes),w=names.find(n=>nodes[n].role==='worker');
   const wlost=w&&(stat[w]||{}).status==='lost',ready=$('model').dataset.ready==='1';
   const split=+$('split').value||24,loading=$('model').textContent==='loading…';
-  const wl=w?loadStep('Worker '+w,w,loading):{s:'todo',t:'Worker slice: waiting for a worker'};
-  const hl=loadStep('Host slice (layers 0–'+(split-1)+')','host',loading);
+  const started=loading||ready||Object.keys(load).length>0;
+  const wl=w?loadStep('Worker layers '+split+'–47 ('+w+')',w,loading):{s:'todo',b:'Blocked',t:'Worker layers '+split+'–47',d:'Needs a worker to join first'};
+  const hl=loadStep('Host layers 0–'+(split-1),'host',loading);
   const steps=[
-    {s:$('conn').textContent==='live'?'done':'bad',t:'Host engine running'},
-    {s:w?(wlost?'bad':'done'):'active',t:w?`Worker ${w} ${wlost?'unreachable':'joined'} (${nodes[w].address})`:'Worker joined: waiting'},
-    {s:ready||loading||Object.keys(load).length?'done':(w&&!wlost?'active':'todo'),t:'Model load requested'},
-    hl,
-    wl,
-    {s:ready?'done':'todo',t:'Pipeline connected, chat unlocked'}];
+    {s:$('conn').textContent==='live'?'done':'bad',b:$('conn').textContent==='live'?'Running':'Offline',t:'Host engine',d:'Dashboard and tokenizer on this Mac'},
+    w?{s:wlost?'bad':'done',b:wlost?'Unreachable':'Joined',t:'Worker connected',d:w+' · '+nodes[w].address}
+      :{s:'wait',b:'Waiting',t:'Worker connected',d:'No worker has joined yet'},
+    started?{s:'done',b:'Requested',t:'Model load',d:'Split at layer '+split}
+      :{s:'todo',b:w&&!wlost?'Ready to start':'Not started',t:'Model load',d:w&&!wlost?'Click Load model (top right)':'Needs a worker first'},
+    hl,wl,
+    {s:ready?'done':'todo',b:ready?'Ready':'Not ready',t:'Chat unlocked',d:ready?'Type a prompt':'Unlocks when both layer sets are loaded'}];
   let next,ok=false;
   if(ready){next='Ready: type a prompt in the chat box.';ok=true}
   else if(lastErr)next='Error: '+lastErr;
   else if(!w){const a=hostInfo&&hostInfo.addresses.length?hostInfo.addresses[0]+':'+hostInfo.port:'<this Mac\'s IP>:8000';
     next=`Waiting for a worker. On Mac 2 open PodTorrent, choose Join Host and enter ${a}`+(hostInfo&&hostInfo.addresses.length>1?` (other addresses: ${hostInfo.addresses.slice(1).join(', ')})`:'')}
   else if(wlost)next='Worker is unreachable: check Tailscale and that PodTorrent is open on Mac 2.';
-  else if(!loading&&!Object.keys(load).length)next='Worker joined. Click "Load model" (top right) to download and load each Mac\'s layers.';
+  else if(!started)next='Worker joined. Click "Load model" (top right) to download and load each Mac\'s layers.';
   else next='Loading: each Mac downloads its own layers, then loads them. Chat unlocks when both finish.';
-  $('ready').innerHTML=steps.map(x=>`<div class="step ${x.s}"><i>${x.s==='done'?'✓':x.s==='bad'?'!':x.s==='active'?'…':''}</i><span>${x.t}</span></div>`).join('')+`<div class="next ${ok?'ok':''}">${next}</div>`;
+  const ic={done:'✓',bad:'!',wait:'',active:'',todo:''};
+  $('ready').innerHTML=steps.map(x=>`<div class="step ${x.s}"><i>${ic[x.s]}</i><div class="body"><div class="ttl">${x.t}</div><div class="det">${x.d}</div>${x.pc!=null?`<div class="bar"><i style="width:${x.pc}%"></i></div>`:''}</div><span class="badge">${x.b}</span></div>`).join('')+`<div class="next ${ok?'ok':''}">${next}</div>`;
 }
 function drawTimings(){
   const t=timings.slice(-60),max=Math.max(1,...t.map(x=>x.stages.reduce((a,s)=>a+s.compute_ms,0)));
