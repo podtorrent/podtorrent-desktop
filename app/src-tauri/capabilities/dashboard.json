@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "dashboard",
+  "description": "The host dashboard and worker page (served by the engine on localhost) may call the app's own commands, e.g. quit_app.",
+  "windows": ["main"],
+  "remote": { "urls": ["http://localhost:8000/*", "http://localhost:8001/*"] },
+  "permissions": ["core:default"]
+}

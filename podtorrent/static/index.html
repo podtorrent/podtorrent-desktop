@@ -75,6 +75,17 @@ button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
 .stat b{display:block;font-size:17px;font-variant-numeric:tabular-nums}
 #err{color:var(--bad);margin:6px 0 0}
+.kpis{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media(max-width:860px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;border-top:3px solid var(--k,var(--acc))}
+.kpi .lbl{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;font-weight:600}
+.kpi .val{font-size:26px;font-weight:650;font-variant-numeric:tabular-nums;margin:4px 0 2px}
+.kpi .sub{font-size:12px;color:var(--mut)}
+button.stop{background:transparent;color:var(--bad);border-color:color-mix(in srgb,var(--bad) 50%,transparent)}
+button.stop.armed{background:var(--bad);color:#fff}
+.tok{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--mut);margin-top:2px}
+.tok b{color:var(--fg);font-variant-numeric:tabular-nums}
+#bye{position:fixed;inset:0;background:var(--bg);display:none;place-items:center;text-align:center;z-index:9}
 </style>
 </head>
 <body>
@@ -85,9 +96,17 @@ button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
   <span style="flex:1"></span>
   <input id="split" type="hidden" value="24">
   <button id="start" disabled>Load model</button>
+  <button id="quit" class="stop" title="Stop the engine and quit PodTorrent">Stop &amp; quit</button>
 </header>
+<div id="bye"><div><h2 style="font-size:18px;text-transform:none;color:var(--fg)">PodTorrent stopped</h2><p class="mut">The engine has shut down. You can close this window.</p></div></div>
 <div id="err"></div>
 <main>
+  <div class="kpis">
+    <div class="kpi" style="--k:var(--host)"><div class="lbl">Host tokens</div><div class="val" id="k-host">–</div><div class="sub" id="k-host-s">layers on this Mac</div></div>
+    <div class="kpi" style="--k:var(--worker)"><div class="lbl">Worker tokens</div><div class="val" id="k-wk">–</div><div class="sub" id="k-wk-s">no worker yet</div></div>
+    <div class="kpi" style="--k:var(--net)"><div class="lbl">Generated</div><div class="val" id="k-gen">–</div><div class="sub" id="k-gen-s">0 prompts</div></div>
+    <div class="kpi" style="--k:var(--ok)"><div class="lbl">Throughput</div><div class="val" id="k-tps">–</div><div class="sub" id="k-tps-s">tokens/s, last reply</div></div>
+  </div>
   <div id="chatcol">
     <section>
       <h2>Chat</h2>
@@ -114,7 +133,7 @@ button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
 </main>
 <script>
 const $=id=>document.getElementById(id);
-const nodes={},mem={},load={},stat={};let hostInfo=null,lastErr='';let layerMap=null,timings=[];
+const nodes={},mem={},load={},stat={},nstat={};let lastDone=null;let hostInfo=null,lastErr='';let layerMap=null,timings=[];
 const COLORS={};const PAL=['--host','--worker','--net'];
 const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const gb=x=>x==null?'–':x.toFixed(2)+' GiB';
@@ -136,6 +155,7 @@ function render(){
     <div class="bar"><i style="width:${memPct}%;background:var(--worker)"></i></div>`:''}
     ${l?`<div class="row mut"><span>${l.phase}${l.total?` · ${mb(l.done)} / ${mb(l.total)}`:''}</span><span>${lp.toFixed(0)}%</span></div>
     <div class="bar"><i style="width:${lp}%"></i></div>`:''}
+    ${nstat[n]?`<div class="tok"><span><b>${fmt(nstat[n].tokens)}</b> tokens processed</span><span><b>${fmt(nstat[n].requests)}</b> ${nd.role==='host'?'prompts':'forward calls'}</span><span class="chip ${nstat[n].busy?'active':''}">${nstat[n].busy?'Processing':'Idle'}</span></div>`:''}
     ${nd.status_url?`<a class="mut" href="${nd.status_url}" target="_blank">worker status page</a>`:''}</div>`}).join(''):'<span class="mut">Waiting for nodes…</span>';
   // layer map
   if(layerMap){
@@ -144,11 +164,25 @@ function render(){
     layerMap.assignments.map(a=>{const m=mem[a.node];return `<div class="row"><span><b>${a.node}</b> <span class="mut">layers ${a.lo}–${a.hi-1} (${a.hi-a.lo})${a.roles.length?' · '+a.roles.join(', '):''}</span></span><span class="mut">${m?gb(m.active_gb):'–'}</span></div>
     <div class="bar"><i style="width:${m?Math.min(100,100*m.active_gb/m.total_gb):0}%;background:var(--worker)"></i></div>`}).join('');
   }
+  drawKpis(names);
   const hasWorker=names.some(n=>nodes[n].role==='worker'&&(stat[n]||{}).status!=='lost');
   drawReady();
   $('start').disabled=!hasWorker||$('model').dataset.ready==='1';
 }
 
+const fmt=x=>x==null?'–':x>=1e6?(x/1e6).toFixed(2)+'M':x>=1e4?(x/1e3).toFixed(1)+'k':String(x);
+function drawKpis(names){
+  const h=nstat.host,w=names.find(n=>nodes[n].role==='worker'),ws=w&&nstat[w];
+  $('k-host').textContent=h?fmt(h.tokens):'–';
+  $('k-host-s').textContent=h?(h.busy?'processing now':'idle')+' · '+fmt(h.prompt_tokens)+' prompt tokens':'layers on this Mac';
+  $('k-wk').textContent=ws?fmt(ws.tokens):'–';
+  const lost=w&&(stat[w]||{}).status==='lost';
+  $('k-wk-s').textContent=!w?'no worker yet':(lost?'unreachable':ws&&(ws.busy||ws.active_requests)?'processing now':'idle')+' · '+w;
+  $('k-gen').textContent=h?fmt(h.generated_tokens):'–';
+  $('k-gen-s').textContent=h?h.requests+(h.requests===1?' prompt':' prompts'):'0 prompts';
+  $('k-tps').textContent=lastDone?lastDone.tok_s.toFixed(1):'–';
+  $('k-tps-s').textContent=lastDone?'tokens/s · first token '+(lastDone.ttft_ms/1000).toFixed(2)+' s':'tokens/s, last reply';
+}
 function loadStep(title,node,loadingNow){
   const l=load[node];
   if(!l)return loadingNow?{s:'active',b:'Starting',t:title,d:'Starting…'}:{s:'todo',b:'Not started',t:title,d:'Starts after you click Load model'};
@@ -206,6 +240,7 @@ function connect(){
       case 'node_joined':nodes[m.node]=m;break;
       case 'node_status':stat[m.node]=m;break;
       case 'memory':mem[m.node]=m;break;
+      case 'node_stats':nstat[m.node]=m;break;
       case 'load_progress':load[m.node]=m;break;
       case 'layer_map':layerMap=m;break;
       case 'host_info':hostInfo=m;break;
@@ -214,7 +249,7 @@ function connect(){
       case 'token':if(!cur){cur=document.createElement('div');cur.className='msg a';$('log').append(cur)}
         cur.textContent+=m.text;$('log').scrollTop=1e9;break;
       case 'token_timing':timings.push(m);drawTimings();break;
-      case 'done':cur=null;$('send').disabled=false;
+      case 'done':cur=null;lastDone=m;$('send').disabled=false;
         $('s-tps').textContent=m.tok_s.toFixed(1);$('s-ttft').textContent=(m.ttft_ms/1000).toFixed(2)+' s';break;
       case 'error':lastErr=m.message;$('err').textContent=m.message;$('send').disabled=false;break;
     }
@@ -229,6 +264,13 @@ $('f').onsubmit=async ev=>{ev.preventDefault();const p=$('q').value.trim();if(!p
   $('send').disabled=true;
   const r=await fetch('/api/chat',{method:'POST',body:JSON.stringify({prompt:p})});
   if(!r.ok){$('err').textContent=(await r.json()).error;$('send').disabled=false}};
+$('quit').onclick=async()=>{const b=$('quit');
+  if(!b.classList.contains('armed')){b.classList.add('armed');b.textContent='Click again to stop';
+    setTimeout(()=>{b.classList.remove('armed');b.textContent='Stop & quit'},3000);return}
+  b.disabled=true;b.textContent='Stopping…';
+  try{await window.__TAURI__.core.invoke('quit_app');return}catch{}
+  try{await fetch('/api/shutdown',{method:'POST'})}catch{}
+  ws.onclose=null;ws.close();$('bye').style.display='grid'};
 setInterval(render,1000);connect();render();
 </script>
 </body>

@@ -135,21 +135,32 @@ fn stop_engine(state: State<Engine>) {
     }
 }
 
+/// Stop the engine and any download, then quit. Called from the dashboard's Stop button.
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    stop_children(&app);
+    app.exit(0);
+}
+
+fn stop_children(app: &AppHandle) {
+    if let Some(mut c) = app.state::<Engine>().0.lock().unwrap().take() {
+        kill_group(&mut c);
+    }
+    if let Some(mut c) = app.state::<Downloader>().0.lock().unwrap().take() {
+        kill_group(&mut c);
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(Engine::default())
         .manage(Downloader::default())
-        .invoke_handler(tauri::generate_handler![engine_log, start_engine, start_download, download_status, stop_engine])
+        .invoke_handler(tauri::generate_handler![engine_log, start_engine, start_download, download_status, stop_engine, quit_app])
         .build(tauri::generate_context!())
         .expect("error building app")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                if let Some(mut c) = app.state::<Engine>().0.lock().unwrap().take() {
-                    kill_group(&mut c);
-                }
-                if let Some(mut c) = app.state::<Downloader>().0.lock().unwrap().take() {
-                    kill_group(&mut c);
-                }
+                stop_children(app);
             }
         });
 }

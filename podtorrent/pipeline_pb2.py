@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0epipeline.proto\x12\npodtorrent\"T\n\x0e\x46orwardRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06hidden\x18\x02 \x01(\x0c\x12\r\n\x05shape\x18\x03 \x03(\x05\x12\x0f\n\x07release\x18\x04 \x01(\x08\"X\n\x0f\x46orwardResponse\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06hidden\x18\x02 \x01(\x0c\x12\r\n\x05shape\x18\x03 \x03(\x05\x12\x12\n\ncompute_ms\x18\x04 \x01(\x02\"#\n\x10HeartbeatRequest\x12\x0f\n\x07sent_ns\x18\x01 \x01(\x03\"!\n\x0eHeartbeatReply\x12\x0f\n\x07sent_ns\x18\x01 \x01(\x03\"\r\n\x0bInfoRequest\"\xa7\x01\n\x08NodeInfo\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x10\n\x08layer_lo\x18\x02 \x01(\x05\x12\x10\n\x08layer_hi\x18\x03 \x01(\x05\x12\x15\n\rmem_active_gb\x18\x04 \x01(\x02\x12\x13\n\x0bmem_peak_gb\x18\x05 \x01(\x02\x12\x14\n\x0cmem_total_gb\x18\x06 \x01(\x02\x12\x0e\n\x06loaded\x18\x07 \x01(\x08\x12\x17\n\x0frequests_served\x18\x08 \x01(\x03\"?\n\x0bLoadRequest\x12\x0c\n\x04repo\x18\x01 \x01(\t\x12\x10\n\x08layer_lo\x18\x02 \x01(\x05\x12\x10\n\x08layer_hi\x18\x03 \x01(\x05\"K\n\x0cLoadProgress\x12\r\n\x05phase\x18\x01 \x01(\t\x12\x0c\n\x04\x64one\x18\x02 \x01(\x03\x12\r\n\x05total\x18\x03 \x01(\x03\x12\x0f\n\x07message\x18\x04 \x01(\t2\x8d\x02\n\x08Pipeline\x12\x46\n\x07\x46orward\x12\x1a.podtorrent.ForwardRequest\x1a\x1b.podtorrent.ForwardResponse(\x01\x30\x01\x12\x45\n\tHeartbeat\x12\x1c.podtorrent.HeartbeatRequest\x1a\x1a.podtorrent.HeartbeatReply\x12\x35\n\x04Info\x12\x17.podtorrent.InfoRequest\x1a\x14.podtorrent.NodeInfo\x12;\n\x04Load\x12\x17.podtorrent.LoadRequest\x1a\x18.podtorrent.LoadProgress0\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0epipeline.proto\x12\npodtorrent\"T\n\x0e\x46orwardRequest\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06hidden\x18\x02 \x01(\x0c\x12\r\n\x05shape\x18\x03 \x03(\x05\x12\x0f\n\x07release\x18\x04 \x01(\x08\"X\n\x0f\x46orwardResponse\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0e\n\x06hidden\x18\x02 \x01(\x0c\x12\r\n\x05shape\x18\x03 \x03(\x05\x12\x12\n\ncompute_ms\x18\x04 \x01(\x02\"#\n\x10HeartbeatRequest\x12\x0f\n\x07sent_ns\x18\x01 \x01(\x03\"!\n\x0eHeartbeatReply\x12\x0f\n\x07sent_ns\x18\x01 \x01(\x03\"\r\n\x0bInfoRequest\"\xe8\x01\n\x08NodeInfo\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x10\n\x08layer_lo\x18\x02 \x01(\x05\x12\x10\n\x08layer_hi\x18\x03 \x01(\x05\x12\x15\n\rmem_active_gb\x18\x04 \x01(\x02\x12\x13\n\x0bmem_peak_gb\x18\x05 \x01(\x02\x12\x14\n\x0cmem_total_gb\x18\x06 \x01(\x02\x12\x0e\n\x06loaded\x18\x07 \x01(\x08\x12\x17\n\x0frequests_served\x18\x08 \x01(\x03\x12\x18\n\x10tokens_processed\x18\t \x01(\x03\x12\x17\n\x0f\x61\x63tive_requests\x18\n \x01(\x05\x12\x0c\n\x04\x62usy\x18\x0b \x01(\x08\"?\n\x0bLoadRequest\x12\x0c\n\x04repo\x18\x01 \x01(\t\x12\x10\n\x08layer_lo\x18\x02 \x01(\x05\x12\x10\n\x08layer_hi\x18\x03 \x01(\x05\"K\n\x0cLoadProgress\x12\r\n\x05phase\x18\x01 \x01(\t\x12\x0c\n\x04\x64one\x18\x02 \x01(\x03\x12\r\n\x05total\x18\x03 \x01(\x03\x12\x0f\n\x07message\x18\x04 \x01(\t2\x8d\x02\n\x08Pipeline\x12\x46\n\x07\x46orward\x12\x1a.podtorrent.ForwardRequest\x1a\x1b.podtorrent.ForwardResponse(\x01\x30\x01\x12\x45\n\tHeartbeat\x12\x1c.podtorrent.HeartbeatRequest\x1a\x1a.podtorrent.HeartbeatReply\x12\x35\n\x04Info\x12\x17.podtorrent.InfoRequest\x1a\x14.podtorrent.NodeInfo\x12;\n\x04Load\x12\x17.podtorrent.LoadRequest\x1a\x18.podtorrent.LoadProgress0\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -42,11 +42,11 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_INFOREQUEST']._serialized_start=278
   _globals['_INFOREQUEST']._serialized_end=291
   _globals['_NODEINFO']._serialized_start=294
-  _globals['_NODEINFO']._serialized_end=461
-  _globals['_LOADREQUEST']._serialized_start=463
-  _globals['_LOADREQUEST']._serialized_end=526
-  _globals['_LOADPROGRESS']._serialized_start=528
-  _globals['_LOADPROGRESS']._serialized_end=603
-  _globals['_PIPELINE']._serialized_start=606
-  _globals['_PIPELINE']._serialized_end=875
+  _globals['_NODEINFO']._serialized_end=526
+  _globals['_LOADREQUEST']._serialized_start=528
+  _globals['_LOADREQUEST']._serialized_end=591
+  _globals['_LOADPROGRESS']._serialized_start=593
+  _globals['_LOADPROGRESS']._serialized_end=668
+  _globals['_PIPELINE']._serialized_start=671
+  _globals['_PIPELINE']._serialized_end=940
 # @@protoc_insertion_point(module_scope)

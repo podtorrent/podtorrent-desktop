@@ -1,6 +1,7 @@
 """Worker node: gRPC pipeline server (layer range loaded on demand), status page, host registration."""
 import asyncio
 import json
+import os
 import queue
 import socket
 import threading
@@ -40,7 +41,11 @@ class WorkerService(rpc.PipelineServicer):
         self.phase, self.done, self.total, self.message = "idle", 0, 0, ""
         self.caches: dict[str, list] = {}
         self.served = 0
+        self.tokens = 0
+        self.busy = False
         self.last_compute_ms = 0.0
+        self.last_forward_ts = 0.0
+        self.started_ts = time.time()
         self._lock = threading.Lock()
 
     def Forward(self, request_iterator, context):
@@ -53,11 +58,17 @@ class WorkerService(rpc.PipelineServicer):
             cache = self.caches.setdefault(req.request_id, self.shard.make_cache())
             h = from_wire(req.hidden, list(req.shape))
             t = time.perf_counter()
-            out = self.shard.run_layers(h, cache)
-            mx.eval(out)
+            self.busy = True
+            try:
+                out = self.shard.run_layers(h, cache)
+                mx.eval(out)
+            finally:
+                self.busy = False
             ms = (time.perf_counter() - t) * 1000
             self.served += 1
+            self.tokens += int(req.shape[1]) if len(req.shape) > 1 else 1
             self.last_compute_ms = ms
+            self.last_forward_ts = time.time()
             yield pb.ForwardResponse(request_id=req.request_id, hidden=to_wire(out),
                                      shape=list(out.shape), compute_ms=ms)
 
@@ -69,7 +80,8 @@ class WorkerService(rpc.PipelineServicer):
             name=self.name, layer_lo=self.lo, layer_hi=self.hi,
             mem_active_gb=mx.get_active_memory() / GB, mem_peak_gb=mx.get_peak_memory() / GB,
             mem_total_gb=mx.device_info()["memory_size"] / GB,
-            loaded=self.shard is not None, requests_served=self.served)
+            loaded=self.shard is not None, requests_served=self.served,
+            tokens_processed=self.tokens, active_requests=len(self.caches), busy=self.busy)
 
     def Load(self, request, context):
         q: queue.Queue = queue.Queue()
@@ -131,30 +143,15 @@ def local_ip_towards(host: str) -> str:
 def worker_status(svc: WorkerService) -> dict:
     return {"name": svc.name, "phase": svc.phase, "done": svc.done, "total": svc.total,
             "message": svc.message, "layer_lo": svc.lo, "layer_hi": svc.hi,
-            "loaded": svc.shard is not None, "served": svc.served,
-            "last_compute_ms": svc.last_compute_ms,
+            "loaded": svc.shard is not None, "served": svc.served, "tokens": svc.tokens,
+            "active_requests": len(svc.caches), "busy": svc.busy,
+            "last_compute_ms": svc.last_compute_ms, "last_forward_ts": svc.last_forward_ts,
+            "uptime_s": time.time() - svc.started_ts,
             "mem_active_gb": mx.get_active_memory() / GB, "mem_peak_gb": mx.get_peak_memory() / GB,
             "mem_total_gb": mx.device_info()["memory_size"] / GB}
 
 
-WORKER_PAGE = """<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>PodTorrent worker</title>
-<style>:root{color-scheme:light dark;--bg:#fff;--fg:#1a1a1a;--mut:#6b7280;--bar:#e5e7eb;--acc:#2563eb}
-@media(prefers-color-scheme:dark){:root{--bg:#111;--fg:#eee;--mut:#9ca3af;--bar:#2a2a2a;--acc:#60a5fa}}
-body{background:var(--bg);color:var(--fg);font:15px system-ui;max-width:520px;margin:32px auto;padding:0 16px}
-.bar{height:8px;background:var(--bar);border-radius:4px;overflow:hidden;margin:4px 0 12px}.bar i{display:block;height:100%;background:var(--acc)}
-dt{color:var(--mut);font-size:12px}dd{margin:0 0 10px;font-variant-numeric:tabular-nums}</style>
-<h2>PodTorrent worker</h2><p style="color:var(--mut)">Read-only status. Control it from the host dashboard.</p>
-<dl id=d></dl><script>
-const f=(b)=>(b/2**30).toFixed(2)+' GiB';
-async function tick(){try{const s=await (await fetch('/status')).json();
-const pct=s.total?100*s.done/s.total:(s.phase==='ready'?100:0);
-d.innerHTML=`<dt>Node</dt><dd>${s.name}</dd><dt>State</dt><dd>${s.phase}${s.message?' – '+s.message:''}</dd>
-<dt>Layers</dt><dd>${s.loaded?`${s.layer_lo}–${s.layer_hi-1}`:'none loaded'}</dd>
-<dt>Download / load</dt><div class=bar><i style="width:${pct}%"></i></div>
-<dt>Memory</dt><dd>${s.mem_active_gb.toFixed(2)} / ${s.mem_total_gb.toFixed(0)} GiB (peak ${s.mem_peak_gb.toFixed(2)})</dd>
-<dt>Forward calls served</dt><dd>${s.served} (last ${s.last_compute_ms.toFixed(1)} ms)</dd>`}catch(e){}}
-tick();setInterval(tick,1000)</script>"""
+WORKER_PAGE = (Path(__file__).parent / "static" / "worker.html").read_text()
 
 
 def run_join(host_addr: str, model_dir: str, name: str, grpc_port: int, status_port: int,
@@ -184,7 +181,11 @@ def run_join(host_addr: str, model_dir: str, name: str, grpc_port: int, status_p
     async def page(_):
         return web.Response(text=WORKER_PAGE, content_type="text/html")
 
+    async def shutdown(_):
+        asyncio.get_running_loop().call_later(0.3, os._exit, 0)
+        return web.json_response({"ok": True})
+
     app = web.Application()
-    app.add_routes([web.get("/", page), web.get("/status", status)])
+    app.add_routes([web.get("/", page), web.get("/status", status), web.post("/api/shutdown", shutdown)])
     print(f"worker status page: http://{ip}:{status_port}", flush=True)
     web.run_app(app, port=status_port, print=None)

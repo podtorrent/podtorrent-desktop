@@ -1,6 +1,7 @@
 """Host server: dashboard + WebSocket event API, node registry, loading and chat."""
 import asyncio
 import json
+import os
 import threading
 import time
 import webbrowser
@@ -46,6 +47,8 @@ class HostApp:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.chat_lock = threading.Lock()
         self.starting = False
+        self.stats = {"tokens": 0, "prompt_tokens": 0, "generated_tokens": 0, "requests": 0}
+        self.busy = False
 
     # ---- events ----
     def emit(self, type_: str, key: str | None = None, **data):
@@ -72,6 +75,10 @@ class HostApp:
         self.clients.discard(ws)
         return ws
 
+    def host_stats_event(self):
+        self.emit("node_stats", key=f"stats:{self.name}", node=self.name, busy=self.busy,
+                  active_requests=int(self.busy), **self.stats)
+
     # ---- nodes ----
     def host_memory_event(self):
         self.emit("memory", key="mem:host", node=self.name,
@@ -93,6 +100,7 @@ class HostApp:
         while True:
             await asyncio.sleep(2)
             self.host_memory_event()
+            self.host_stats_event()
             for n in list(self.nodes.values()):
                 await loop.run_in_executor(None, self._beat, n)
 
@@ -108,6 +116,9 @@ class HostApp:
                       rtt_ms=rtt, heartbeat_ts=time.time())
             self.emit("memory", key=f"mem:{n['name']}", node=n["name"], active_gb=info.mem_active_gb,
                       peak_gb=info.mem_peak_gb, total_gb=info.mem_total_gb)
+            self.emit("node_stats", key=f"stats:{n['name']}", node=n["name"], busy=info.busy,
+                      active_requests=info.active_requests, tokens=info.tokens_processed,
+                      requests=info.requests_served)
         except grpc.RpcError:
             n["status"] = "lost"
             self.emit("node_status", key=f"status:{n['name']}", node=n["name"], status="lost",
@@ -199,6 +210,11 @@ class HostApp:
             text = self.tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False,
                                                 enable_thinking=False)
             ids = self.tok.encode(text)
+            self.busy = True
+            self.stats["requests"] += 1
+            self.stats["prompt_tokens"] += len(ids)
+            self.stats["tokens"] += len(ids)
+            self.host_stats_event()
             t0 = time.perf_counter()
             first = None
             count = 0
@@ -206,6 +222,11 @@ class HostApp:
                 if first is None:
                     first = (time.perf_counter() - t0) * 1000
                 count += 1
+                self.stats["generated_tokens"] += 1
+                if count > 1:  # the first token comes out of the prompt pass
+                    self.stats["tokens"] += 1
+                if count % 8 == 0:
+                    self.host_stats_event()
                 self.emit("token", index=i, text=e.text, token=e.token)
                 self.emit("token_timing", index=i, prefill=(i == 0), bytes=e.bytes_sent,
                           stages=[{"node": self.name, "compute_ms": e.host_ms},
@@ -216,10 +237,16 @@ class HostApp:
         except Exception as e:  # noqa: BLE001
             self.emit("error", message=f"generation failed: {e}")
         finally:
+            self.busy = False
+            self.host_stats_event()
             self.chat_lock.release()
 
     def engine_worker_name(self):
         return next((n["name"] for n in self.nodes.values() if n["lo"] > 0), "worker")
+
+    async def shutdown(self, _):
+        asyncio.get_running_loop().call_later(0.3, os._exit, 0)
+        return web.json_response({"ok": True})
 
     async def index(self, _):
         return web.FileResponse(STATIC / "index.html")
@@ -230,13 +257,14 @@ def run_host(repo, model_dir, n_layers, port, open_browser=True):
     app = web.Application()
     app.add_routes([web.get("/", app_state.index), web.get("/ws", app_state.ws),
                     web.post("/api/join", app_state.join), web.post("/api/start", app_state.start),
-                    web.post("/api/chat", app_state.chat)])
+                    web.post("/api/chat", app_state.chat), web.post("/api/shutdown", app_state.shutdown)])
 
     async def on_start(a):
         app_state.loop = asyncio.get_running_loop()
         app_state.emit("node_joined", key="node:host", node="host", address=f"localhost:{port}", role="host")
         app_state.emit("host_info", key="host_info", addresses=host_addresses(), port=port)
         app_state.host_memory_event()
+        app_state.host_stats_event()
         a["hb"] = asyncio.create_task(app_state.heartbeat_loop())
 
     app.on_startup.append(on_start)

@@ -36,6 +36,9 @@ message NodeInfo {
   float mem_total_gb = 6;
   bool loaded = 7;
   int64 requests_served = 8;
+  int64 tokens_processed = 9;  // sequence positions run through this node's layers
+  int32 active_requests = 10;  // open KV caches
+  bool busy = 11;              // a forward pass is running right now
 }
 
 message LoadRequest {
