@@ -22,6 +22,8 @@ class TokenEvent:
     network_ms: float   # round trip minus worker compute
     bytes_sent: int
     logits: mx.array | None = None
+    host_pre_ms: float = 0.0   # embeddings + local layers, before the hop
+    host_post_ms: float = 0.0  # lm_head + sampling, after the hop
 
 
 class _Stream:
@@ -74,7 +76,7 @@ class Host:
         host2 = (time.perf_counter() - t2) * 1000
         return (int(tok.item()), host1 + host2, resp.compute_ms,
                 rtt - resp.compute_ms, len(payload),
-                logits[0, -1].astype(mx.float32) if keep_logits else None)
+                logits[0, -1].astype(mx.float32) if keep_logits else None, host1, host2)
 
     def generate(self, prompt_ids: list[int], max_tokens=64, keep_logits=False):
         rid = uuid.uuid4().hex
@@ -83,8 +85,8 @@ class Host:
         eos = set(self.tok.eos_token_ids) if hasattr(self.tok, "eos_token_ids") else {self.tok.eos_token_id}
         try:
             for _ in range(max_tokens):
-                tok, h_ms, w_ms, n_ms, nbytes, lg = self._step(rid, ids, cache, keep_logits)
-                yield TokenEvent(tok, self.tok.decode([tok]), h_ms, w_ms, n_ms, nbytes, lg)
+                tok, h_ms, w_ms, n_ms, nbytes, lg, pre, post = self._step(rid, ids, cache, keep_logits)
+                yield TokenEvent(tok, self.tok.decode([tok]), h_ms, w_ms, n_ms, nbytes, lg, pre, post)
                 if tok in eos:
                     break
                 ids = mx.array([[tok]])

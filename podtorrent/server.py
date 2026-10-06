@@ -17,7 +17,7 @@ from . import pipeline_pb2_grpc as rpc
 from .host import Host
 from .shard import Shard
 from .slicer import download_slice
-from .worker import GB, GRPC_OPTS
+from .worker import GB, GRPC_OPTS, chip_name, cors
 
 STATIC = Path(__file__).parent / "static"
 
@@ -92,7 +92,8 @@ class HostApp:
         self.nodes[name] = {"name": name, "addr": b["grpc_addr"], "status_url": b.get("status_url"),
                             "stub": rpc.PipelineStub(ch), "status": "joined", "lo": 0, "hi": 0}
         self.emit("node_joined", key=f"node:{name}", node=name, address=b["grpc_addr"],
-                  status_url=b.get("status_url"), role="worker")
+                  status_url=b.get("status_url"), role="worker", chip=b.get("chip"),
+                  mem_total_gb=b.get("mem_total_gb"))
         return web.json_response({"ok": True})
 
     async def heartbeat_loop(self):
@@ -229,11 +230,13 @@ class HostApp:
                     self.host_stats_event()
                 self.emit("token", index=i, text=e.text, token=e.token)
                 self.emit("token_timing", index=i, prefill=(i == 0), bytes=e.bytes_sent,
-                          stages=[{"node": self.name, "compute_ms": e.host_ms},
+                          stages=[{"node": self.name, "compute_ms": e.host_ms,
+                                   "pre_ms": e.host_pre_ms, "post_ms": e.host_post_ms},
                                   {"node": "network", "compute_ms": e.network_ms},
                                   {"node": self.engine_worker_name(), "compute_ms": e.worker_ms}])
             total = time.perf_counter() - t0
-            self.emit("done", tokens=count, ttft_ms=first, tok_s=(count - 1) / max(total - (first or 0) / 1000, 1e-6))
+            self.emit("done", tokens=count, ttft_ms=first, tok_s=(count - 1) / max(total - (first or 0) / 1000, 1e-6),
+                      total_ms=total * 1000, prompt_tokens=len(ids))
         except Exception as e:  # noqa: BLE001
             self.emit("error", message=f"generation failed: {e}")
         finally:
@@ -254,7 +257,7 @@ class HostApp:
 
 def run_host(repo, model_dir, n_layers, port, open_browser=True):
     app_state = HostApp(repo, Path(model_dir), n_layers)
-    app = web.Application()
+    app = web.Application(middlewares=[cors])
     app.add_routes([web.get("/", app_state.index), web.get("/ws", app_state.ws),
                     web.post("/api/join", app_state.join), web.post("/api/start", app_state.start),
                     web.post("/api/chat", app_state.chat), web.post("/api/shutdown", app_state.shutdown)])
@@ -262,7 +265,8 @@ def run_host(repo, model_dir, n_layers, port, open_browser=True):
     async def on_start(a):
         app_state.loop = asyncio.get_running_loop()
         app_state.emit("node_joined", key="node:host", node="host", address=f"localhost:{port}", role="host")
-        app_state.emit("host_info", key="host_info", addresses=host_addresses(), port=port)
+        app_state.emit("host_info", key="host_info", addresses=host_addresses(), port=port,
+                       repo=repo, n_layers=n_layers, chip=chip_name(), name=app_state.name)
         app_state.host_memory_event()
         app_state.host_stats_event()
         a["hb"] = asyncio.create_task(app_state.heartbeat_loop())
