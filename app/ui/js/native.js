@@ -18,7 +18,7 @@ export function setNativeTheme(theme) {
 }
 
 // ---- system health (read-only; drives health tiles and the perf governor) ----
-async function pollHealth() {
+export async function pollHealth() {
   try { state.health = await invoke("system_health"); commit(); } catch { /* browser */ }
 }
 

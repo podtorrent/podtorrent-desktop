@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS = {
   theme: "system", reduceEffects: false, demo: false, demoPreset: "pair", demoAutoplay: true,
   sidebarCollapsed: false, swarmLayout: "graph", inspector: true, maxTokens: 256, onboarded: false,
   hostAddr: "", notifications: true,
+  valuationBasis: null, macPrice: null, amortMonths: null,
 };
 
 function load(key, dflt) {
@@ -213,21 +214,40 @@ export function sample() {
 }
 
 // ---------- contribution history (this Mac, persisted per day) ----------
-let lastSelfTokens = null;
-export const history = load(HISTORY_KEY, { days: {} });
+let lastSelfTokens = null, lastSelfReq = null;
+export const history = load(HISTORY_KEY, { days: {}, stats: {} });
+history.stats ||= {};
+const today = () => new Date().toISOString().slice(0, 10);
+/** Per-day counters beyond tokens: requests, online/active seconds, block-seconds hosted. */
+export const dayStats = k => history.stats[k] ||= { req: 0, online_s: 0, active_s: 0, block_s: 0 };
 function recordHistory() {
   if (state.source !== "live") return;
   const me = state.nodes[state.self];
-  const tok = me?.stats?.tokens;
-  if (tok == null) { lastSelfTokens = null; return; }
-  if (lastSelfTokens != null && tok > lastSelfTokens) {
-    const day = new Date().toISOString().slice(0, 10);
-    history.days[day] = (history.days[day] || 0) + (tok - lastSelfTokens);
-    save(HISTORY_KEY, history);
-    const all = Object.values(history.days).reduce((a, b) => a + b, 0), prev = all - (tok - lastSelfTokens);
-    for (const m of [1e3, 1e4, 1e5, 1e6]) if (prev < m && all >= m) emit("signal", { kind: "milestone", tokens: m });
+  const day = today();
+  let dirtyH = false;
+  if (me && state.engine.phase === "running") {
+    const d = dayStats(day);
+    d.online_s++;
+    if (nodeState(me) === "active" || (me.tps.at(-1) || 0) > 0) d.active_s++;
+    if (me.lo != null && nodeLoaded(me)) d.block_s += me.hi - me.lo;
+    history.first ||= Date.now() / 1000;
+    dirtyH = true;
   }
-  lastSelfTokens = tok;
+  const req = me?.stats?.requests;
+  if (req == null) lastSelfReq = null;
+  else { if (lastSelfReq != null && req > lastSelfReq) dayStats(day).req += req - lastSelfReq; lastSelfReq = req; }
+  const tok = me?.stats?.tokens;
+  if (tok == null) lastSelfTokens = null;
+  else {
+    if (lastSelfTokens != null && tok > lastSelfTokens) {
+      history.days[day] = (history.days[day] || 0) + (tok - lastSelfTokens);
+      const all = Object.values(history.days).reduce((a, b) => a + b, 0), prev = all - (tok - lastSelfTokens);
+      for (const m of [1e3, 1e4, 1e5, 1e6]) if (prev < m && all >= m) emit("signal", { kind: "milestone", tokens: m });
+    }
+    lastSelfTokens = tok;
+  }
+  // online seconds tick every sample; persist at most every 10 s
+  if (dirtyH && Date.now() - (recordHistory.saved || 0) > 10000) { save(HISTORY_KEY, history); recordHistory.saved = Date.now(); }
 }
 
 // ---------- selectors ----------
@@ -332,3 +352,4 @@ export function swarmStats(s = state) {
 
 export const selfNode = (s = state) => s.nodes[s.self];
 export const isBusyLocally = (s = state) => !!selfNode(s)?.stats?.busy || s.chat.busy;
+addEventListener("pagehide", () => save(HISTORY_KEY, history));

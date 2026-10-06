@@ -66,7 +66,9 @@ const ev = (type, data) => applyEvent({ type, ts: now(), ...data });
 export function startDemo(presetName = settings.demoPreset) {
   stopDemo();
   running = true;
-  const P = PRESETS[presetName] || PRESETS.pair;
+  const base = PRESETS[presetName] || PRESETS.pair, hl = state.health;
+  // "You" are the host node: show this Mac's real chip and memory when the native shell reports them.
+  const P = hl?.mem_total_gb ? { ...base, nodes: base.nodes.map(n => n.name === "host" ? { ...n, chip: hl.chip || n.chip, mem: Math.round(hl.mem_total_gb) } : n) } : base;
   resetState({ source: "demo", role: "host", self: "host" });
   state.engine = { phase: "running", owned: false, line: "", error: "" };
   state.conn = "live";

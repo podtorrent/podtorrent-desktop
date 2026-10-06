@@ -28,9 +28,9 @@ export default {
     const thead = h("div.thead", { role: "row" }, COLS.map(c => h("button", { type: "button", role: "columnheader", "data-k": c.k, onclick: () => { sort = { k: c.k, dir: sort.k === c.k ? -sort.dir : 1 }; paint(state); } }, c.l, icon("chevdown"))));
     const rowsBox = h("div", { style: { position: "relative" } });
     const scroller = h("div.table-scroll", rowsBox);
-    const table = h("div.table", { role: "grid", "aria-label": "Peers", style: { "--cols": COLS.map(c => c.w).join(" ") } }, thead, scroller);
+    const table = h("div.table.peers-table", { role: "grid", "aria-label": "Peers", style: { "--cols": COLS.map(c => c.w).join(" ") } }, thead, scroller);
     const note = h("div.small.muted.solo-note");
-    const card = h("div.card", { style: { overflow: "hidden" } }, table);
+    const card = h("div.card", { style: { overflowX: "auto", overflowY: "hidden" } }, table);
     const page = h("div.page", h("div.row", q, h("span.spacer"), note), card);
     const emptyBox = h("div.page");
     root.append(page, emptyBox);

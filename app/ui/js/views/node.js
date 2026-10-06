@@ -1,7 +1,8 @@
 // My Node: set up this Mac's role (replaces the old launcher), then show what it contributes,
 // its health, and the controls the engine actually supports.
 import { h, text, fmt, cls } from "../dom.js";
-import { state, settings, history, selfNode, nodeState, nodeStateLabel } from "../store.js";
+import { state, settings, setSetting, history, selfNode, nodeState, nodeStateLabel } from "../store.js";
+import { valuation, valuationError, bases, basis, usdFor, kwh, usd } from "../valuation.js";
 import { button, armedButton, toggle, badge, setBadge, ticker } from "../ui.js";
 import { icon } from "../icons.js";
 import { areaChart, barChart } from "../viz/chart.js";
@@ -108,11 +109,13 @@ export default {
         h("div.list-row", h("div.grow", h("div.t", t), h("div.d", d)), toggle(false, () => {}, t))),
       h("div.card-b.small.faint", { style: { paddingTop: "10px" } }, "Today the engine serves a fixed layer range until you stop it. Use Stop node to stop contributing."));
     rules.querySelectorAll(".toggle").forEach(t => { t.disabled = true; });
+    const contrib = contributionCard(), payback = paybackCard();
     const tpsChart = areaChart({ color: "you", labels: ["2 min ago", "now"] });
     const dayChart = barChart({ color: "you" });
     const dayNote = h("span.small.faint");
     const running = h("div.page", hero,
       h("div.tiles", Object.values(tiles)),
+      h("div.two.contrib-row", contrib, payback),
       h("div.two",
         h("section.card", h("div.card-h", h("h2", "Tokens per second"), h("span.spacer"), h("span.small.faint", "this Mac")), h("div.card-b", tpsChart)),
         h("section.card", h("div.card-h", h("h2", "Contribution history"), h("span.spacer"), dayNote), h("div.card-b", dayChart))),
@@ -170,6 +173,8 @@ export default {
         const rows = [];
         for (let i = 13; i >= 0; i--) { const d = new Date(Date.now() - i * 864e5); const k = d.toISOString().slice(0, 10); rows.push({ label: i === 0 ? "Today" : d.toLocaleDateString([], { weekday: "narrow" }), v: days[k] || 0 }); }
         dayChart.set(rows);
+        const sum = summarize(s, me, days, day);
+        contrib.set(sum, s); payback.set(sum);
         text(dayNote, s.source === "demo" ? "Demo data" : "tokens per day, this Mac");
         cls(running, "unreachable", phase === "unreachable");
         running.querySelectorAll(".hero-r .btn").forEach(b => { b.disabled = s.source === "demo"; b.dataset.tip = s.source === "demo" ? "Not available in Demo Mode" : ""; });
@@ -177,6 +182,128 @@ export default {
     };
   },
 };
+
+// ---------- Contribution + Payback Meter ----------
+const DAY = 86400;
+function summarize(s, me, days, day) {
+  const demo = s.source === "demo";
+  const st = demo ? demoStats() : history.stats;
+  const first = demo ? Date.now() / 1000 - 14 * DAY : history.first;
+  const keys = Object.keys(st);
+  const tot = keys.reduce((a, k) => { for (const f in a) a[f] += st[k][f] || 0; return a; }, { req: 0, online_s: 0, active_s: 0, block_s: 0 });
+  const td = st[day] || { req: 0, online_s: 0, active_s: 0, block_s: 0 };
+  const now = Date.now() / 1000, sinceMidnight = now % DAY;
+  const chip = me?.chip || s.health?.chip || "";
+  const tokAll = Object.values(days).reduce((a, b) => a + b, 0);
+  // current rate: average tokens/day over the last 7 days (or since first run, if shorter)
+  let tok7 = 0; for (let i = 0; i < 7; i++) tok7 += days[new Date(Date.now() - i * DAY * 1000).toISOString().slice(0, 10)] || 0;
+  const span = first ? Math.min(7, Math.max(1, (now - first) / DAY)) : 1;
+  return {
+    demo, chip,
+    today: { tokens: days[day] || 0, req: td.req, up: sinceMidnight ? Math.min(1, td.online_s / sinceMidnight) : null, blocks: me?.lo != null ? me.hi - me.lo : 0, kwh: kwh(td.active_s, td.online_s, chip) },
+    all: { tokens: tokAll, req: tot.req, up: first ? Math.min(1, tot.online_s / Math.max(1, now - first)) : null, blockHours: tot.block_s / 3600, kwh: kwh(tot.active_s, tot.online_s, chip) },
+    tokPerDay: tok7 / span, since: first,
+  };
+}
+
+function contributionCard() {
+  const sel = h("select.input.basis-sel", { "aria-label": "Valuation basis", onchange: e => setSetting("valuationBasis", e.target.value) });
+  const cell = () => h("b.num");
+  const rows = {};
+  const mk = (k, label, tip) => { rows[k] = [cell(), cell()]; return h("div.c-row", h("span.c-l", label, tip ? h("span.faint.small", " " + tip) : null), ...rows[k]); };
+  const valT = h("b.num.c-val"), valA = h("b.num.c-val");
+  const foot = h("div.small.faint.c-foot");
+  const el = h("section.card.contrib",
+    h("div.card-h", h("h2", "Contribution"), h("span.spacer"), h("span.badge.neutral", "Estimates in USD")),
+    h("div.card-b",
+      h("div.c-grid",
+        h("div.c-row.c-head", h("span"), h("span.caps", "Today"), h("span.caps", "Lifetime")),
+        mk("tokens", "Tokens served"), mk("req", "Requests helped"), mk("up", "Uptime"),
+        mk("blocks", "Blocks hosted", "(now · block-hours)"), mk("kwh", "Energy used", "(est.)"),
+        h("div.c-row.c-value", h("span.c-l", "Value created ", h("span.badge.neutral", "Estimate")), valT, valA)),
+      h("div.field.c-basis", h("label", "Valuation basis: equivalent API price for the tokens this Mac served"), sel),
+      foot));
+  let selKey = "";
+  el.set = (m, s) => {
+    const list = bases();
+    const k = list.map(b => b.id).join();
+    if (k !== selKey) { selKey = k; sel.replaceChildren(...list.map(b => h("option", { value: b.id }, `${b.label} · $${b.usd_per_mtok.toFixed(2)} / 1M tokens`))); }
+    const b = basis(settings.valuationBasis);
+    if (b && sel.value !== b.id) sel.value = b.id;
+    sel.disabled = !b;
+    const set = (r, a, c) => { text(rows[r][0], a); text(rows[r][1], c); };
+    set("tokens", fmt.compact(m.today.tokens), fmt.compact(m.all.tokens));
+    set("req", fmt.int(m.today.req), fmt.int(m.all.req));
+    set("up", fmt.pct(m.today.up), fmt.pct(m.all.up));
+    set("blocks", m.today.blocks ? `${m.today.blocks} blocks` : "None", `${fmt.fixed(m.all.blockHours, m.all.blockHours < 10 ? 1 : 0)} h`);
+    const e = x => x == null ? "–" : x < 1 ? `${Math.round(x * 1000)} Wh` : `${x.toFixed(2)} kWh`;
+    set("kwh", e(m.today.kwh), e(m.all.kwh));
+    text(valT, b ? "≈ " + usd(usdFor(m.today.tokens, b)) : "–");
+    text(valA, b ? "≈ " + usd(usdFor(m.all.tokens, b)) : "–");
+    text(foot, !valuation ? (valuationError || "Loading price benchmarks…")
+      : `What these tokens would cost at ${b.label.toLowerCase()} prices${b.blended ? " (weighted average)" : ""}. Not earnings. Prices from config/valuation.json, last updated ${valuation.last_updated}. Energy is estimated from ${m.chip ? "an " + m.chip : "a generic"} power profile, not measured.${m.demo ? " Demo data." : ""}`);
+  };
+  return el;
+}
+
+function paybackCard() {
+  const ring = gauge(); ring.classList.add("payback-ring");
+  const pct = h("b.num"), sub = h("span.small.faint");
+  const price = h("input.input", { type: "number", min: "0", step: "1", inputmode: "decimal", placeholder: "e.g. 3999", value: settings.macPrice ?? "", "aria-label": "Purchase price in USD" });
+  const amort = h("input.input", { type: "number", min: "0", step: "1", placeholder: "Optional", value: settings.amortMonths ?? "", "aria-label": "Amortization period in months" });
+  const num = v => { const x = parseFloat(v); return isFinite(x) && x > 0 ? x : null; };
+  price.addEventListener("change", () => setSetting("macPrice", num(price.value)));
+  amort.addEventListener("change", () => setSetting("amortMonths", num(amort.value)));
+  const lines = h("div.pb-lines");
+  const el = h("section.card.payback",
+    h("div.card-h", h("h2", "Payback Meter"), h("span.spacer"), h("span.badge.neutral", "Estimate")),
+    h("div.card-b.pb-body",
+      h("div.gauge-wrap", ring, h("div.gauge-c", pct, sub)),
+      h("div.pb-r",
+        h("div.pb-inputs",
+          h("div.field", h("label", "This Mac's purchase price (USD)"), price),
+          h("div.field", h("label", "Amortize over (months)"), amort)),
+        lines)));
+  el.set = m => {
+    if (document.activeElement !== price) price.value = settings.macPrice ?? "";
+    if (document.activeElement !== amort) amort.value = settings.amortMonths ?? "";
+    const b = basis(settings.valuationBasis), P = settings.macPrice;
+    const value = b ? usdFor(m.all.tokens, b) : null, perDay = b ? usdFor(m.tokPerDay, b) : null;
+    if (!P || value == null) {
+      ring.set(0); text(pct, "–"); text(sub, P ? "no prices" : "enter price");
+      lines.replaceChildren(h("div.small.muted", P ? "Price benchmarks aren't loaded." : "Enter what this Mac cost to see how much of it the value it creates covers."));
+      return;
+    }
+    const f = value / P;
+    ring.set(f); text(pct, f >= 0.1 ? fmt.pct(f) : (f * 100).toFixed(f >= 0.001 ? 2 : 3) + "%"); text(sub, "paid back");
+    const out = [h("div", h("span.muted", "Value created so far "), h("b", "≈ " + usd(value)), h("span.muted", ` of ${usd(P)}`))];
+    out.push(h("div", h("span.muted", "Current rate "), h("b", perDay > 0 ? `≈ ${usd(perDay)} / day` : "No traffic yet"), h("span.faint.small", " (7-day average)")));
+    if (f >= 1) out.push(h("div.pb-done", "Paid back at this valuation basis."));
+    else if (perDay > 0) {
+      const days = (P - value) / perDay, when = new Date(Date.now() + days * DAY * 1000);
+      out.push(h("div", h("span.muted", "Projected payback "), h("b", days > 365 * 50 ? "More than 50 years" : when.toLocaleDateString([], { year: "numeric", month: "short", day: "numeric" })),
+        h("span.faint.small", days > 365 * 50 ? "" : ` (${days > 730 ? fmt.fixed(days / 365, 1) + " years" : Math.ceil(days) + " days"})`)));
+    }
+    const A = settings.amortMonths;
+    if (A && f < 1) {
+      const need = P / (A * 30.44);
+      out.push(h("div", h("span.muted", `To pay back over ${A} months `), h("b", `≈ ${usd(need)} / day`), h("span.faint.small", perDay > 0 ? ` (you're at ${fmt.pct(perDay / need)} of that pace)` : "")));
+    }
+    out.push(h("div.small.faint", `Valued at ${b.label} prices. Not income: an estimate of what equivalent API usage would cost.${m.demo ? " Demo data." : ""}`));
+    lines.replaceChildren(...out);
+  };
+  return el;
+}
+
+let demoStatsCache = null;
+function demoStats() {
+  if (demoStatsCache) return demoStatsCache;
+  demoStatsCache = {};
+  const d = demoDays();
+  const today = new Date().toISOString().slice(0, 10), up = (Date.now() / 1000) % DAY * 0.97;
+  for (const [k, tok] of Object.entries(d)) demoStatsCache[k] = { req: Math.round(tok / 180), online_s: k === today ? up : 20 * 3600, active_s: Math.round(tok / 30), block_s: 24 * 20 * 3600 };
+  return demoStatsCache;
+}
 
 let demoCache = null;
 function demoDays() {
