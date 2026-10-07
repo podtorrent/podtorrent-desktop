@@ -5,19 +5,23 @@ import asyncio
 import json
 import os
 import re
+import ssl
 import subprocess
 import time
 from typing import Callable
 
 import aiohttp
+import certifi
 
 from . import stun
 from .identity import Identity
 
 # Override with PODTORRENT_RENDEZVOUS, e.g. ws://localhost:8787 for `wrangler dev`.
-DEFAULT_URL = "wss://podtorrent-rendezvous.workers.dev"
+DEFAULT_URL = "wss://podtorrent-rendezvous.logesh-063.workers.dev"
 PING_S = 10
 STUN_REFRESH_S = 120
+# python.org builds ship without system CAs; certifi's bundle works everywhere.
+SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 
 
 def rendezvous_url() -> str:
@@ -75,7 +79,7 @@ class SwarmClient:
         while True:
             try:
                 async with aiohttp.ClientSession() as http:
-                    async with http.ws_connect(f"{self.url}/v1/swarm?peer_id={self.ident.peer_id}",
+                    async with http.ws_connect(f"{self.url}/v1/swarm?peer_id={self.ident.peer_id}", ssl=SSL_CTX,
                                                heartbeat=None, timeout=aiohttp.ClientWSTimeout(ws_close=5)) as ws:
                         backoff = 1
                         rec = await self._full_record()
