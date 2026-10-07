@@ -26,6 +26,19 @@ def select_tensors(weight_map: dict, lo: int, hi: int, host: bool, tail: bool) -
     return names
 
 
+def local_tensors(out_dir: Path) -> set[str]:
+    """Names of every tensor already in out_dir/*.safetensors (reads headers only)."""
+    names: set[str] = set()
+    for f in Path(out_dir).glob("*.safetensors"):
+        try:
+            with open(f, "rb") as fh:
+                (n,) = struct.unpack("<Q", fh.read(8))
+                names |= set(json.loads(fh.read(n))) - {"__metadata__"}
+        except (OSError, ValueError, struct.error):
+            continue
+    return names
+
+
 def _headers() -> dict:
     tok = get_token()  # HF_TOKEN env var or ~/.cache/huggingface/token
     return {"Authorization": f"Bearer {tok}"} if tok else {}
@@ -64,14 +77,13 @@ def download_slice(
             pass  # optional files
 
     out_path = out_dir / f"{name}.safetensors"
-    if out_path.exists():  # already fetched
-        size = out_path.stat().st_size
+    index = json.loads((out_dir / "model.safetensors.index.json").read_text())
+    wanted = select_tensors(index["weight_map"], lo, hi, host, tail)
+    if out_path.exists() or set(wanted) <= local_tensors(out_dir):  # already fetched, maybe as another slice
+        size = out_path.stat().st_size if out_path.exists() else 1
         if on_progress:
             on_progress(size, size)
         return out_path
-
-    index = json.loads((out_dir / "model.safetensors.index.json").read_text())
-    wanted = select_tensors(index["weight_map"], lo, hi, host, tail)
     by_file: dict[str, list[str]] = {}
     for n in wanted:
         by_file.setdefault(index["weight_map"][n], []).append(n)

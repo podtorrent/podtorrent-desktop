@@ -100,7 +100,7 @@ export function mountShell() {
     // banners: demo, offline, engine trouble
     const b = [];
     if (s.source === "demo") b.push(["demo", "sparkle", `Demo Mode · ${presets[settings.demoPreset]?.label}. Numbers are simulated.`, ["Turn off", () => setDemo(false)]]);
-    else if (s.engine.phase === "unreachable") b.push(["gap", "alert", "The engine isn't responding.", ["Restart", () => s.role === "host" ? actions.startHost() : actions.join()]]);
+    else if (s.engine.phase === "unreachable") b.push(["gap", "alert", "The engine isn't responding.", ["Restart", () => actions.startHost()]]);
     else if (s.role === "host" && s.conn === "down") b.push(["degraded", "wifioff", "Disconnected from the engine. Reconnecting…", null]);
     const key = JSON.stringify(b.map(x => x.slice(0, 3)));
     if (key !== bannerKey) {

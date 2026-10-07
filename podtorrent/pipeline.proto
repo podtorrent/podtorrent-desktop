@@ -1,8 +1,9 @@
 syntax = "proto3";
 package podtorrent;
 
+// Carried over QUIC (podtorrent/net/quic.py): length-prefixed protobuf, one stream per call.
 service Pipeline {
-  // One long-lived stream per host; requests are processed in order.
+  // One long-lived stream per (session, hop); requests are processed in order.
   rpc Forward(stream ForwardRequest) returns (stream ForwardResponse);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatReply);
   rpc Info(InfoRequest) returns (NodeInfo);
@@ -11,17 +12,21 @@ service Pipeline {
 }
 
 message ForwardRequest {
-  string request_id = 1;
+  string session_id = 1;
   bytes hidden = 2;          // fp16, shape [1, seq, hidden]
   repeated int32 shape = 3;
-  bool release = 4;          // drop this request's KV cache (hidden empty)
+  bool release = 4;          // drop this session's KV cache (hidden empty)
+  string model = 5;          // repo, e.g. mlx-community/Qwen3-30B-A3B-4bit
+  int32 layer_lo = 6;        // run layers [layer_lo, layer_hi): any range inside a served slice
+  int32 layer_hi = 7;
 }
 
 message ForwardResponse {
-  string request_id = 1;
+  string session_id = 1;
   bytes hidden = 2;
   repeated int32 shape = 3;
-  float compute_ms = 4;      // local compute time on the worker
+  float compute_ms = 4;      // local compute time on the serving peer
+  string error = 5;          // set instead of hidden when this peer can't run the request
 }
 
 message HeartbeatRequest { int64 sent_ns = 1; }
@@ -39,6 +44,14 @@ message NodeInfo {
   int64 tokens_processed = 9;  // sequence positions run through this node's layers
   int32 active_requests = 10;  // open KV caches
   bool busy = 11;              // a forward pass is running right now
+  repeated Slice slices = 12;
+}
+
+message Slice {
+  string model = 1;
+  int32 lo = 2;
+  int32 hi = 3;
+  bool loaded = 4;
 }
 
 message LoadRequest {

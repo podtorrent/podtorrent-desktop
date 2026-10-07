@@ -13,21 +13,16 @@ def main():
     ap = argparse.ArgumentParser(prog="podtorrent")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    h = sub.add_parser("host", help="run the dashboard + engine")
-    h.add_argument("--model", default=DEFAULT_REPO)
-    h.add_argument("--model-dir")
-    h.add_argument("--layers", type=int, default=48, help="total layers in the model")
-    h.add_argument("--port", type=int, default=8000)
-    h.add_argument("--no-open", action="store_true")
-
-    j = sub.add_parser("join", help="join a host as a worker")
-    j.add_argument("addr", help="host address, e.g. 192.168.1.5:8000")
-    j.add_argument("--model", default=DEFAULT_REPO)
-    j.add_argument("--model-dir")
-    j.add_argument("--name", default=os.uname().nodename.split(".")[0])
-    j.add_argument("--grpc-port", type=int, default=50051)
-    j.add_argument("--status-port", type=int, default=8001)
-    j.add_argument("--advertise", help="IP the host should dial (default: auto)")
+    for cmd in ("peer", "host"):  # `host` is the pre-P2P name, kept for old app builds
+        p = sub.add_parser(cmd, help="run this Mac's peer: serve layers, request completions, local API"
+                           if cmd == "peer" else argparse.SUPPRESS)
+        p.add_argument("--model", default=DEFAULT_REPO)
+        p.add_argument("--model-dir")
+        p.add_argument("--layers", type=int, help="total layers (default: from the model's config)")
+        p.add_argument("--port", type=int, default=8000, help="local API port (127.0.0.1 only)")
+        p.add_argument("--serve", help="layer range to serve, e.g. 0:24 (default: last one served)")
+        p.add_argument("--open", action="store_true", help="open the dashboard in a browser")
+        p.add_argument("--no-open", action="store_true", help=argparse.SUPPRESS)
 
     d = sub.add_parser("download", help="download this Mac's layers only (no peer needed)")
     d.add_argument("role", choices=["host", "worker"])
@@ -40,28 +35,17 @@ def main():
     sw.add_argument("--name", default=os.uname().nodename.split(".")[0])
     sw.add_argument("--watch", action="store_true", help="keep listening and print changes")
 
-    w = sub.add_parser("worker-static", help="(tests) serve a preloaded layer range")
-    w.add_argument("--model-dir", required=True)
-    w.add_argument("--lo", type=int, required=True)
-    w.add_argument("--hi", type=int, required=True)
-    w.add_argument("--port", type=int, default=50051)
-
     a = ap.parse_args()
-    if a.cmd == "host":
-        from .server import run_host
-        run_host(a.model, a.model_dir or default_dir(a.model), a.layers, a.port, not a.no_open)
+    if a.cmd in ("peer", "host"):
+        from .peer import run_peer
+        serve = tuple(int(x) for x in a.serve.split(":")) if a.serve else None
+        run_peer(a.model, a.model_dir or default_dir(a.model), a.layers, a.port, serve, a.open)
     elif a.cmd == "download":
         from .download import run_download
         run_download(a.role, a.model, a.model_dir or default_dir(a.model), a.split, a.layers)
     elif a.cmd == "swarm":
         from .net.cli import run_swarm
         run_swarm(a.name, a.watch)
-    elif a.cmd == "join":
-        from .worker import run_join
-        run_join(a.addr, a.model_dir or default_dir(a.model), a.name, a.grpc_port, a.status_port, a.advertise)
-    else:
-        from .worker import serve_static
-        serve_static(a.model_dir, a.lo, a.hi, a.port)
 
 
 if __name__ == "__main__":

@@ -3,8 +3,7 @@
 import { state, settings, setSetting, emit, on, resetState, commit, selfNode } from "./store.js";
 import * as engine from "./engine.js";
 import { startDemo, stopDemo, presets } from "./demo.js";
-import { h } from "./dom.js";
-import { sheet, button, toast } from "./ui.js";
+import { toast } from "./ui.js";
 
 export const VIEWS = ["swarm", "models", "playground", "node", "peers", "activity", "settings"];
 let route = "swarm";
@@ -31,19 +30,8 @@ export function setDemoPreset(p) {
   if (state.source === "demo") startDemo(p);
 }
 
-export function joinDialog() {
-  const input = h("input.input.mono", { placeholder: "100.x.y.z:8000", value: settings.hostAddr || "", autofocus: true, "aria-label": "Host address" });
-  const go_ = () => { s.close(); engine.joinHost(input.value); };
-  input.addEventListener("keydown", e => { if (e.key === "Enter") go_(); });
-  const s = sheet({
-    title: "Join a host",
-    body: h("div.col", { style: { gap: "12px" } },
-      h("p.muted", "Enter the host Mac's Tailscale address. This Mac will serve layers 24–47 for it."),
-      h("div.field", h("label", "Host address"), input),
-      h("p.small.faint", "Find it on the host: My Node shows its addresses, or run tailscale ip -4. Port 8000 is added if you leave it off.")),
-    footer: [button("Cancel", { onclick: () => s.close() }), button("Join", { variant: "primary", onclick: go_ })],
-  });
-}
+/** Kept for the menu and ⌘K: there's no address to enter any more, so this just starts the peer. */
+export function joinDialog() { go("node"); engine.joinHost(); }
 
 export async function copyText(t, what = "Copied") {
   try { await navigator.clipboard.writeText(t); toast(what, "serving"); } catch { toast("Couldn't copy", "gap"); }

@@ -146,13 +146,13 @@ export default {
         picker.disabled = ms.length < 2;
         // blocked / empty states
         // a worker chats through the host, so it needs the host's event stream
-        const ok = m?.runnable && (s.role === "host" || s.source === "demo" || (s.role === "worker" && s.conn === "live"));
+        const ok = m?.runnable && (s.role === "host" || s.source === "demo");
         const k = `${ok}|${m?.id}|${m?.verdict.title}|${s.role}|${s.engine.phase}|${m?.missing.length}`;
         if (k !== blockKey) {
           blockKey = k;
           if (ok) blocked.replaceChildren();
           else if (s.role === "worker" && s.conn !== "live") blocked.replaceChildren(empty({ icon: "wifioff", title: "Not connected to the host", body: "This Mac sends its prompts through the host. Waiting for the host's event stream…" }));
-          else if (!m) blocked.replaceChildren(empty({ icon: "playground", title: "No model to talk to yet", body: "Start as host and load the model to chat with it.", actions: [button("Start as Host", { variant: "primary", onclick: actions.startHost })] }));
+          else if (!m) blocked.replaceChildren(empty({ icon: "playground", title: "No model to talk to yet", body: "Start your node and load the model to chat with it.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
           else blocked.replaceChildren(empty({
             icon: m.verdict.level === "gap" ? "alert" : "layers", tone: m.verdict.level === "gap" ? "gap" : "degraded",
             title: m.verdict.level === "gap" ? `${m.name} can't run yet` : m.verdict.level === "degraded" ? "Loading the model…" : `${m.name} isn't loaded`,

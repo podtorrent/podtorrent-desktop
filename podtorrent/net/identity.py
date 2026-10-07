@@ -1,6 +1,6 @@
 """This Mac's long-lived peer identity: an Ed25519 key in ~/.podtorrent/identity.
 
-peer_id is the first 32 hex chars of sha256(public key). Phase 2 binds QUIC certificates to it."""
+peer_id is the first 32 hex chars of sha256(public key). QUIC certificates are signed with this key."""
 import hashlib
 import os
 from functools import cache
@@ -14,11 +14,15 @@ def home() -> Path:
     return Path(os.environ.get("PODTORRENT_HOME", Path.home() / ".podtorrent"))
 
 
+def peer_id_of(public: bytes) -> str:
+    return hashlib.sha256(public).hexdigest()[:32]
+
+
 class Identity:
     def __init__(self, key: Ed25519PrivateKey):
         self.key = key
         self.public = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-        self.peer_id = hashlib.sha256(self.public).hexdigest()[:32]
+        self.peer_id = peer_id_of(self.public)
 
 
 @cache

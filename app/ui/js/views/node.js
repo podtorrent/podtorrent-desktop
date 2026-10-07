@@ -6,7 +6,7 @@ import { valuation, valuationError, bases, basis, usdFor, kwh, usd } from "../va
 import { button, armedButton, toggle, badge, setBadge, ticker } from "../ui.js";
 import { icon } from "../icons.js";
 import { areaChart, barChart } from "../viz/chart.js";
-import { downloadSlice, startHost, joinHost, stopNode, quitApp, SPLIT } from "../engine.js";
+import { startHost, stopNode, quitApp } from "../engine.js";
 import { isTauri } from "../native.js";
 import { copyText, setDemo } from "../actions.js";
 
@@ -21,54 +21,25 @@ function gauge() {
   return svg;
 }
 
-function roleCard(role) {
-  const chip = badge("Checking…", "neutral", { dot: true });
-  const bar = h("div.progress", h("i")), dl = h("div.small.muted.dlt");
-  const down = button(role === "host" ? "Download host layers" : "Download worker layers", { icon: "download", onclick: () => downloadSlice(role) });
-  const addr = role === "worker" ? h("input.input.mono", { placeholder: "100.x.y.z:8000", value: settings.hostAddr || "", "aria-label": "Host address" }) : null;
-  const go = role === "host" ? button("Start as Host", { variant: "primary", size: "lg", icon: "play", onclick: () => startHost() })
-    : button("Join Host", { variant: "primary", size: "lg", icon: "link", onclick: () => joinHost(addr.value) });
-  addr?.addEventListener("keydown", e => { if (e.key === "Enter") joinHost(addr.value); });
-  const el = h("section.card.role-card",
-    h("div.row", h("div.role-ic", icon(role === "host" ? "host" : "layers")), h("div.grow", h("h2", role === "host" ? "Host" : "Worker"), h("div.small.muted", role === "host" ? `Runs the dashboard, tokenizer and layers 0–${SPLIT - 1}` : `Contributes layers ${SPLIT}–47 to a host`)), chip),
-    h("div.col", { style: { gap: "6px", margin: "14px 0" } }, bar, dl),
-    h("div.col", { style: { gap: "8px" } }, down, addr ? h("div.field", h("label", "Host address (Tailscale IP:8000)"), addr) : null, go));
-  el.set = s => {
-    const st = s.download || {}, p = st.progress, mine = p && p.role === role && p.split === SPLIT;
-    const cached = role === "host" ? st.host_cached : st.worker_cached;
-    bar.hidden = true; text(dl, "");
-    down.disabled = !!st.busy || !isTauri;
-    if (mine && st.busy && p.phase === "downloading") {
-      const pc = p.total ? p.done / p.total : 0;
-      setBadge(chip, `Downloading ${fmt.pct(pc)}`, "active", { dot: true, pulse: true });
-      bar.hidden = false; bar.firstChild.style.width = pc * 100 + "%";
-      text(dl, `${fmt.bytes(p.done)} of ${fmt.bytes(p.total)}`);
-    } else if (mine && p.phase === "error") { setBadge(chip, "Error", "gap", { dot: true }); text(dl, p.message); }
-    else if (cached) { setBadge(chip, "Downloaded", "serving", { dot: true }); text(dl, "Slice is on disk and will be reused."); down.lastChild.textContent = "Re-check download"; }
-    else if (st.busy && st.role === role) { setBadge(chip, "Starting", "active", { dot: true, pulse: true }); text(dl, (st.log || "").split("\n").pop().slice(0, 100) || "Preparing Python environment (first run)…"); }
-    else if (!isTauri) { setBadge(chip, "Unknown", "neutral", { dot: true }); text(dl, "Open the PodTorrent app to manage downloads."); }
-    else { setBadge(chip, "Not downloaded", "neutral", { dot: true }); text(dl, "About 8.5 GB. You can also skip this: the host downloads on Load model."); }
-    go.disabled = !isTauri;
-  };
-  return el;
-}
-
 const PRESS = { normal: ["Normal", "serving"], warn: ["Elevated", "degraded"], critical: ["Critical", "gap"], unknown: ["Unknown", "neutral"] };
 const THERM = { nominal: ["Nominal", "serving"], fair: ["Fair", "degraded"], serious: ["Serious", "gap"], critical: ["Critical", "gap"], unknown: ["Unknown", "neutral"] };
 
 export default {
   title: "My Node",
-  subtitle: s => s.role ? `${s.role === "host" ? "Host" : "Worker"} · ${s.engine.phase === "running" ? "contributing" : s.engine.phase}` : "Not contributing",
+  subtitle: s => s.role ? `Peer · ${s.engine.phase === "running" ? "contributing" : s.engine.phase}` : "Not contributing",
   mount(root) {
     // ---- setup (no engine) ----
-    const hostCard = roleCard("host"), workerCard = roleCard("worker");
+    const startBtn = button("Start My Node", { variant: "primary", size: "lg", icon: "play", onclick: () => startHost() });
+    const startCard = h("section.card.role-card",
+      h("div.row", h("div.role-ic", icon("node")), h("div.grow", h("h2", "This Mac as a peer"), h("div.small.muted", "Joins the global swarm, connects directly to the other Macs and serves the layers it's given. Slices download on demand and are reused."))),
+      h("div.col", { style: { gap: "8px", marginTop: "14px" } }, startBtn));
     const machine = h("div.small.muted");
     const errBox = h("div.next.err");
     const setup = h("div.page",
-      h("div.page-h", h("div", h("h1", "Share this Mac"), h("p", "PodTorrent pools two Macs to run a model neither can hold alone. Pick this Mac's role. Each Mac downloads only its own slice, and the other Mac doesn't need to be online yet."), machine)),
+      h("div.page-h", h("div", h("h1", "Share this Mac"), h("p", "PodTorrent pools Macs to run a model none of them can hold alone. Every Mac runs the same node; each downloads only the slice it serves."), machine)),
       errBox,
-      h("div.role-grid", hostCard, workerCard),
-      h("div.small.faint", "Macs on different networks connect over Tailscale. Ports 8000 (host), 50051 and 8001 (worker), unauthenticated: use a private tailnet only. ",
+      startCard,
+      h("div.small.faint", "Macs on different networks connect directly over encrypted QUIC (UDP hole punching). The swarm is open: any PodTorrent peer can send work to this Mac. ",
         h("a", { href: "#", onclick: e => { e.preventDefault(); setDemo(true); } }, "Explore Demo Mode first →")));
 
     // ---- starting ----
@@ -130,7 +101,7 @@ export default {
         setup.hidden = show !== "setup"; starting.hidden = show !== "start"; running.hidden = show !== "run";
         const hl = s.health;
         if (show === "setup") {
-          hostCard.set(s); workerCard.set(s);
+          startBtn.disabled = !isTauri;
           text(machine, hl ? `This Mac: ${hl.chip || "Apple Silicon"} · ${fmt.gb(hl.mem_total_gb)} unified memory · macOS ${hl.os}. A slice needs about 8.5 GB${hl.mem_total_gb ? ` (${fmt.pct(8.5 / hl.mem_total_gb)} of this Mac)` : ""} plus KV cache.` : "");
           errBox.hidden = !s.engine.error;
           if (s.engine.error) errBox.replaceChildren(icon("alert"), h("div.grow", h("b", "The engine stopped"), h("div.mono.small", s.engine.error.split("\n").slice(-3).join("\n"))));
@@ -143,8 +114,8 @@ export default {
         text(gv, m ? fmt.gb(m.active_gb) : "–");
         text(gs, m ? `of ${fmt.gb(m.total_gb)} in use` : "");
         text(chipEl, me?.chip || hl?.chip || "This Mac");
-        text(running.querySelector(".hero-sub"), [me?.name, s.source === "demo" ? "Demo Mode" : s.role === "host" ? "Host engine on :8000" : `Worker · status on :8001${s.hostAddr ? ` · host ${s.hostAddr}` : ""}`].filter(Boolean).join(" · "));
-        setBadge(roleB, s.role === "host" ? "Host" : "Worker", "you");
+        text(running.querySelector(".hero-sub"), [me?.name, s.source === "demo" ? "Demo Mode" : "Peer in the global swarm"].filter(Boolean).join(" · "));
+        setBadge(roleB, "Peer", "you");
         const st = me ? nodeState(me, s) : "idle";
         setBadge(stateB, phase === "unreachable" ? "Not responding" : me ? nodeStateLabel(me, s) : "Starting", phase === "unreachable" ? "gap" : st === "idle" ? "neutral" : st, { dot: true, pulse: st === "active" });
         text(hv.layers, me?.lo != null ? `${fmt.layers(me.lo, me.hi)}${me.roles?.length ? " + head" : ""}` : "None yet");
@@ -155,7 +126,7 @@ export default {
         tk.req.set(me?.stats?.requests ?? 0);
         text(hv.up, fmt.dur(me?.uptime_s ?? Date.now() / 1000 - (me?.firstSeen || Date.now() / 1000)));
         // host addresses for the worker to join
-        const a = s.role === "host" ? s.hostInfo?.addresses || [] : [];
+        const a = [];
         const ak = a.join();
         if (addrs.dataset.k !== ak) {
           addrs.dataset.k = ak;

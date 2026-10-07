@@ -49,14 +49,8 @@ export async function startHost() {
   if (state.source === "demo") return toast("Turn off Demo Mode to start a real node", "degraded");
   return start("host", null);
 }
-export async function joinHost(addr) {
-  addr = (addr || "").trim();
-  if (!addr) return toast("Enter the host's address, e.g. 100.64.0.2:8000", "degraded");
-  if (!/:\d+$/.test(addr)) addr += `:${HOST_PORT}`;
-  if (state.source === "demo") return toast("Turn off Demo Mode to join a real host", "degraded");
-  setSetting("hostAddr", addr);
-  return start("worker", addr);
-}
+/** There is no host to join any more: every Mac runs the same peer and finds the others itself. */
+export const joinHost = () => startHost();
 
 async function start(role, addr) {
   stopTimers();
@@ -64,9 +58,9 @@ async function start(role, addr) {
   resetState({ role, self: role === "host" ? "host" : null, hostAddr: addr || "" });
   state.engine = { phase: "starting", owned: true, line: "Starting engine (first run installs Python packages)…", error: "" };
   commit();
-  try { await invoke("start_engine", { mode: role === "host" ? "host" : "join", addr }); }
+  try { await invoke("start_engine", { mode: "peer" }); }
   catch (e) { state.engine = { phase: "stopped", owned: false, line: "", error: String(e) }; commit(); toast("Couldn't start the engine", "gap", String(e)); return; }
-  feed("engine", role === "host" ? "Started as host" : `Joining host ${addr}`, "", "info");
+  feed("engine", "Started this Mac's peer", "It joins the swarm and connects to other Macs directly", "info");
   const url = role === "host" ? HOST + "/" : WORKER + "/status";
   for (let i = 0; i < 400 && my === epoch; i++) {
     if (await reachable(url)) {

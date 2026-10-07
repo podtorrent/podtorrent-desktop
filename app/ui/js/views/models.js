@@ -12,7 +12,7 @@ const VIcon = { serving: "check", gap: "alert", degraded: "download", planned: "
 
 function steps(s, m) {
   const host = Object.values(s.nodes).find(n => n.role === "host");
-  const w = Object.values(s.nodes).find(n => n.role === "worker");
+  const w = Object.values(s.nodes).find(n => n.role !== "host");
   const wlost = w?.status === "lost";
   const loadStep = (title, n) => {
     if (!n?.load) return s.loadRequested ? { s: "active", b: "Starting", t: title, d: "Waiting for progress…" } : { s: "todo", b: "Not started", t: title, d: "Starts when you load the model" };
@@ -25,25 +25,22 @@ function steps(s, m) {
   const k = m.assignments[1]?.lo ?? SPLIT;
   const started = s.loadRequested || s.ready || !!s.layerMap;
   return [
-    { s: s.conn === "live" ? "done" : "bad", b: s.conn === "live" ? "Running" : "Offline", t: "Host engine", d: "Dashboard, tokenizer and the first layers" },
-    w ? { s: wlost ? "bad" : "done", b: wlost ? "Unreachable" : "Joined", t: "Worker connected", d: `${w.name} · ${w.address}` } : { s: "wait", b: "Waiting", t: "Worker connected", d: "No worker has joined yet" },
-    started ? { s: "done", b: "Requested", t: "Model load", d: `Split at layer ${k}` } : { s: "todo", b: w && !wlost ? "Ready" : "Blocked", t: "Model load", d: w && !wlost ? "Click Load model" : "Needs a worker first" },
-    loadStep(`Host layers 0–${k - 1}`, host),
-    w ? loadStep(`Worker layers ${k}–${m.n_layers - 1} (${w.name})`, w) : { s: "todo", b: "Blocked", t: `Worker layers ${k}–${m.n_layers - 1}`, d: "Needs a worker to join first" },
+    { s: s.conn === "live" ? "done" : "bad", b: s.conn === "live" ? "Running" : "Offline", t: "Your node", d: "Running, and in the global swarm" },
+    w ? { s: wlost ? "bad" : "done", b: wlost ? "Unreachable" : "Direct", t: "Another Mac connected", d: `${w.name} · ${w.address}` } : { s: "wait", b: "Waiting", t: "Another Mac connected", d: "No other Mac reachable yet" },
+    started ? { s: "done", b: "Requested", t: "Model load", d: `Split at layer ${k}` } : { s: "todo", b: w && !wlost ? "Ready" : "Blocked", t: "Model load", d: w && !wlost ? "Click Load model" : "Needs another Mac first" },
+    loadStep(`This Mac: layers 0–${k - 1}`, host),
+    w ? loadStep(`${w.name}: layers ${k}–${m.n_layers - 1}`, w) : { s: "todo", b: "Blocked", t: `Layers ${k}–${m.n_layers - 1}`, d: "Needs another Mac first" },
     { s: s.ready ? "done" : "todo", b: s.ready ? "Ready" : "Locked", t: "Playground", d: s.ready ? "Type a prompt" : "Unlocks when every layer is loaded" },
   ];
 }
 
 function nextHint(s) {
-  const w = Object.values(s.nodes).find(n => n.role === "worker");
+  const w = Object.values(s.nodes).find(n => n.role !== "host");
   if (s.ready) return { ok: true, text: "Ready. Open the Playground and type a prompt.", action: button("Open Playground", { variant: "primary", icon: "playground", onclick: () => go("playground") }) };
   if (s.lastError) return { text: "Error: " + s.lastError, action: button("Try again", { onclick: () => loadModel() }) };
-  if (!w) {
-    const a = s.hostInfo?.addresses?.length ? `${s.hostInfo.addresses[0]}:${s.hostInfo.port}` : "<this Mac's IP>:8000";
-    return { text: `Waiting for a worker. On the other Mac, open PodTorrent → Join a Host, and enter ${a}.`, action: button("Copy address", { icon: "copy", onclick: copyNodeId }) };
-  }
-  if (w.status === "lost") return { text: "The worker is unreachable. Check Tailscale on both Macs and that PodTorrent is open on the worker." };
-  if (!s.loadRequested && !s.layerMap) return { text: "Worker joined. Load the model: each Mac downloads (or reuses) its slice and loads it.", action: button("Load model", { variant: "primary", icon: "download", kbd: "⇧⌘L", onclick: () => loadModel() }) };
+  if (!w) return { text: "Waiting for another Mac. Open PodTorrent on it and start its node: it connects here automatically, on any network." };
+  if (w.status === "lost") return { text: `${w.name} is unreachable. See Peers for the reason; a direct connection can fail behind some NATs.` };
+  if (!s.loadRequested && !s.layerMap) return { text: `${w.name} is connected. Load the model: this Mac serves the first half and asks ${w.name} to serve the rest.`, action: button("Load model", { variant: "primary", icon: "download", kbd: "⇧⌘L", onclick: () => loadModel() }) };
   return { text: "Loading. Each Mac downloads its own layers, then loads them. The Playground unlocks when both finish." };
 }
 
@@ -85,7 +82,7 @@ export default {
       text(el.querySelector(".vr"), v.reason);
       text(el.querySelector(".redund"), m.redundancy > 1 ? `Up to ${m.redundancy} peers per block` : "One peer per block (no redundancy)");
       const act = el.querySelector(".mact");
-      const canLoad = s.source === "demo" ? !s.ready && !s.loadRequested && m.primary && Object.keys(s.nodes).length > 1 : m.primary && s.role === "host" && !s.ready && !s.loadRequested && !s.layerMap && Object.values(s.nodes).some(n => n.role === "worker" && n.status !== "lost");
+      const canLoad = s.source === "demo" ? !s.ready && !s.loadRequested && m.primary && Object.keys(s.nodes).length > 1 : m.primary && s.role === "host" && !s.ready && !s.loadRequested && !s.layerMap && Object.values(s.nodes).some(n => n.role !== "host" && n.status !== "lost");
       const k = `${canLoad}|${m.runnable}|${v.level}`;
       if (act.dataset.k !== k) {
         act.dataset.k = k;
@@ -118,9 +115,7 @@ export default {
           const k = s.engine.phase + s.role;
           if (k !== emptyKey) {
             emptyKey = k;
-            emptyBox.replaceChildren(s.role === "worker"
-              ? empty({ icon: "models", title: "Waiting for the host to assign layers", body: "The host decides which layers this Mac serves. They appear here once it loads the model." })
-              : empty({ icon: "models", title: "No model yet", body: "Models come from the host's engine. Start as host to serve Qwen3-30B-A3B (4-bit) across two Macs.", actions: [button("Start as Host", { variant: "primary", icon: "play", onclick: actions.startHost }), button("Join a Host…", { onclick: actions.join })] }));
+            emptyBox.replaceChildren(empty({ icon: "models", title: "No model yet", body: "Start your node to serve Qwen3-30B-A3B (4-bit) together with the other Macs in the swarm.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
           }
           return;
         }

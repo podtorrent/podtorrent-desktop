@@ -38,19 +38,18 @@ fn backend_dir(app: &AppHandle) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Start the Python engine: `host` or `join <addr>`. Output goes to ~/.podtorrent/engine.log.
+/// Start this Mac's peer (`podtorrent peer`). Output goes to ~/.podtorrent/engine.log.
+/// `mode` is "peer"; "host" is accepted from older UI builds. There is no address: peers find
+/// each other through the rendezvous.
 #[tauri::command]
-fn start_engine(app: AppHandle, state: State<Engine>, mode: String, addr: Option<String>) -> Result<(), String> {
+fn start_engine(app: AppHandle, state: State<Engine>, mode: String) -> Result<(), String> {
     let mut slot = state.0.lock().unwrap();
     if let Some(mut old) = slot.take() {
         kill_group(&mut old);
     }
-    let args: Vec<String> = match (mode.as_str(), addr) {
-        ("host", _) => vec!["host".into(), "--no-open".into()],
-        ("join", Some(a)) if !a.trim().is_empty() && !a.contains(char::is_whitespace) && !a.starts_with('-') => {
-            vec!["join".into(), a.trim().into()]
-        }
-        _ => return Err("invalid mode or address".into()),
+    let args: Vec<String> = match mode.as_str() {
+        "peer" | "host" => vec!["peer".into()],
+        _ => return Err("invalid mode".into()),
     };
     let dir = backend_dir(&app);
     let data = data_dir();
@@ -337,8 +336,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .fullscreen()
         .build()?;
     let node = SubmenuBuilder::new(app, "Node")
-        .item(&item("node:start-host", "Start as Host", Some("Shift+CmdOrCtrl+H"))?)
-        .item(&item("node:join", "Join a Host…", Some("Shift+CmdOrCtrl+J"))?)
+        .item(&item("node:start-host", "Start My Node", Some("Shift+CmdOrCtrl+H"))?)
         .item(&item("node:load", "Load Model", Some("Shift+CmdOrCtrl+L"))?)
         .separator()
         .item(&item("node:stop", "Stop Node", Some("Shift+CmdOrCtrl+."))?)

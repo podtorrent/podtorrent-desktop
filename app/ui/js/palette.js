@@ -12,8 +12,7 @@ function commands() {
   const c = [
     ...[["swarm", "Swarm", "⌘1"], ["models", "Models", "⌘2"], ["playground", "Playground", "⌘3"], ["node", "My Node", "⌘4"], ["peers", "Peers", "⌘5"], ["activity", "Activity", "⌘6"], ["settings", "Settings", "⌘,"]]
       .map(([id, t, k]) => ({ group: "Go to", title: t, icon: id === "node" ? "node" : id, kbd: k, run: () => go(id) })),
-    { group: "Node", title: "Start as Host", icon: "play", kbd: "⇧⌘H", run: actions.startHost, hide: !live || running },
-    { group: "Node", title: "Join a Host…", icon: "link", kbd: "⇧⌘J", run: actions.join, hide: !live || running },
+    { group: "Node", title: "Start My Node", icon: "play", kbd: "⇧⌘H", run: actions.startHost, hide: !live || running },
     { group: "Node", title: "Load model", icon: "download", kbd: "⇧⌘L", run: actions.load, hide: state.ready || (live && state.role !== "host") },
     { group: "Node", title: "Stop node", icon: "stop", kbd: "⇧⌘.", run: actions.stop, hide: !live || !running },
     { group: "Node", title: "Copy node address", icon: "copy", run: copyNodeId, hide: !running && live, keywords: "id share" },

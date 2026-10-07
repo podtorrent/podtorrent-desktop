@@ -55,7 +55,7 @@ export default {
       el.querySelector(".statedot").className = `statedot ${st === "idle" ? "off" : st}`;
       text(el.querySelector(".nm"), n.name);
       el.querySelector(".badge.you").hidden = !me; cls(el, "you", me);
-      text(el.querySelector(".rl"), n.role === "host" ? "host" : "");
+      text(el.querySelector(".rl"), n.role === "host" ? "you" : "");
       text(el.querySelector(".st"), nodeStateLabel(n, s));
       text(el.querySelector(".ly"), n.lo != null ? fmt.layers(n.lo, n.hi) : "–");
       text(el.querySelector(".rt"), n.role === "host" ? "local" : n.rtt_ms != null ? fmt.ms(n.rtt_ms) : "–");
@@ -101,16 +101,12 @@ export default {
           const k = s.engine.phase;
           if (k !== emptyKey) {
             emptyKey = k;
-            emptyBox.replaceChildren(empty({ icon: "peers", title: s.engine.phase === "starting" ? "Starting your node…" : "No peers yet", body: "Peers appear here as Macs join. Start as host, then have the other Mac join with your address.", actions: [button("Start as Host", { variant: "primary", onclick: actions.startHost }), button("Join a Host…", { onclick: actions.join })] }));
+            emptyBox.replaceChildren(empty({ icon: "peers", title: s.engine.phase === "starting" ? "Starting your node…" : "No peers yet", body: "Start your node. Other Macs running PodTorrent appear here automatically, and this Mac connects to them directly.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
           }
           return;
         }
         emptyKey = "";
-        if (n === 1 && s.role === "host") {
-          const a = s.hostInfo?.addresses?.[0];
-          note.replaceChildren("Only this Mac so far. ", a ? h("a", { href: "#", onclick: e => { e.preventDefault(); copyNodeId(); } }, `Copy ${a}:${s.hostInfo.port}`) : "", a ? " and enter it on the other Mac." : "");
-        } else if (s.role === "worker" && s.conn !== "live") note.textContent = "A worker only sees itself; the host has the full list.";
-        else note.textContent = "";
+        note.textContent = n === 1 ? "Only this Mac so far. Start PodTorrent on another Mac and it appears here within seconds." : "";
         paint(s);
       },
     };
@@ -132,13 +128,22 @@ function swarmCard(s) {
   return h("div.card", head, h("div.swarm-list", sw.peers.map(p => {
     const me = p.peer_id === sw.selfId;
     const slices = (p.slices || []).map(x => `${x.model.split("/").pop()} ${fmt.layers(x.lo, x.hi)}`).join(" · ") || "Serves nothing yet";
-    const pub = (p.endpoints || []).find(e => e.kind === "stun");
-    return h("div.swarm-row", h("span.statedot.serving"),
+    const [dot, linkText, tip] = me ? ["serving", "This Mac", ""] : linkLabel(p.link);
+    return h("div.swarm-row", h(`span.statedot.${dot}`),
       h("div.col", h("div.row", h("b.ellipsis", p.name || p.peer_id.slice(0, 8)), me ? badge("You", "you") : null),
         h("span.small.muted.ellipsis", [p.chip, p.mem_total_gb ? fmt.gb(p.mem_total_gb) : ""].filter(Boolean).join(" · "))),
       h("span.small.ellipsis", slices),
-      h("span.small.faint.num", { "data-tip": "Public address (from STUN)" }, pub ? `${pub.ip}:${pub.port}` : "behind NAT"));
+      h("span.small.num", tip ? { "data-tip": tip } : {}, linkText));
   })));
+}
+
+/** Our direct QUIC path to a peer: dot class, short label, tooltip. */
+function linkLabel(l) {
+  if (!l) return ["off", "Waiting for peer", "This peer runs an older PodTorrent without direct links, or hasn't connected yet"];
+  if (l.state === "direct")
+    return ["serving", `Direct · ${l.rtt_ms == null ? "…" : fmt.ms(l.rtt_ms)}`, `${l.via === "lan" ? "Same network" : "Through NAT"} · ${l.addr}`];
+  if (l.state === "unreachable") return ["gap", "Unreachable", l.error || "No direct path"];
+  return ["degraded", "Connecting…", "Hole punching"];
 }
 
 /** Detail sheet for one peer (updates live while open). */
@@ -154,7 +159,7 @@ export function peerSheet(name) {
     title: name, onclose: () => unsub?.(),
     body: h("div.col", { style: { gap: "14px" } }, top,
       h("div.col", h("div.row", h("span.caps", "Throughput"), h("span.spacer"), tpsL), tps),
-      n.role !== "host" ? h("div.col", h("div.row", h("span.caps", "Latency to host"), h("span.spacer"), rttL), rtt) : null),
+      n.role !== "host" ? h("div.col", h("div.row", h("span.caps", "Latency from this Mac"), h("span.spacer"), rttL), rtt) : null),
     footer: [n.address ? button("Copy address", { icon: "copy", onclick: () => copyText(n.address, "Address copied") }) : null, n.status_url ? button("Worker status page", { icon: "link", onclick: () => window.open(n.status_url) }) : null, button("Done", { variant: "primary", onclick: () => s.close() })].filter(Boolean),
   });
   const paint = st => {

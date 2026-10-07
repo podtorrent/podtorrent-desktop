@@ -1,6 +1,6 @@
 # PodTorrent P2P: implementation plan
 
-Status: phase 1 built, awaiting the two-Mac test · updated 2026-10-07
+Status: phases 1–3 built, awaiting the two-Mac test · updated 2026-10-07
 
 ## Goal
 
@@ -136,16 +136,22 @@ Each phase ends in a runnable state and its own commit or PR.
    - [x] Build the app (`PodTorrent_0.1.0_aarch64.dmg`) with the swarm code bundled.
    - [x] Tested locally: peers appear on join and disappear on leave, and the deployed registry works from this Mac.
    - [ ] *Done when:* two Macs on different networks see each other within 5 s. Waiting on the second Mac running the app.
-2. **QUIC transport and hole punching**
-   - Known issue to fix here: the STUN lookup uses a throwaway socket, so the public port changes every refresh. Query from the QUIC socket instead.
-   - Write `podtorrent/net/quic.py` and the punch flow.
-   - Port the `Heartbeat` and `Info` RPCs to QUIC.
-   - *Done when:* two Macs behind home NATs show `direct` with live RTT, and an unreachable pair shows a clear error.
-3. **Unified peer runtime**
-   - Write `peer.py`, port `Forward` and `Load` to QUIC, and build the requester loop with N hops.
-   - Keep a single model.
-   - Delete `server.py`, `worker.py` and the `join` CLI.
-   - *Done when:* the current two-Mac demo works with no Tailscale and no roles.
+2. **QUIC transport and hole punching** (built, awaiting the two-Mac test)
+   - [x] Fix: STUN now runs on the QUIC socket (`PeerNet.stun`), so the published public port is the one QUIC uses. LAN endpoints carry the port too.
+   - [x] Write `podtorrent/net/quic.py`: one UDP socket demuxes STUN, punch probes and QUIC. The smaller `peer_id` asks the rendezvous to `punch`; both sides probe every candidate for 4 s, and the initiator dials QUIC to the first address that answers.
+   - [x] Identity: the server's TLS certificate is self-signed with its Ed25519 key, and the client checks it against the `peer_id`. The client proves its own `peer_id` with a signed `auth` frame.
+   - [x] Port `Heartbeat` (RTT every 2 s) and `Info` (every 10 s) to QUIC as length-prefixed protobuf, one stream per call. The host and worker both start a `PeerNet`; gRPC still carries inference until phase 3.
+   - [x] Each swarm peer carries a `link` (`connecting` / `direct` + RTT / `unreachable` + reason). The Peers card shows it, and so does `podtorrent swarm [--watch]`. Unreachable pairs are retried after 60 s.
+   - [x] Tested locally: two peers on one Mac go `direct via lan` with a ~3 ms RTT, and a peer with a dead endpoint goes `unreachable (hole punch timed out)`.
+   - [ ] *Done when:* two Macs behind home NATs show `direct` with live RTT, and an unreachable pair shows a clear error.
+3. **Unified peer runtime** (built, awaiting the two-Mac test)
+   - [x] Write `peer.py`: serving (`Slices`, KV cache per session and hop, evicted after 5 min idle) and requesting (embeddings + head loaded lazily, N hops per token). One MLX lock per process; network waits don't hold it.
+   - [x] Port `Forward` (one QUIC stream per session and hop) and `Load` (streams progress) to QUIC. The proto gains `model`, `layer_lo/hi`, `session_id`, `ForwardResponse.error` and `NodeInfo.slices`; gRPC is gone.
+   - [x] Any sub-range of a served slice can run (`Shard.run_layers(lo, hi)`), and a simple greedy `route.py` plans the hops. Phase 4 replaces it with the shortest-path search.
+   - [x] The local API keeps the old host's event shapes, so the UI works as-is. "Load model" serves `[0, split)` here and asks a connected peer to `Load` the gap. The served slice is saved in `~/.podtorrent/config.json`, and there's a new `podtorrent peer --serve lo:hi`.
+   - [x] Deleted `server.py`, `worker.py`, `host.py`, the gRPC stubs and the `join` CLI. Tauri starts `peer`, and the UI's Join now just starts the peer.
+   - [x] Tested locally: `tests/golden.py` runs three peer processes `[0,5) → [5,10) → [10,16)` over QUIC and gets 20/20 token-exact against the reference, at ~4 ms network+serde per token. A remote `Load` triggered through `/api/start` also works.
+   - [ ] *Done when:* the current two-Mac demo works with no Tailscale and no roles.
 4. **Routing and 3+ peers**
    - Write `route.py` with tests, and add failover.
    - *Done when:* three Macs serving 0–16, 16–32 and 32–48 answer a prompt, and killing a redundant peer mid-answer re-routes.
