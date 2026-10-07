@@ -1,6 +1,6 @@
 # PodTorrent P2P: implementation plan
 
-Status: draft for review · 2026-10-07
+Status: phase 1 built, awaiting the two-Mac test · updated 2026-10-07
 
 ## Goal
 
@@ -127,12 +127,17 @@ Model A is available through peer 1 → peer 3. Model B is available through pee
 
 Each phase ends in a runnable state and its own commit or PR.
 
-1. **Rendezvous and discovery**
-   - Deploy the Worker.
-   - Write `podtorrent/net/rendezvous.py` (a WebSocket client) and the identity keys.
-   - A peers list appears in the UI.
-   - *Done when:* two Macs on different networks see each other within 5 s.
+1. **Rendezvous and discovery** (in progress)
+   - [x] Write the Worker and Durable Object (`rendezvous/`).
+   - [x] Deploy it to `wss://podtorrent-rendezvous.logesh-063.workers.dev`.
+   - [x] Write `podtorrent/net/rendezvous.py` (a WebSocket client), the identity keys (`identity.py`) and a STUN client (`stun.py`).
+   - [x] The host and worker processes register themselves. Add the `podtorrent swarm [--watch]` CLI.
+   - [x] Add the "Online in the swarm" card to the Peers view.
+   - [x] Build the app (`PodTorrent_0.1.0_aarch64.dmg`) with the swarm code bundled.
+   - [x] Tested locally: peers appear on join and disappear on leave, and the deployed registry works from this Mac.
+   - [ ] *Done when:* two Macs on different networks see each other within 5 s. Waiting on the second Mac running the app.
 2. **QUIC transport and hole punching**
+   - Known issue to fix here: the STUN lookup uses a throwaway socket, so the public port changes every refresh. Query from the QUIC socket instead.
    - Write `podtorrent/net/quic.py` and the punch flow.
    - Port the `Heartbeat` and `Info` RPCs to QUIC.
    - *Done when:* two Macs behind home NATs show `direct` with live RTT, and an unreachable pair shows a clear error.
