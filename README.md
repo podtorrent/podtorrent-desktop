@@ -55,6 +55,8 @@ The local API binds to 127.0.0.1 only; other Macs talk to this one over QUIC on 
 ```bash
 # Needs a model dir holding the first 16 layers + embeddings + head
 uv run python -m tests.golden <model-dir> --layers 16 --splits 5,10
+uv run python -m tests.golden <model-dir> --layers 16 --splits 5,10 --tokens 40 --prompts 6 --failover
+uv run --with pytest pytest tests/test_route.py
 ```
 
 Starts one peer process per slice (`[0,5)`, `[5,10)`, `[10,16)`), lets them connect over QUIC through the rendezvous, runs 20 prompts through the chain and requires token-exact output versus a single-process reference.

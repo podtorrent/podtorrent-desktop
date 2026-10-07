@@ -152,9 +152,12 @@ Each phase ends in a runnable state and its own commit or PR.
    - [x] Deleted `server.py`, `worker.py`, `host.py`, the gRPC stubs and the `join` CLI. Tauri starts `peer`, and the UI's Join now just starts the peer.
    - [x] Tested locally: `tests/golden.py` runs three peer processes `[0,5) → [5,10) → [10,16)` over QUIC and gets 20/20 token-exact against the reference, at ~4 ms network+serde per token. A remote `Load` triggered through `/api/start` also works.
    - [ ] *Done when:* the current two-Mac demo works with no Tailscale and no roles.
-4. **Routing and 3+ peers**
-   - Write `route.py` with tests, and add failover.
-   - *Done when:* three Macs serving 0–16, 16–32 and 32–48 answer a prompt, and killing a redundant peer mid-answer re-routes.
+4. **Routing and 3+ peers** (built, awaiting the three-Mac test)
+   - [x] `route.py` is a Dijkstra search over slice boundaries: cost is RTT per remote hop plus ~1 ms per layer, ties go to fewer hops and then the lower `peer_id`, and consecutive hops on one peer merge. `plan(..., exclude=)` skips failed peers. `tests/test_route.py` has 12 cases: overlaps, gaps, sub-range hand-offs, ties, exclusion and clamping.
+   - [x] Failover in `PeerApp.generate`: a hop that errors or times out (10 s per decode token, 120 s for prefill) marks that peer failed, re-plans without it, and replays prompt + output so far on a fresh session to rebuild the KV cache. Tokens already streamed are kept. A `reroute` event goes to the UI, and it gives up after 3 re-routes or when a gap opens.
+   - [x] `PODTORRENT_NAME` overrides the peer name, so local multi-peer tests can tell peers apart.
+   - [x] Tested locally: `tests.golden --failover` runs `[0,5) [5,10) [10,16) [10,16)`, kills the routed last-slice peer mid-answer, and the answer finishes on the other one (6/6 pass). After the replay, greedy output can drift from the reference, because a one-shot prefill's float math differs slightly from step-by-step decode. The test checks that every token before the switch matches.
+   - [ ] *Done when:* three Macs serving 0–16, 16–32 and 32–48 answer a prompt, and killing a redundant peer mid-answer re-routes.
 5. **Multiple models and slices per peer**
    - Add the slice config, `serve` / `unserve`, and memory checks.
    - Add the coverage data to the registry.

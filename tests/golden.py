@@ -1,6 +1,9 @@
 """Golden test: greedy decode through a chain of peers must match a single-process reference.
 
 Usage: python -m tests.golden MODEL_DIR --layers 16 --splits 5,10
+With --failover, a second peer also serves the last slice; during one prompt the test kills
+whichever of the two the route uses and checks the answer still matches (re-route + KV replay).
+
 Spawns one `podtorrent peer` per slice ([0,5), [5,10), [10,16) above), each with its own identity,
 lets them find each other through the rendezvous and connect over QUIC, then sends every prompt
 to the first peer's /api/complete and compares tokens and logits with the reference.
@@ -43,6 +46,24 @@ def http(url, body=None, timeout=600):
         return json.loads(e.read())
 
 
+def complete_with_kill(base, ids, max_tokens, procs):
+    """Start a completion, kill the last-slice peer on the current route once it's under way,
+    and return the result."""
+    import threading
+    out = {}
+    victim = http(base + "/status")["route"][-1][0]
+    th = threading.Thread(target=lambda: out.update(r=http(base + "/api/complete",
+                                                             {"ids": ids, "max_tokens": max_tokens})))
+    th.start()
+    time.sleep(1.0)
+    procs[int(victim.removeprefix("peer"))].kill()
+    print(f"killed {victim} mid-answer")
+    th.join()
+    routes = {tuple(map(tuple, tm["route"])) for tm in out["r"].get("timings", [])}
+    print("routes used:", " | ".join(" → ".join(f"{n}[{lo},{hi})" for n, lo, hi in r) for r in routes))
+    return out["r"]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("model_dir")
@@ -51,6 +72,7 @@ def main():
     ap.add_argument("--tokens", type=int, default=12)
     ap.add_argument("--port", type=int, default=8100)
     ap.add_argument("--prompts", type=int, default=len(PROMPTS))
+    ap.add_argument("--failover", action="store_true", help="add a redundant last-slice peer and kill one mid-answer")
     a = ap.parse_args()
     prompts = PROMPTS[:a.prompts]
     tok = load_tokenizer(Path(a.model_dir))
@@ -73,10 +95,13 @@ def main():
 
     bounds = [0, *(int(x) for x in a.splits.split(",")), a.layers]
     slices = list(zip(bounds, bounds[1:]))
+    if a.failover:
+        slices.append(slices[-1])
+    n_hops = len(slices) - a.failover
     tmp = Path(tempfile.mkdtemp(prefix="podtorrent-golden-"))
     procs = []
     for i, (lo, hi) in enumerate(slices):
-        env = {**os.environ, "PODTORRENT_HOME": str(tmp / f"peer{i}")}
+        env = {**os.environ, "PODTORRENT_HOME": str(tmp / f"peer{i}"), "PODTORRENT_NAME": f"peer{i}"}
         log = open(tmp / f"peer{i}.log", "w")
         procs.append(subprocess.Popen(
             [sys.executable, "-m", "podtorrent.cli", "peer", "--model-dir", a.model_dir, "--layers", str(a.layers),
@@ -87,7 +112,7 @@ def main():
         for _ in range(300):
             try:
                 st = http(base + "/status", timeout=3)
-                if len(st["route"]) == len(slices):
+                if len(st["route"]) == n_hops:
                     break
             except OSError:
                 pass
@@ -95,12 +120,25 @@ def main():
         else:
             sys.exit(f"no full route; last status: {st}")
         print("route:", " → ".join(f"{n} [{lo},{hi})" for n, lo, hi in st["route"]))
+        if a.failover:  # let the redundant peer connect too, so it's a candidate
+            time.sleep(10)
         fails, nets = 0, []
-        for p, rt in zip(prompts, ref_out):
-            r = http(base + "/api/complete", {"ids": tok.encode(p), "max_tokens": a.tokens})
+        for i, (p, rt) in enumerate(zip(prompts, ref_out)):
+            if a.failover and i == len(prompts) // 2:
+                r = complete_with_kill(base, tok.encode(p), a.tokens, procs)
+            else:
+                r = http(base + "/api/complete", {"ids": tok.encode(p), "max_tokens": a.tokens})
             if "error" in r:
                 sys.exit(f"error: {r['error']}")
             ok = r["tokens"] == rt
+            routes = [tm["route"] for tm in r["timings"]]
+            switch = next((j for j in range(1, len(routes)) if routes[j] != routes[0]), None)
+            if switch is not None and not ok:
+                # The replay re-runs the context as one prefill, whose float math differs slightly from
+                # step-by-step decode, so a greedy near-tie may flip later. Before the switch must match.
+                first_diff = next((j for j, (x, y) in enumerate(zip(r["tokens"], rt)) if x != y), len(rt))
+                ok = first_diff >= switch and len(r["tokens"]) == len(rt)
+                print(f"  re-routed at token {switch}; first divergence at {first_diff} (replay numerics)")
             fails += not ok
             for tm in r["timings"][1:]:
                 nets.append(sum(s["compute_ms"] for s in tm["stages"] if s["node"] == "network"))

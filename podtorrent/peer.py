@@ -29,10 +29,12 @@ from .shard import Shard
 from .slicer import download_slice
 
 STATIC = Path(__file__).parent / "static"
-NAME = os.uname().nodename.split(".")[0]
+NAME = os.environ.get("PODTORRENT_NAME") or os.uname().nodename.split(".")[0]
 MLX = threading.Lock()   # one MLX computation at a time in this process
 CACHE_IDLE_S = 300
 HOP_TIMEOUT_S = 120
+MAX_REROUTES = 3
+DECODE_HOP_TIMEOUT_S = 10  # one token's hop; a dead peer sends no close, so don't wait for the QUIC idle timeout
 LOAD_TIMEOUT_S = 3600
 
 
@@ -149,6 +151,12 @@ class Slices:
 
 
 # ---------------------------------------------------------------- the peer
+
+
+class HopFailed(Exception):
+    def __init__(self, hop: Hop, reason: str):
+        super().__init__(reason)
+        self.hop, self.reason = hop, reason
 
 
 class PeerApp:
@@ -279,8 +287,8 @@ class PeerApp:
                                      link.get("rtt_ms") or 50.0))
         return out
 
-    def route(self) -> tuple[list[Hop], list[tuple[int, int]]]:
-        return plan(self.n_layers, self.offers())
+    def route(self, exclude: set[str] = frozenset()) -> tuple[list[Hop], list[tuple[int, int]]]:
+        return plan(self.n_layers, self.offers(), exclude)
 
     def route_events(self):
         hops, gaps = self.route()
@@ -377,7 +385,12 @@ class PeerApp:
                 self.emit("load_progress", node=NAME, phase="ready", done=1, total=1)
 
     def _call(self, coro, timeout=HOP_TIMEOUT_S):
-        return asyncio.run_coroutine_threadsafe(coro, self.loop).result(timeout)
+        fut = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        try:
+            return fut.result(timeout)
+        except BaseException:
+            fut.cancel()
+            raise
 
     async def _hop(self, streams: dict[int, Stream], k: int, hop: Hop, req: pb.ForwardRequest) -> pb.ForwardResponse:
         body = req.SerializeToString()
@@ -396,7 +409,10 @@ class PeerApp:
             s.close()
 
     def generate(self, ids: list[int], max_tokens: int):
-        """Yields (token, text, timing) per generated token. Raises if the model isn't covered."""
+        """Yields (token, text, timing) per generated token. Raises if the model isn't covered.
+        If a remote hop fails, re-plans without that peer and replays prompt + output so far to
+        rebuild the KV cache on the new route; tokens already yielded are kept."""
+        failed: set[str] = set()
         hops, gaps = self.route()
         if not hops:
             raise RuntimeError("model not covered: layers " + ", ".join(f"{a}–{b - 1}" for a, b in gaps)
@@ -404,33 +420,61 @@ class PeerApp:
         self.ensure_head()
         session = uuid.uuid4().hex
         streams: dict[int, Stream] = {}
-        x = mx.array(ids)[None]
+        seq = list(ids)
+        x = mx.array(seq)[None]
         eos = set(getattr(self.tok, "eos_token_ids", None) or {self.tok.eos_token_id})
+        produced, reroutes = 0, 0
         try:
-            for _ in range(max_tokens):
+            while produced < max_tokens:
                 t0 = time.perf_counter()
                 with MLX:
                     h = self.head.embed(x)
                     mx.eval(h)
                 pre = (time.perf_counter() - t0) * 1000
                 stages, nbytes = [], 0
-                for k, hop in enumerate(hops):
-                    if hop.peer_id == self.me:
-                        h, ms = self.slices.run(f"{session}:{hop.lo}:{hop.hi}", hop.lo, hop.hi, h)
-                        stages += [{"node": "network", "compute_ms": 0.0}, {"node": NAME, "compute_ms": ms}]
-                        continue
-                    payload = to_wire(h)
-                    req = pb.ForwardRequest(session_id=session, hidden=payload, shape=list(h.shape),
-                                            model=self.repo, layer_lo=hop.lo, layer_hi=hop.hi)
-                    t = time.perf_counter()
-                    resp = self._call(self._hop(streams, k, hop, req))
-                    rtt = (time.perf_counter() - t) * 1000
-                    if resp.error:
-                        raise RuntimeError(f"{hop.name}: {resp.error}")
-                    h = from_wire(resp.hidden, list(resp.shape))
-                    nbytes = max(nbytes, len(payload))
-                    stages += [{"node": "network", "compute_ms": max(rtt - resp.compute_ms, 0.0)},
-                               {"node": hop.name, "compute_ms": resp.compute_ms}]
+                try:
+                    for k, hop in enumerate(hops):
+                        if hop.peer_id == self.me:
+                            h, ms = self.slices.run(f"{session}:{hop.lo}:{hop.hi}", hop.lo, hop.hi, h)
+                            stages += [{"node": "network", "compute_ms": 0.0}, {"node": NAME, "compute_ms": ms}]
+                            continue
+                        payload = to_wire(h)
+                        req = pb.ForwardRequest(session_id=session, hidden=payload, shape=list(h.shape),
+                                                model=self.repo, layer_lo=hop.lo, layer_hi=hop.hi)
+                        t = time.perf_counter()
+                        try:
+                            resp = self._call(self._hop(streams, k, hop, req),
+                                              HOP_TIMEOUT_S if h.shape[1] > 1 else DECODE_HOP_TIMEOUT_S)
+                        except Exception as e:  # noqa: BLE001
+                            raise HopFailed(hop, str(e) or type(e).__name__) from e
+                        if resp.error:
+                            raise HopFailed(hop, resp.error)
+                        rtt = (time.perf_counter() - t) * 1000
+                        h = from_wire(resp.hidden, list(resp.shape))
+                        nbytes = max(nbytes, len(payload))
+                        stages += [{"node": "network", "compute_ms": max(rtt - resp.compute_ms, 0.0)},
+                                   {"node": hop.name, "compute_ms": resp.compute_ms}]
+                except HopFailed as f:
+                    failed.add(f.hop.peer_id)
+                    reroutes += 1
+                    new_hops, gaps = self.route(failed)
+                    if not new_hops or reroutes > MAX_REROUTES:
+                        raise RuntimeError(f"{f.hop.name} failed ({f.reason}) and no other route covers "
+                                           + (", ".join(f"layers {a}–{b - 1}" for a, b in gaps) or "the model"))
+                    print(f"route: {f.hop.name} failed ({f.reason}); re-routing via "
+                          + " → ".join(f"{h_.name}[{h_.lo},{h_.hi})" for h_ in new_hops)
+                          + f", replaying {len(seq)} tokens", flush=True)
+                    self.emit("reroute", failed=f.hop.name, reason=f.reason,
+                              route=[[h_.name, h_.lo, h_.hi] for h_ in new_hops], replay_tokens=len(seq))
+                    self.slices.release(session)
+                    old, streams = streams, {}
+                    try:
+                        self._call(self._close_streams(old, session), 5)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    hops, session = new_hops, uuid.uuid4().hex
+                    x = mx.array(seq)[None]
+                    continue
                 t2 = time.perf_counter()
                 with MLX:
                     tok = mx.argmax(self.head.logits(h[:, -1:, :])[0, -1])
@@ -440,8 +484,10 @@ class PeerApp:
                 head = {"node": NAME, "compute_ms": pre + post, "pre_ms": pre, "post_ms": post}
                 yield tok, self.tok.decode([tok]), {"stages": [head, *stages], "bytes": nbytes,
                                                     "route": [[h_.name, h_.lo, h_.hi] for h_ in hops]}
+                produced += 1
                 if tok in eos:
                     break
+                seq.append(tok)
                 x = mx.array([[tok]])
         finally:
             self.slices.release(session)
