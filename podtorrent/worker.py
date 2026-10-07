@@ -25,6 +25,42 @@ GRPC_OPTS = [("grpc.max_receive_message_length", 256 * 2**20),
              ("grpc.max_send_message_length", 256 * 2**20)]
 
 
+TAURI_ORIGINS = ("tauri://localhost", "http://tauri.localhost", "https://tauri.localhost")
+
+
+def _allowed_origin(origin: str) -> bool:
+    if origin in TAURI_ORIGINS:
+        return True
+    return origin.startswith(("http://localhost:", "http://127.0.0.1:"))
+
+
+@web.middleware
+async def cors(request, handler):
+    """Let the desktop app's own UI (and local dev previews) read API responses. Read access only:
+    the endpoints, their behavior and the ports are unchanged."""
+    origin = request.headers.get("Origin", "")
+    if request.method == "OPTIONS":
+        resp = web.Response(status=204)
+    else:
+        resp = await handler(request)
+    if _allowed_origin(origin):
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Vary"] = "Origin"
+    return resp
+
+
+def chip_name() -> str:
+    """e.g. "Apple M2 Pro"; empty if unknown."""
+    import subprocess
+    try:
+        return subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True,
+                              text=True, timeout=2).stdout.strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def to_wire(h: mx.array) -> bytes:
     return np.array(h.astype(mx.float16)).tobytes()
 
@@ -146,12 +182,13 @@ def worker_status(svc: WorkerService) -> dict:
             "loaded": svc.shard is not None, "served": svc.served, "tokens": svc.tokens,
             "active_requests": len(svc.caches), "busy": svc.busy,
             "last_compute_ms": svc.last_compute_ms, "last_forward_ts": svc.last_forward_ts,
-            "uptime_s": time.time() - svc.started_ts,
+            "uptime_s": time.time() - svc.started_ts, "chip": CHIP,
             "mem_active_gb": mx.get_active_memory() / GB, "mem_peak_gb": mx.get_peak_memory() / GB,
             "mem_total_gb": mx.device_info()["memory_size"] / GB}
 
 
 WORKER_PAGE = (Path(__file__).parent / "static" / "worker.html").read_text()
+CHIP = chip_name()
 
 
 def run_join(host_addr: str, model_dir: str, name: str, grpc_port: int, status_port: int,
@@ -160,7 +197,8 @@ def run_join(host_addr: str, model_dir: str, name: str, grpc_port: int, status_p
     server = start_grpc(svc, grpc_port)  # keep a reference: a GC'd server stops
     host_ip = host_addr.split(":")[0]
     ip = advertise or local_ip_towards(host_ip)
-    payload = {"name": name, "grpc_addr": f"{ip}:{grpc_port}", "status_url": f"http://{ip}:{status_port}"}
+    payload = {"name": name, "grpc_addr": f"{ip}:{grpc_port}", "status_url": f"http://{ip}:{status_port}",
+               "chip": CHIP, "mem_total_gb": mx.device_info()["memory_size"] / GB}
 
     def register():
         while True:
@@ -185,7 +223,7 @@ def run_join(host_addr: str, model_dir: str, name: str, grpc_port: int, status_p
         asyncio.get_running_loop().call_later(0.3, os._exit, 0)
         return web.json_response({"ok": True})
 
-    app = web.Application()
+    app = web.Application(middlewares=[cors])
     app.add_routes([web.get("/", page), web.get("/status", status), web.post("/api/shutdown", shutdown)])
     print(f"worker status page: http://{ip}:{status_port}", flush=True)
     web.run_app(app, port=status_port, print=None)

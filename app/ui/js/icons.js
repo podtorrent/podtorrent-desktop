@@ -1,0 +1,57 @@
+// Stroke icons in the spirit of SF Symbols (1.6px strokes on a 20px grid).
+const P = {
+  swarm: '<circle cx="10" cy="4.5" r="2"/><circle cx="4.5" cy="14" r="2"/><circle cx="15.5" cy="14" r="2"/><path d="M9 6.3 5.6 12.2M11 6.3l3.4 5.9M6.5 14h7"/>',
+  models: '<path d="m10 2.8 7 3.6-7 3.6-7-3.6z"/><path d="m3 10 7 3.6 7-3.6"/><path d="m3 13.6 7 3.6 7-3.6"/>',
+  playground: '<path d="M4 4.5h12a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5H9l-3.5 2.8V14.5H4A1.5 1.5 0 0 1 2.5 13V6A1.5 1.5 0 0 1 4 4.5z"/><path d="M7 9.5h6"/>',
+  node: '<rect x="3" y="4" width="14" height="9.5" rx="1.6"/><path d="M1.5 16.2h17"/><path d="M8 8.75h4"/>',
+  peers: '<circle cx="7.5" cy="7" r="2.6"/><path d="M2.8 16c.6-2.6 2.5-4 4.7-4s4.1 1.4 4.7 4"/><circle cx="14" cy="7.8" r="2"/><path d="M13.2 12.1c1.9-.2 3.5.9 4 3.4"/>',
+  activity: '<path d="M2.5 10h3l2-5.5 4 11 2-5.5h4"/>',
+  settings: '<circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/>',
+  search: '<circle cx="8.8" cy="8.8" r="5"/><path d="m12.5 12.5 4 4"/>',
+  sidebar: '<rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M7.5 4v12"/>',
+  play: '<path d="M6.5 4.5v11l9-5.5z"/>',
+  stop: '<rect x="5" y="5" width="10" height="10" rx="1.5"/>',
+  power: '<path d="M10 3v6"/><path d="M6 5.6a6 6 0 1 0 8 0"/>',
+  download: '<path d="M10 3v9.5M6 9l4 4 4-4M4 16.5h12"/>',
+  check: '<path d="m4.5 10.5 3.5 3.5 7.5-8"/>',
+  x: '<path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/>',
+  alert: '<path d="M10 3.2 17.5 16H2.5z"/><path d="M10 8v3.5M10 13.8v.2"/>',
+  info: '<circle cx="10" cy="10" r="7"/><path d="M10 9v4.5M10 6.5v.2"/>',
+  chevron: '<path d="m7.5 4.5 5.5 5.5-5.5 5.5"/>',
+  chevdown: '<path d="m5 8 5 5 5-5"/>',
+  copy: '<rect x="6.5" y="6.5" width="10" height="10" rx="1.8"/><path d="M13.5 6.5V5A1.5 1.5 0 0 0 12 3.5H5A1.5 1.5 0 0 0 3.5 5v7A1.5 1.5 0 0 0 5 13.5h1.5"/>',
+  refresh: '<path d="M15.8 8.5A6 6 0 1 0 16 12"/><path d="M16 4v4.5h-4.5"/>',
+  grid: '<rect x="3" y="3" width="5.8" height="5.8" rx="1.2"/><rect x="11.2" y="3" width="5.8" height="5.8" rx="1.2"/><rect x="3" y="11.2" width="5.8" height="5.8" rx="1.2"/><rect x="11.2" y="11.2" width="5.8" height="5.8" rx="1.2"/>',
+  graph: '<circle cx="5" cy="5.5" r="2"/><circle cx="15" cy="7" r="2"/><circle cx="8.5" cy="15" r="2"/><path d="M7 5.8 13 6.8M6 7.3l1.7 5.8M13.6 8.6l-3.6 4.9"/>',
+  link: '<path d="M8.5 11.5a3.5 3.5 0 0 0 5 0l2.3-2.3a3.5 3.5 0 0 0-5-5l-1 1"/><path d="M11.5 8.5a3.5 3.5 0 0 0-5 0L4.2 10.8a3.5 3.5 0 0 0 5 5l1-1"/>',
+  bolt: '<path d="M11 2.5 4.5 11h5L9 17.5 15.5 9h-5z"/>',
+  memory: '<rect x="3" y="5.5" width="14" height="9" rx="1.5"/><path d="M6 5.5V3.5M10 5.5V3.5M14 5.5V3.5M6 16.5v-2M10 16.5v-2M14 16.5v-2M6.5 8.5v3M10 8.5v3M13.5 8.5v3"/>',
+  thermo: '<path d="M8 11.5V4a2 2 0 0 1 4 0v7.5a3.5 3.5 0 1 1-4 0z"/><path d="M10 9.5v4"/>',
+  plug: '<path d="M7 3v4M13 3v4M5 7h10v2.5a5 5 0 0 1-10 0z"/><path d="M10 14.5V17.5"/>',
+  battery: '<rect x="2.5" y="6" width="13" height="8" rx="2"/><path d="M17.5 8.8v2.4"/><path d="M5 8.5v3M7.5 8.5v3"/>',
+  sun: '<circle cx="10" cy="10" r="3.2"/><path d="M10 2.5v1.8M10 15.7v1.8M2.5 10h1.8M15.7 10h1.8M4.7 4.7l1.3 1.3M14 14l1.3 1.3M4.7 15.3 6 14M14 6l1.3-1.3"/>',
+  moon: '<path d="M16 12.2A6.5 6.5 0 0 1 7.8 4a6.5 6.5 0 1 0 8.2 8.2z"/>',
+  keyboard: '<rect x="2" y="5" width="16" height="10" rx="1.8"/><path d="M5 8h.1M8 8h.1M11 8h.1M14 8h.1M5 11h.1M14 11h.1M7.5 11.5h5"/>',
+  command: '<path d="M7 7h6v6H7z"/><path d="M7 7V5.5A1.5 1.5 0 1 0 5.5 7zM13 7V5.5A1.5 1.5 0 1 1 14.5 7zM7 13v1.5A1.5 1.5 0 1 1 5.5 13zM13 13v1.5a1.5 1.5 0 1 0 1.5-1.5z"/>',
+  sparkle: '<path d="M10 2.5c.6 3.8 2.2 5.4 6 6-3.8.6-5.4 2.2-6 6-.6-3.8-2.2-5.4-6-6 3.8-.6 5.4-2.2 6-6z"/><path d="M15.5 13.5c.2 1.3.7 1.8 2 2-1.3.2-1.8.7-2 2-.2-1.3-.7-1.8-2-2 1.3-.2 1.8-.7 2-2z"/>',
+  send: '<path d="M10 16V4.5M5 9l5-5 5 5"/>',
+  trace: '<path d="M3 5h6M6 10h7M10 15h7"/><circle cx="3" cy="5" r=".2"/><circle cx="17" cy="15" r=".2"/>',
+  sliders: '<path d="M4 6h7M15 6h1M4 14h1M9 14h7"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/>',
+  layers: '<rect x="3" y="4" width="3" height="12" rx="1"/><rect x="8.5" y="4" width="3" height="12" rx="1"/><rect x="14" y="4" width="3" height="12" rx="1"/>',
+  person: '<circle cx="10" cy="7" r="3"/><path d="M4.5 16.5c.8-3 2.9-4.5 5.5-4.5s4.7 1.5 5.5 4.5"/>',
+  logs: '<path d="M4 5h12M4 8.5h12M4 12h8M4 15.5h10"/>',
+  filter: '<path d="M3.5 5h13l-5 6v4.5l-3 1.5V11z"/>',
+  wifi: '<path d="M2.8 8a10.5 10.5 0 0 1 14.4 0M5.3 10.8a7 7 0 0 1 9.4 0M7.8 13.5a3.4 3.4 0 0 1 4.4 0"/><circle cx="10" cy="16" r=".6"/>',
+  wifioff: '<path d="M2.8 8a10.5 10.5 0 0 1 14.4 0M5.3 10.8a7 7 0 0 1 9.4 0M7.8 13.5a3.4 3.4 0 0 1 4.4 0"/><path d="m3 3 14 14"/>',
+  host: '<rect x="3" y="3.5" width="14" height="5" rx="1.4"/><rect x="3" y="11.5" width="14" height="5" rx="1.4"/><path d="M6 6h.1M6 14h.1"/>',
+  arrowright: '<path d="M4 10h11.5M11 5.5l4.5 4.5-4.5 4.5"/>',
+  dot: '<circle cx="10" cy="10" r="3.5" fill="currentColor"/>',
+  clock: '<circle cx="10" cy="10" r="7"/><path d="M10 6v4l2.6 1.6"/>',
+};
+
+export function icon(name, cls = "") {
+  const span = document.createElement("span");
+  span.innerHTML = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="${cls}">${P[name] || P.dot}</svg>`;
+  return span.firstChild;
+}
+export const iconHtml = (name, cls = "") => `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class="${cls}">${P[name] || P.dot}</svg>`;

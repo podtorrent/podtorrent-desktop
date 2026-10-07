@@ -1,121 +1,30 @@
 <!doctype html>
-<meta charset="utf-8"><title>PodTorrent</title>
-<style>
-  :root{color-scheme:dark}
-  body{font:15px -apple-system,system-ui,sans-serif;background:#111;color:#eee;display:grid;place-items:center;min-height:100vh;margin:0}
-  main{width:460px;padding:24px 0}
-  h1{margin:0 0 4px}p{color:#999;margin:0 0 18px}
-  .card{background:#1c1c1e;border-radius:12px;padding:16px;margin-bottom:12px}
-  .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:2px}
-  .sub{color:#999;font-size:13px;margin-bottom:10px}
-  button{background:#0a84ff;color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:15px;cursor:pointer;width:100%}
-  button.sec{background:#2c2c2e;margin-bottom:8px}
-  button:disabled{opacity:.45;cursor:default}
-  input{width:100%;box-sizing:border-box;padding:9px;border-radius:8px;border:1px solid #333;background:#000;color:#eee;margin:6px 0 10px;font-size:14px}
-  label{font-size:12px;color:#999}
-  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;padding:3px 10px 3px 8px;border-radius:99px;border:1px solid #333;color:#999;white-space:nowrap}
-  .chip::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor;opacity:.6}
-  .chip.done{color:#4ade80;border-color:#1f6b3a;background:#4ade8020}.chip.done::before{opacity:1}
-  .chip.active{color:#60a5fa;border-color:#1e4a8a;background:#60a5fa20}.chip.active::before{opacity:1;animation:p 1s infinite}
-  .chip.bad{color:#f87171;border-color:#7a2a2a;background:#f8717120}.chip.bad::before{opacity:1}
-  @keyframes p{50%{opacity:.25}}
-  .bar{height:8px;background:#333;border-radius:4px;overflow:hidden;margin:2px 0 6px;display:none}
-  .bar i{display:block;height:100%;width:0;background:#0a84ff;transition:width .3s}
-  .dl{font-size:12px;color:#999;margin-bottom:8px;min-height:16px}
-  .split{display:flex;align-items:center;gap:10px;margin-bottom:12px;color:#999;font-size:13px}
-  .split input{width:70px;margin:0}
-  #msg{color:#ff9f0a;min-height:20px;font-size:13px}
-</style>
-<main>
-  <h1>PodTorrent</h1>
-  <p>Pool two Macs to run one model. Download your layers first; the other Mac doesn't need to be online.</p>
-  <div class="card">
-    <div class="head"><b>Host</b><span id="hchip" class="chip">Not downloaded</span></div>
-    <div class="sub">Runs the dashboard and the first layers.</div>
-    <div class="bar" id="hbar"><i></i></div><div class="dl" id="hdl"></div>
-    <button class="sec" id="hdown">Download host layers</button>
-    <button id="host">Start as Host</button>
-  </div>
-
-  <div class="card">
-    <div class="head"><b>Worker</b><span id="wchip" class="chip">Not downloaded</span></div>
-    <div class="sub">Contributes the remaining layers.</div>
-    <div class="bar" id="wbar"><i></i></div><div class="dl" id="wdl"></div>
-    <button class="sec" id="wdown">Download worker layers</button>
-    <label>Host address (Tailscale IP:8000)</label>
-    <input id="addr" placeholder="100.x.y.z:8000">
-    <button id="join">Join Host</button>
-  </div>
-  <div id="msg"></div>
-</main>
+<html lang="en" data-resolved-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PodTorrent</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+<link rel="stylesheet" href="css/shell.css">
+<link rel="stylesheet" href="css/views.css">
 <script>
-const { invoke } = window.__TAURI__.core;
-const $ = id => document.getElementById(id);
-const msg = t => $("msg").textContent = t;
-const SPLIT = 24;  // host: layers 0-23, worker: 24-47
-const split = () => SPLIT;
-$("addr").value = localStorage.addr || "";
-const mb = b => b >= 2**30 ? (b/2**30).toFixed(2)+" GiB" : (b/2**20).toFixed(0)+" MiB";
-let busy = false;
-
-function chip(el, cls, text) { el.className = "chip " + cls; el.textContent = text; }
-function show(role, st) {
-  const p = st.progress, mine = p && p.role === role && p.split === split();
-  const cached = role === "host" ? st.host_cached : st.worker_cached;
-  const [chipEl, bar, dl, btn] = role === "host" ? [$("hchip"), $("hbar"), $("hdl"), $("hdown")] : [$("wchip"), $("wbar"), $("wdl"), $("wdown")];
-  bar.style.display = "none"; dl.textContent = "";
-  btn.disabled = busy;
-  if (mine && p.phase === "downloading" && busy) {
-    const pc = p.total ? 100 * p.done / p.total : 0;
-    chip(chipEl, "active", "Downloading " + pc.toFixed(0) + "%");
-    bar.style.display = "block"; bar.firstElementChild.style.width = pc + "%";
-    dl.textContent = mb(p.done) + " of " + mb(p.total);
-  } else if (mine && p.phase === "error") {
-    chip(chipEl, "bad", "Error"); dl.textContent = p.message;
-  } else if (cached) {
-    chip(chipEl, "done", "Downloaded"); btn.textContent = "Re-check download";
-  } else if (busy && p && p.role !== role) {
-    chip(chipEl, "", "Not downloaded");
-  } else if (busy) {
-    chip(chipEl, "active", "Starting"); dl.textContent = (st.log || "").split("\n").pop().slice(0, 90) || "Preparing Python environment (first run)…";
-  } else chip(chipEl, "", "Not downloaded");
-}
-let activeRole = null;
-async function poll() {
+  // resolve the theme before first paint (no flash)
   try {
-    const st = await invoke("download_status", { split: split() });
-    if (busy && st.progress && st.progress.phase === "done") busy = false;
-    if (busy && st.progress && st.progress.phase === "error") busy = false;
-    show("host", st); show("worker", st);
-    if (activeRole && !busy) { activeRole = null; msg(""); }
-  } catch (e) { msg(String(e)); }
-}
-async function download(role) {
-  msg(""); busy = true; activeRole = role;
-  try { await invoke("start_download", { role, split: split() }); }
-  catch (e) { busy = false; msg(String(e)); }
-  poll();
-}
-$("hdown").onclick = () => download("host");
-$("wdown").onclick = () => download("worker");
-setInterval(poll, 1000); poll();
-
-async function go(mode, port) {
-  const addr = $("addr").value.trim();
-  localStorage.addr = addr;
-  document.querySelectorAll("button").forEach(b => b.disabled = true);
-  msg("Starting engine (first run installs dependencies)…");
-  try { await invoke("start_engine", { mode, addr }); }
-  catch (e) { msg(String(e)); document.querySelectorAll("button").forEach(b => b.disabled = false); return; }
-  const url = `http://localhost:${port}/`;
-  for (let i = 0; i < 300; i++) {
-    try { await fetch(url, { mode: "no-cors" }); location.href = url; return; } catch {}
-    if (i % 2 == 0) msg("Starting engine… " + (await invoke("engine_log")).split("\n").pop().slice(0, 90));
-    await new Promise(r => setTimeout(r, 1000));
-  }
-  msg("Engine did not come up. See ~/.podtorrent/engine.log");
-  document.querySelectorAll("button").forEach(b => b.disabled = false);
-}
-$("host").onclick = () => go("host", 8000);
-$("join").onclick = () => { if (!$("addr").value.trim()) return msg("Enter the host address"); go("join", 8001); };
+    const s = JSON.parse(localStorage.getItem("pt.settings") || "{}");
+    const t = s.theme || "system";
+    document.documentElement.dataset.resolvedTheme = t === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : t;
+    if (s.reduceEffects) document.documentElement.classList.add("reduce-effects");
+    if (window.__TAURI__) document.documentElement.classList.add("tauri");
+  } catch {}
 </script>
+</head>
+<body>
+<div id="app">
+  <div class="shell"><aside class="sidebar"></aside><main class="content"><header class="toolbar"></header></main></div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

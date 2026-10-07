@@ -1,0 +1,21 @@
+{
+  "_comment": "Benchmarks for the 'value created' estimate on My Node. Edit prices and last_updated together. Prices are USD per million tokens. Values below are illustrative placeholders: verify against current public API price sheets before shipping.",
+  "last_updated": "2026-10-06",
+  "currency": "USD",
+  "default_basis": "blended",
+  "benchmarks": [
+    { "id": "frontier", "label": "Frontier model API", "usd_per_mtok": 15.0, "note": "Output-token list price of a top-tier hosted frontier model." },
+    { "id": "midtier", "label": "Mid-tier model API", "usd_per_mtok": 3.0, "note": "Output-token list price of a mid-tier hosted model." },
+    { "id": "openweight", "label": "Hosted open-weight (30B MoE class)", "usd_per_mtok": 0.6, "note": "Typical hosted price for a model comparable to the one PodTorrent serves." }
+  ],
+  "blended": { "id": "blended", "label": "Blended index", "weights": { "frontier": 0.2, "midtier": 0.3, "openweight": 0.5 }, "note": "Weighted average of the benchmarks above." },
+  "energy": {
+    "_comment": "Estimated package power while serving vs. idle with layers loaded, in watts. Matched by chip-name substring, first match wins.",
+    "profiles": [
+      { "match": "Ultra", "active_w": 90, "idle_w": 15 },
+      { "match": "Max", "active_w": 55, "idle_w": 9 },
+      { "match": "Pro", "active_w": 30, "idle_w": 6 },
+      { "match": "", "active_w": 18, "idle_w": 4 }
+    ]
+  }
+}

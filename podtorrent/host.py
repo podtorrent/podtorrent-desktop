@@ -1,5 +1,6 @@
 """Host engine: tokenizer, embeddings, first layers, remote call, lm_head, greedy sampling."""
 import queue
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ class TokenEvent:
     network_ms: float   # round trip minus worker compute
     bytes_sent: int
     logits: mx.array | None = None
+    host_pre_ms: float = 0.0   # embeddings + local layers, before the hop
+    host_post_ms: float = 0.0  # lm_head + sampling, after the hop
 
 
 class _Stream:
@@ -47,6 +50,9 @@ class Host:
                                   ("grpc.max_send_message_length", 256 * 2**20)])
         self.stub = rpc.PipelineStub(self.channel)
         self._stream = None
+        # Concurrent generations take turns one token step at a time: the Forward stream pairs
+        # each request with the next response, and MLX work shouldn't overlap across threads.
+        self._step_lock = threading.Lock()
 
     @property
     def stream(self):
@@ -74,7 +80,7 @@ class Host:
         host2 = (time.perf_counter() - t2) * 1000
         return (int(tok.item()), host1 + host2, resp.compute_ms,
                 rtt - resp.compute_ms, len(payload),
-                logits[0, -1].astype(mx.float32) if keep_logits else None)
+                logits[0, -1].astype(mx.float32) if keep_logits else None, host1, host2)
 
     def generate(self, prompt_ids: list[int], max_tokens=64, keep_logits=False):
         rid = uuid.uuid4().hex
@@ -83,10 +89,12 @@ class Host:
         eos = set(self.tok.eos_token_ids) if hasattr(self.tok, "eos_token_ids") else {self.tok.eos_token_id}
         try:
             for _ in range(max_tokens):
-                tok, h_ms, w_ms, n_ms, nbytes, lg = self._step(rid, ids, cache, keep_logits)
-                yield TokenEvent(tok, self.tok.decode([tok]), h_ms, w_ms, n_ms, nbytes, lg)
+                with self._step_lock:
+                    tok, h_ms, w_ms, n_ms, nbytes, lg, pre, post = self._step(rid, ids, cache, keep_logits)
+                yield TokenEvent(tok, self.tok.decode([tok]), h_ms, w_ms, n_ms, nbytes, lg, pre, post)
                 if tok in eos:
                     break
                 ids = mx.array([[tok]])
         finally:
-            self.stream.send(pb.ForwardRequest(request_id=rid, release=True))
+            with self._step_lock:
+                self.stream.send(pb.ForwardRequest(request_id=rid, release=True))

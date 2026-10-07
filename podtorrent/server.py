@@ -17,7 +17,7 @@ from . import pipeline_pb2_grpc as rpc
 from .host import Host
 from .shard import Shard
 from .slicer import download_slice
-from .worker import GB, GRPC_OPTS
+from .worker import GB, GRPC_OPTS, chip_name, cors
 
 STATIC = Path(__file__).parent / "static"
 
@@ -38,46 +38,51 @@ def host_addresses():
 class HostApp:
     def __init__(self, repo: str, model_dir: Path, n_layers: int, name: str = "host"):
         self.repo, self.model_dir, self.n_layers, self.name = repo, model_dir, n_layers, name
-        self.clients: set[web.WebSocketResponse] = set()
+        self.clients: dict[web.WebSocketResponse, str] = {}  # socket -> the client's private chat key
         self.nodes: dict[str, dict] = {}
         self.state: dict[str, dict] = {}   # last event per replayable key
         self.engine: Host | None = None
         self.shard: Shard | None = None
         self.tok = None
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.chat_lock = threading.Lock()
+        self.active = 0          # generations in flight; prompts from different Macs run side by side
+        self.active_lock = threading.Lock()
         self.starting = False
         self.stats = {"tokens": 0, "prompt_tokens": 0, "generated_tokens": 0, "requests": 0}
-        self.busy = False
 
     # ---- events ----
-    def emit(self, type_: str, key: str | None = None, **data):
+    def emit(self, type_: str, key: str | None = None, owner: str | None = None, **data):
+        """Broadcast an event. With `owner`, only that client's sockets get the full event (marked
+        mine); every other client gets it without the generated text, so chats stay private."""
         ev = {"type": type_, "ts": time.time(), **data}
         if key:
             self.state[key] = ev
         if self.loop:
-            self.loop.call_soon_threadsafe(self._broadcast, ev)
+            self.loop.call_soon_threadsafe(self._broadcast, ev, owner)
 
-    def _broadcast(self, ev):
+    def _broadcast(self, ev, owner=None):
         msg = json.dumps(ev)
-        for ws in list(self.clients):
-            asyncio.ensure_future(ws.send_str(msg))
+        if owner:
+            mine = json.dumps({**ev, "mine": True})
+            msg = json.dumps({k: v for k, v in ev.items() if k not in ("text", "token")})
+        for ws, cid in list(self.clients.items()):
+            asyncio.ensure_future(ws.send_str(mine if owner and cid == owner else msg))
 
     async def ws(self, request):
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         for ev in list(self.state.values()):  # replay current state
             await ws.send_str(json.dumps(ev))
-        self.clients.add(ws)
+        self.clients[ws] = request.query.get("key", "")
         async for msg in ws:
             if msg.type == WSMsgType.ERROR:
                 break
-        self.clients.discard(ws)
+        self.clients.pop(ws, None)
         return ws
 
     def host_stats_event(self):
-        self.emit("node_stats", key=f"stats:{self.name}", node=self.name, busy=self.busy,
-                  active_requests=int(self.busy), **self.stats)
+        self.emit("node_stats", key=f"stats:{self.name}", node=self.name, busy=self.active > 0,
+                  active_requests=self.active, **self.stats)
 
     # ---- nodes ----
     def host_memory_event(self):
@@ -92,7 +97,8 @@ class HostApp:
         self.nodes[name] = {"name": name, "addr": b["grpc_addr"], "status_url": b.get("status_url"),
                             "stub": rpc.PipelineStub(ch), "status": "joined", "lo": 0, "hi": 0}
         self.emit("node_joined", key=f"node:{name}", node=name, address=b["grpc_addr"],
-                  status_url=b.get("status_url"), role="worker")
+                  status_url=b.get("status_url"), role="worker", chip=b.get("chip"),
+                  mem_total_gb=b.get("mem_total_gb"))
         return web.json_response({"ok": True})
 
     async def heartbeat_loop(self):
@@ -198,19 +204,26 @@ class HostApp:
         b = await request.json()
         if self.engine is None:
             return web.json_response({"error": "model not started"}, status=409)
-        if not self.chat_lock.acquire(blocking=False):
-            return web.json_response({"error": "a generation is already running"}, status=409)
-        threading.Thread(target=self._generate, args=(b["prompt"], int(b.get("max_tokens", 256))),
+        who = str(b.get("key") or "")[:64]
+        if not who:
+            return web.json_response({"error": "missing chat key"}, status=400)
+        with self.active_lock:
+            self.active += 1
+        self.chat_session_event(True)
+        threading.Thread(target=self._generate, args=(b["prompt"], int(b.get("max_tokens", 256)), who),
                          daemon=True).start()
         return web.json_response({"ok": True})
 
-    def _generate(self, prompt, max_tokens):
+    def chat_session_event(self, busy=False):
+        """Whether any generation is running; never says whose. Informational only."""
+        self.emit("chat_session", key="chat_session", busy=busy, started=time.time() if busy else None)
+
+    def _generate(self, prompt, max_tokens, who):
         try:
             msgs = [{"role": "user", "content": prompt}]
             text = self.tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False,
                                                 enable_thinking=False)
             ids = self.tok.encode(text)
-            self.busy = True
             self.stats["requests"] += 1
             self.stats["prompt_tokens"] += len(ids)
             self.stats["tokens"] += len(ids)
@@ -227,19 +240,22 @@ class HostApp:
                     self.stats["tokens"] += 1
                 if count % 8 == 0:
                     self.host_stats_event()
-                self.emit("token", index=i, text=e.text, token=e.token)
-                self.emit("token_timing", index=i, prefill=(i == 0), bytes=e.bytes_sent,
-                          stages=[{"node": self.name, "compute_ms": e.host_ms},
+                self.emit("token", owner=who, index=i, text=e.text, token=e.token)
+                self.emit("token_timing", owner=who, index=i, prefill=(i == 0), bytes=e.bytes_sent,
+                          stages=[{"node": self.name, "compute_ms": e.host_ms,
+                                   "pre_ms": e.host_pre_ms, "post_ms": e.host_post_ms},
                                   {"node": "network", "compute_ms": e.network_ms},
                                   {"node": self.engine_worker_name(), "compute_ms": e.worker_ms}])
             total = time.perf_counter() - t0
-            self.emit("done", tokens=count, ttft_ms=first, tok_s=(count - 1) / max(total - (first or 0) / 1000, 1e-6))
+            self.emit("done", owner=who, tokens=count, ttft_ms=first, tok_s=(count - 1) / max(total - (first or 0) / 1000, 1e-6),
+                      total_ms=total * 1000, prompt_tokens=len(ids))
         except Exception as e:  # noqa: BLE001
-            self.emit("error", message=f"generation failed: {e}")
+            self.emit("error", owner=who, message=f"generation failed: {e}")
         finally:
-            self.busy = False
+            with self.active_lock:
+                self.active -= 1
             self.host_stats_event()
-            self.chat_lock.release()
+            self.chat_session_event(self.active > 0)
 
     def engine_worker_name(self):
         return next((n["name"] for n in self.nodes.values() if n["lo"] > 0), "worker")
@@ -254,7 +270,7 @@ class HostApp:
 
 def run_host(repo, model_dir, n_layers, port, open_browser=True):
     app_state = HostApp(repo, Path(model_dir), n_layers)
-    app = web.Application()
+    app = web.Application(middlewares=[cors])
     app.add_routes([web.get("/", app_state.index), web.get("/ws", app_state.ws),
                     web.post("/api/join", app_state.join), web.post("/api/start", app_state.start),
                     web.post("/api/chat", app_state.chat), web.post("/api/shutdown", app_state.shutdown)])
@@ -262,9 +278,11 @@ def run_host(repo, model_dir, n_layers, port, open_browser=True):
     async def on_start(a):
         app_state.loop = asyncio.get_running_loop()
         app_state.emit("node_joined", key="node:host", node="host", address=f"localhost:{port}", role="host")
-        app_state.emit("host_info", key="host_info", addresses=host_addresses(), port=port)
+        app_state.emit("host_info", key="host_info", addresses=host_addresses(), port=port,
+                       repo=repo, n_layers=n_layers, chip=chip_name(), name=app_state.name)
         app_state.host_memory_event()
         app_state.host_stats_event()
+        app_state.chat_session_event(None)
         a["hb"] = asyncio.create_task(app_state.heartbeat_loop())
 
     app.on_startup.append(on_start)
