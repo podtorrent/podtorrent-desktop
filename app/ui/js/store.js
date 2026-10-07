@@ -42,6 +42,7 @@ function blank() {
     feed: [],
     download: null,
     health: null,
+    swarm: { status: "offline", selfId: "", peers: [] }, // global registry: every PodTorrent Mac online
     booted: false,
   };
 }
@@ -111,6 +112,7 @@ export function applyEvent(ev) {
       if (was === "lost" && ev.status !== "lost") feed("back", `${ev.node} is reachable again`, "", "success", ts);
       break;
     }
+    case "swarm": applySwarm(ev); break;
     case "memory": node(ev.node).mem = { active_gb: ev.active_gb, peak_gb: ev.peak_gb, total_gb: ev.total_gb }; break;
     case "node_stats": node(ev.node).stats = ev; break;
     case "load_progress": {
@@ -171,6 +173,16 @@ export function applyEvent(ev) {
   commit();
 }
 
+/** Global discovery: the rendezvous registry's peer list, as reported by this Mac's engine. */
+function applySwarm(ev) {
+  const was = new Set(state.swarm.peers.map(p => p.peer_id));
+  const peers = (ev.peers || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  if (state.swarm.status === "online" && ev.status === "online") {
+    for (const p of peers) if (!was.has(p.peer_id) && p.peer_id !== ev.self_id) feed("join", `${p.name || "A Mac"} came online`, p.chip || "", "info");
+  }
+  state.swarm = { status: ev.status, selfId: ev.self_id || "", peers };
+}
+
 /** Worker mode: this Mac's /status (polled). */
 export function applyWorkerStatus(s) {
   state.self = s.name;
@@ -184,6 +196,7 @@ export function applyWorkerStatus(s) {
     uptime_s: s.uptime_s, lastCompute: s.served ? s.last_compute_ms : null, last_forward_ts: s.last_forward_ts,
   });
   if (!n.load.phase) n.load = null;
+  if (s.swarm) applySwarm(s.swarm);
   if (state.conn !== "live") n.status = s.loaded ? "ready" : s.phase === "downloading" || s.phase === "loading" ? "loading" : "joined";
   if (s.phase !== (was || "idle") && s.phase === "ready") feed("load", "This Mac loaded its layers", `Layers ${fmt.layers(s.layer_lo, s.layer_hi)}`, "success");
   if (s.phase !== (was || "idle") && s.phase === "error") feed("load", "Loading failed on this Mac", s.message, "error");

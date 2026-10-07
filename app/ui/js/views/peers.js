@@ -33,7 +33,8 @@ export default {
     const card = h("div.card", { style: { overflowX: "auto", overflowY: "hidden" } }, table);
     const page = h("div.page", h("div.row", q, h("span.spacer"), note), card);
     const emptyBox = h("div.page");
-    root.append(page, emptyBox);
+    const swarmBox = h("div.page.swarm-page");
+    root.append(swarmBox, page, emptyBox);
     scroller.addEventListener("scroll", () => paint(state));
     const pool = new Map();
 
@@ -89,9 +90,11 @@ export default {
       if (!list.length && filter) rowsBox.append(h("div.empty", { style: { padding: "28px" } }, h("p", `No peers match "${filter}".`)));
     }
 
-    let emptyKey = "";
+    let emptyKey = "", swarmKey = "";
     return {
       update(s) {
+        const sk = JSON.stringify([s.swarm, s.engine.phase]);
+        if (sk !== swarmKey) { swarmKey = sk; swarmBox.replaceChildren(swarmCard(s)); }
         const n = Object.keys(s.nodes).length;
         page.hidden = !n; emptyBox.hidden = !!n;
         if (!n) {
@@ -113,6 +116,30 @@ export default {
     };
   },
 };
+
+const SWARM_STATUS = { online: ["Connected", "serving"], connecting: ["Connecting…", "degraded"], offline: ["Offline", "gap"] };
+
+/** Every PodTorrent Mac online anywhere, from the global rendezvous registry. */
+function swarmCard(s) {
+  const sw = s.swarm, [label, kind] = SWARM_STATUS[sw.status] || SWARM_STATUS.offline;
+  const others = sw.peers.filter(p => p.peer_id !== sw.selfId).length;
+  const head = h("div.card-h", h("b", "Online in the swarm"), badge(label, kind, { dot: true, pulse: sw.status === "connecting" }),
+    h("span.spacer"), h("span.small.muted", sw.status === "online" ? `${sw.peers.length} Mac${sw.peers.length === 1 ? "" : "s"} · ${others} besides you` : ""));
+  if (s.engine.phase !== "running" && !sw.peers.length)
+    return h("div.card", head, h("div.card-b.small.muted", "Start your node to appear in the global swarm and see every other Mac running PodTorrent."));
+  if (sw.status !== "online")
+    return h("div.card", head, h("div.card-b.small.muted", "Can't reach the discovery service. Retrying…"));
+  return h("div.card", head, h("div.swarm-list", sw.peers.map(p => {
+    const me = p.peer_id === sw.selfId;
+    const slices = (p.slices || []).map(x => `${x.model.split("/").pop()} ${fmt.layers(x.lo, x.hi)}`).join(" · ") || "Serves nothing yet";
+    const pub = (p.endpoints || []).find(e => e.kind === "stun");
+    return h("div.swarm-row", h("span.statedot.serving"),
+      h("div.col", h("div.row", h("b.ellipsis", p.name || p.peer_id.slice(0, 8)), me ? badge("You", "you") : null),
+        h("span.small.muted.ellipsis", [p.chip, p.mem_total_gb ? fmt.gb(p.mem_total_gb) : ""].filter(Boolean).join(" · "))),
+      h("span.small.ellipsis", slices),
+      h("span.small.faint.num", { "data-tip": "Public address (from STUN)" }, pub ? `${pub.ip}:${pub.port}` : "behind NAT"));
+  })));
+}
 
 /** Detail sheet for one peer (updates live while open). */
 export function peerSheet(name) {

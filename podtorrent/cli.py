@@ -36,6 +36,10 @@ def main():
     d.add_argument("--model-dir")
     d.add_argument("--layers", type=int, default=48)
 
+    sw = sub.add_parser("swarm", help="list every PodTorrent peer online right now")
+    sw.add_argument("--name", default=os.uname().nodename.split(".")[0])
+    sw.add_argument("--watch", action="store_true", help="keep listening and print changes")
+
     w = sub.add_parser("worker-static", help="(tests) serve a preloaded layer range")
     w.add_argument("--model-dir", required=True)
     w.add_argument("--lo", type=int, required=True)
@@ -49,6 +53,9 @@ def main():
     elif a.cmd == "download":
         from .download import run_download
         run_download(a.role, a.model, a.model_dir or default_dir(a.model), a.split, a.layers)
+    elif a.cmd == "swarm":
+        from .net.cli import run_swarm
+        run_swarm(a.name, a.watch)
     elif a.cmd == "join":
         from .worker import run_join
         run_join(a.addr, a.model_dir or default_dir(a.model), a.name, a.grpc_port, a.status_port, a.advertise)

@@ -17,6 +17,8 @@ from aiohttp import web
 
 from . import pipeline_pb2 as pb
 from . import pipeline_pb2_grpc as rpc
+from .net.identity import load_identity
+from .net.rendezvous import SwarmClient
 from .shard import Shard
 from .slicer import download_slice
 
@@ -74,6 +76,7 @@ class WorkerService(rpc.PipelineServicer):
         self.name, self.model_dir = name, Path(model_dir)
         self.shard: Shard | None = None
         self.lo = self.hi = 0
+        self.repo = ""
         self.phase, self.done, self.total, self.message = "idle", 0, 0, ""
         self.caches: dict[str, list] = {}
         self.served = 0
@@ -137,7 +140,7 @@ class WorkerService(rpc.PipelineServicer):
                     self.caches.clear()
                     mx.clear_cache()
                     self.shard = Shard(self.model_dir, lo, hi)
-                    self.lo, self.hi = lo, hi
+                    self.lo, self.hi, self.repo = lo, hi, request.repo
                     emit("ready")
             except Exception as e:  # noqa: BLE001 - reported to the host
                 emit("error", msg=str(e))
@@ -213,8 +216,22 @@ def run_join(host_addr: str, model_dir: str, name: str, grpc_port: int, status_p
 
     threading.Thread(target=register, daemon=True).start()
 
+    swarm = {"status": "connecting", "peers": [], "self_id": load_identity().peer_id}
+
+    def swarm_record():
+        return {"name": name, "chip": CHIP, "role": "worker",
+                "mem_total_gb": round(mx.device_info()["memory_size"] / GB, 1),
+                "slices": [{"model": svc.repo, "lo": svc.lo, "hi": svc.hi, "loaded": svc.shard is not None}]
+                if svc.hi else []}
+
+    def on_peers(peers, status):
+        swarm.update(peers=peers, status=status)
+
+    async def start_swarm(a):
+        a["swarm"] = asyncio.create_task(SwarmClient(load_identity(), swarm_record, on_peers).run())
+
     async def status(_):
-        return web.json_response(worker_status(svc))
+        return web.json_response({**worker_status(svc), "swarm": swarm})
 
     async def page(_):
         return web.Response(text=WORKER_PAGE, content_type="text/html")
@@ -224,6 +241,7 @@ def run_join(host_addr: str, model_dir: str, name: str, grpc_port: int, status_p
         return web.json_response({"ok": True})
 
     app = web.Application(middlewares=[cors])
+    app.on_startup.append(start_swarm)
     app.add_routes([web.get("/", page), web.get("/status", status), web.post("/api/shutdown", shutdown)])
     print(f"worker status page: http://{ip}:{status_port}", flush=True)
     web.run_app(app, port=status_port, print=None)

@@ -15,11 +15,15 @@ from mlx_lm.utils import load_tokenizer
 from . import pipeline_pb2 as pb
 from . import pipeline_pb2_grpc as rpc
 from .host import Host
+from .net.identity import load_identity
+from .net.rendezvous import SwarmClient
 from .shard import Shard
 from .slicer import download_slice
 from .worker import GB, GRPC_OPTS, chip_name, cors
 
 STATIC = Path(__file__).parent / "static"
+PEER_NAME = os.uname().nodename.split(".")[0]
+CHIP = chip_name()
 
 
 def host_addresses():
@@ -79,6 +83,16 @@ class HostApp:
                 break
         self.clients.pop(ws, None)
         return ws
+
+    # ---- swarm (global discovery) ----
+    def swarm_record(self) -> dict:
+        k = self.shard.hi if self.shard is not None else 0
+        return {"name": PEER_NAME, "chip": CHIP, "role": "host",
+                "mem_total_gb": round(mx.device_info()["memory_size"] / GB, 1),
+                "slices": [{"model": self.repo, "lo": 0, "hi": k, "loaded": True, "head": True}] if k else []}
+
+    def swarm_event(self, peers, status):
+        self.emit("swarm", key="swarm", status=status, self_id=load_identity().peer_id, peers=peers)
 
     def host_stats_event(self):
         self.emit("node_stats", key=f"stats:{self.name}", node=self.name, busy=self.active > 0,
@@ -284,6 +298,8 @@ def run_host(repo, model_dir, n_layers, port, open_browser=True):
         app_state.host_stats_event()
         app_state.chat_session_event(None)
         a["hb"] = asyncio.create_task(app_state.heartbeat_loop())
+        a["swarm"] = asyncio.create_task(SwarmClient(load_identity(), app_state.swarm_record,
+                                                     app_state.swarm_event).run())
 
     app.on_startup.append(on_start)
     if open_browser:

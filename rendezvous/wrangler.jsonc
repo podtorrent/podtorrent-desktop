@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "podtorrent-rendezvous",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "durable_objects": {
+    "bindings": [{ "name": "SWARM", "class_name": "Swarm" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Swarm"] }],
+  "observability": { "enabled": true }
+}
