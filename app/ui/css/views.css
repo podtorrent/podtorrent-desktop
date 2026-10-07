@@ -319,3 +319,5 @@ canvas.chart { width: 100%; height: 180px; display: block; }
   .payback .pb-body { grid-template-columns: 1fr; justify-items: center; }
   .pb-inputs { grid-template-columns: 1fr; }
 }
+.chat-inuse { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 6px var(--s-5); color: var(--fg-2); }
+.chat-inuse[hidden] { display: none; }

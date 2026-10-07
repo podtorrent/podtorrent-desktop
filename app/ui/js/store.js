@@ -35,7 +35,7 @@ function blank() {
     loadRequested: false,
     lastError: "",
     extraModels: [],         // Demo Mode only: additional models
-    chat: { messages: [], busy: false },
+    chat: { messages: [], busy: false, session: null }, // session: who the host is generating for {by, started}
     tps: [],                 // swarm tokens/s, 1 s samples, last 180
     tokenTimes: [],
     ttfts: [],
@@ -133,24 +133,27 @@ export function applyEvent(ev) {
       if (!state.ready) { feed("covered", "Model fully covered", "Every layer has a peer. The Playground is unlocked.", "success", ts); emit("signal", { kind: "ready" }); }
       state.ready = true; state.loadRequested = false; state.lastError = "";
       break;
+    case "chat_session":
+      state.chat.session = ev.busy ? { started: ev.started } : null;
+      break;
     case "token": {
       state.tokenTimes.push(performance.now());
-      const m = streamingMsg();
+      const m = streamingMsg(ev);
       if (m) { m.status = "streaming"; m.text += ev.text; m.tokens++; if (!m.firstAt) m.firstAt = performance.now(); }
       emit("token", ev);
       break;
     }
     case "token_timing": {
-      const m = streamingMsg();
+      const m = streamingMsg(ev);
       if (m) m.timings.push(ev);
       for (const s of ev.stages) if (state.nodes[s.node]) state.nodes[s.node].lastCompute = s.compute_ms;
       emit("timing", ev);
       break;
     }
     case "done": {
-      const m = streamingMsg();
+      const m = streamingMsg(ev);
       if (m) { m.status = "done"; m.done = ev; }
-      state.chat.busy = false;
+      if (mine(ev)) state.chat.busy = false;
       if (ev.ttft_ms != null) { state.ttfts.push(ev.ttft_ms); if (state.ttfts.length > 200) state.ttfts.shift(); }
       if (!ev.ambient) feed("generate", `Generated ${ev.tokens} tokens`, `${fmt.fixed(ev.tok_s)} tok/s · first token ${fmt.ms(ev.ttft_ms)}`, "info", ts);
       emit("signal", { kind: "generated", tokens: ev.tokens });
@@ -158,7 +161,7 @@ export function applyEvent(ev) {
     }
     case "error": {
       state.lastError = ev.message;
-      const m = streamingMsg();
+      const m = streamingMsg(ev);
       if (m) { m.status = "error"; m.error = ev.message; state.chat.busy = false; }
       if (state.loadRequested) state.loadRequested = false;
       feed("error", "Engine error", ev.message, "error", ts);
@@ -187,7 +190,14 @@ export function applyWorkerStatus(s) {
   commit();
 }
 
-function streamingMsg() {
+/** Random per-launch key: the host streams a reply's text only to the socket holding the key
+ * that sent the prompt, so one Mac never receives another Mac's chat. */
+export const chatKey = crypto.randomUUID();
+/** The host marks the requester's copy of generation events; others get them without text. */
+const mine = ev => !!ev.mine || state.source === "demo";
+
+function streamingMsg(ev = {}) {
+  if (!mine(ev)) return null;
   const m = state.chat.messages[state.chat.messages.length - 1];
   return m && m.role === "assistant" && (m.status === "pending" || m.status === "streaming") ? m : null;
 }

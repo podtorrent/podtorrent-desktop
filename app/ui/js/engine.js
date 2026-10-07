@@ -1,6 +1,6 @@
 // Live engine client: starts/stops the Python engine through Tauri, reads the host's event
 // stream (WebSocket) or the worker's /status, and sends the few actions the engine supports.
-import { state, settings, setSetting, applyEvent, applyWorkerStatus, resetState, commit, emit, feed } from "./store.js";
+import { state, settings, setSetting, chatKey, applyEvent, applyWorkerStatus, resetState, commit, emit, feed } from "./store.js";
 import { invoke, isTauri } from "./native.js";
 import { uid } from "./dom.js";
 
@@ -136,7 +136,7 @@ export function connectHost(addr) {
   state.conn = state.conn === "live" ? "down" : "connecting";
   commit();
   let sock;
-  try { sock = new WebSocket(`ws://${addr}/ws`); } catch { state.conn = "down"; commit(); return; }
+  try { sock = new WebSocket(`ws://${addr}/ws?key=${chatKey}`); } catch { state.conn = "down"; commit(); return; }
   ws = sock;
   sock.onopen = () => { if (my !== epoch) return; state.conn = "live"; commit(); };
   sock.onmessage = e => { if (my !== epoch || state.source !== "live") return; try { applyEvent(JSON.parse(e.data)); } catch (err) { console.error(err); } };
@@ -195,7 +195,9 @@ export async function sendPrompt(prompt) {
   commit();
   if (state.source === "demo") return emit("demo:chat", { prompt });
   try {
-    const r = await json(HOST + "/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, max_tokens: settings.maxTokens }) });
+    // a worker sends its prompt to the host over the same address it joined with
+    const base = state.role === "worker" ? `http://${state.hostAddr}` : HOST;
+    const r = await json(base + "/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, max_tokens: settings.maxTokens, key: chatKey }) });
     if (!r.ok) { a.status = "error"; a.error = r.body?.error || `HTTP ${r.status}`; state.chat.busy = false; }
   } catch (e) { a.status = "error"; a.error = String(e); state.chat.busy = false; }
   commit();

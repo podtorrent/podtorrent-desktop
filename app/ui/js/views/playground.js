@@ -60,7 +60,8 @@ export default {
     const stopBtn = h("button.send-btn.stop", { type: "button", "aria-label": "Stop", "data-tip": "The engine can't cancel a running generation yet", disabled: true }, icon("stop"));
     const meter = h("div.meter", h("span.statedot.active"), h("b.num.mv", "0.0"), h("span", "tok/s"), h("span.faint.num.mt"));
     const composer = h("div.composer", h("div.composer-box", ta, stopBtn, sendBtn), h("div.composer-f.small.faint", meter, h("span.spacer"), h("span.hint", "Single-turn · greedy decoding · ", kbd("↵"), " send, ", kbd("⇧ ↵"), " newline")));
-    const chat = h("div.chat", h("div.chat-top", picker), scroller, intro, blocked, composer);
+    const inUse = h("div.chat-inuse.small", { role: "status" }, h("span.statedot.active"), h("span", "Another Mac is using the model too. Replies share it, so they may stream slower."));
+    const chat = h("div.chat", h("div.chat-top", picker), scroller, intro, blocked, inUse, composer);
 
     // ---- inspector ----
     const maxL = h("b.num");
@@ -144,12 +145,13 @@ export default {
         }
         picker.disabled = ms.length < 2;
         // blocked / empty states
-        const ok = m?.runnable && (s.role === "host" || s.source === "demo");
+        // a worker chats through the host, so it needs the host's event stream
+        const ok = m?.runnable && (s.role === "host" || s.source === "demo" || (s.role === "worker" && s.conn === "live"));
         const k = `${ok}|${m?.id}|${m?.verdict.title}|${s.role}|${s.engine.phase}|${m?.missing.length}`;
         if (k !== blockKey) {
           blockKey = k;
           if (ok) blocked.replaceChildren();
-          else if (s.role === "worker") blocked.replaceChildren(empty({ icon: "playground", title: "Chat runs on the host", body: "This Mac is a worker: it serves layers for the host's prompts. Open the Playground on the host Mac." }));
+          else if (s.role === "worker" && s.conn !== "live") blocked.replaceChildren(empty({ icon: "wifioff", title: "Not connected to the host", body: "This Mac sends its prompts through the host. Waiting for the host's event stream…" }));
           else if (!m) blocked.replaceChildren(empty({ icon: "playground", title: "No model to talk to yet", body: "Start as host and load the model to chat with it.", actions: [button("Start as Host", { variant: "primary", onclick: actions.startHost })] }));
           else blocked.replaceChildren(empty({
             icon: m.verdict.level === "gap" ? "alert" : "layers", tone: m.verdict.level === "gap" ? "gap" : "degraded",
@@ -163,6 +165,9 @@ export default {
         intro.hidden = !ok || msgs.length > 0;
         scroller.hidden = !ok || !msgs.length;
         cls(composer, "disabled", !ok);
+        // flag (never block) when another Mac's prompt is running: replies may stream slower
+        const other = othersTurn(s);
+        inUse.hidden = !ok || !other;
         ta.disabled = !ok; sendBtn.disabled = !ok || s.chat.busy;
         stopBtn.hidden = !s.chat.busy; sendBtn.hidden = s.chat.busy;
         reconcile(log, msgs, x => x.id, makeMsg, fillMsg);
@@ -188,6 +193,11 @@ export default {
     };
   },
 };
+
+/** True while the host is generating for someone else (it never says who, or what). Info only. */
+function othersTurn(s) {
+  return !!s.chat.session && !s.chat.busy;
+}
 
 function current(s) {
   const ms = models(s);
