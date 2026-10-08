@@ -31,16 +31,16 @@ export function setDemoPreset(p) {
 }
 
 /** Kept for the menu and ⌘K: there's no address to enter any more, so this just starts the peer. */
-export function joinDialog() { go("node"); engine.joinHost(); }
+export function joinDialog() { go("node"); engine.startHost(); }
 
 export async function copyText(t, what = "Copied") {
   try { await navigator.clipboard.writeText(t); toast(what, "serving"); } catch { toast("Couldn't copy", "gap"); }
 }
+/** Peers find each other by themselves; the peer ID is only useful for support and logs. */
 export function copyNodeId() {
-  const me = selfNode();
-  const addr = state.role === "host" && state.hostInfo?.addresses?.length ? `${state.hostInfo.addresses[0]}:${state.hostInfo.port}` : me?.address;
-  if (!me && !addr) return toast("No node running", "degraded");
-  copyText(state.role === "host" && addr ? addr : me?.name || addr, state.role === "host" ? "Host address copied: give it to the worker" : "Node name copied");
+  const id = state.hostInfo?.peer_id;
+  if (!id) return toast("No node running", "degraded");
+  copyText(id, `Peer ID of ${state.self} copied`);
 }
 
 export const toggleSidebar = () => setSetting("sidebarCollapsed", !settings.sidebarCollapsed);

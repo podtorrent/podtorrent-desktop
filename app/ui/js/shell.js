@@ -1,6 +1,6 @@
 // Window shell: vibrancy sidebar with live badges, toolbar, banners, and view routing.
 import { h, text, cls } from "./dom.js";
-import { state, settings, subscribe, on, emit, swarmStats, models, selfNode, nodeState, nodeStateLabel } from "./store.js";
+import { state, settings, subscribe, on, emit, swarmStats, models, selfNode, nodeState, nodeStateLabel, slicesLabel } from "./store.js";
 import { icon } from "./icons.js";
 import { kbd, button } from "./ui.js";
 import { go, currentRoute, setDemo, actions, toggleSidebar } from "./actions.js";
@@ -89,9 +89,11 @@ export function mountShell() {
     // node card
     nodeCard.hidden = !s.role && s.source !== "demo";
     if (!nodeCard.hidden) {
-      text(nodeCard.querySelector(".nc-name"), me ? `${me.name} · ${s.role === "host" ? "host" : "worker"}` : s.engine.phase === "starting" ? "Starting…" : s.role || "");
+      text(nodeCard.querySelector(".nc-name"), me ? `${me.name} · peer` : s.engine.phase === "starting" ? "Starting…" : s.role || "");
       nodeCard.querySelector(".statedot").className = `statedot ${me ? (meSt === "idle" ? "off" : meSt) : "active"}`;
-      text(nodeCard.querySelector(".nc-layers"), me?.lo != null ? fmt.layers(me.lo, me.hi) : "–");
+      const nl = s.slices.filter(x => x.loaded).reduce((a, x) => a + x.hi - x.lo, 0);
+      text(nodeCard.querySelector(".nc-layers"), nl ? String(nl) : "–");
+      nodeCard.querySelector(".nc-layers").dataset.tip = s.slices.length ? slicesLabel(s.slices) : "Serving nothing";
       const tps = me?.tps.slice(-5) || [];
       text(nodeCard.querySelector(".nc-tps"), tps.length ? fmt.fixed(tps.reduce((a, b) => a + b, 0) / tps.length) : "0.0");
       nodeCard.setAttribute("aria-label", me ? `This Mac: ${nodeStateLabel(me, s)}` : "This Mac");
@@ -101,7 +103,7 @@ export function mountShell() {
     const b = [];
     if (s.source === "demo") b.push(["demo", "sparkle", `Demo Mode · ${presets[settings.demoPreset]?.label}. Numbers are simulated.`, ["Turn off", () => setDemo(false)]]);
     else if (s.engine.phase === "unreachable") b.push(["gap", "alert", "The engine isn't responding.", ["Restart", () => actions.startHost()]]);
-    else if (s.role === "host" && s.conn === "down") b.push(["degraded", "wifioff", "Disconnected from the engine. Reconnecting…", null]);
+    else if (s.role && s.conn === "down") b.push(["degraded", "wifioff", "Disconnected from the engine. Reconnecting…", null]);
     const key = JSON.stringify(b.map(x => x.slice(0, 3)));
     if (key !== bannerKey) {
       bannerKey = key;

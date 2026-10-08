@@ -2,7 +2,7 @@
 // you = signature color). Each real token_timing becomes a light pulse that travels the
 // route hop by hop at real (scaled) latency. The loop sleeps whenever nothing moves.
 import { colors, alpha, fonts } from "../tokens.js";
-import { state, on, nodeList, nodeState, nodeStateLabel } from "../store.js";
+import { state, on, nodeList, nodeState, nodeStateLabel, nodeSlices, slicesLabel } from "../store.js";
 import { perf } from "../perf.js";
 import { routeOf } from "../route.js";
 import { h, fmt } from "../dom.js";
@@ -228,13 +228,13 @@ export function peerCard(nd) {
   const rows = [
     ["Device", nd.chip || "Unknown chip"],
     ["Memory", nd.mem ? `${fmt.gb(nd.mem.active_gb)} of ${fmt.gb(nd.mem.total_gb)}` : nd.mem_total_gb ? fmt.gb(nd.mem_total_gb) : "–"],
-    ["Layers", nd.lo != null ? `${fmt.layers(nd.lo, nd.hi)} (${nd.hi - nd.lo})${nd.roles?.length ? " + embed, head" : ""}` : "Not assigned"],
+    ["Serves", slicesLabel(nodeSlices(nd.name), "Nothing yet")],
     ["Throughput", rate != null ? `${fmt.fixed(rate)} tok/s` : "–"],
-    ["Latency to host", nd.role === "host" ? "local" : nd.rtt_ms != null ? fmt.ms(nd.rtt_ms) : "–"],
+    ["Latency", me ? "local" : nd.rtt_ms != null ? fmt.ms(nd.rtt_ms) : "–"],
     [nd.uptime_s != null ? "Uptime" : "Seen for", fmt.dur(nd.uptime_s ?? Date.now() / 1000 - nd.firstSeen)],
   ];
   return h("div",
-    h("div.row", h(`span.statedot.${st === "idle" ? "off" : st}`), h("b", nd.name), me ? h("span.badge.you", "You") : null, h("span.spacer"), h("span.small.faint", nd.role === "host" ? "Host" : "Worker")),
+    h("div.row", h(`span.statedot.${st === "idle" ? "off" : st}`), h("b", nd.name), me ? h("span.badge.you", "You") : null, h("span.spacer"), h("span.small.faint", "Peer")),
     h("div.small.muted", { style: { marginTop: "2px" } }, nodeStateLabel(nd)),
     h("dl.kv", rows.map(([k, v]) => [h("dt", k), h("dd", v)])));
 }

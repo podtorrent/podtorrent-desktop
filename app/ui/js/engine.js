@@ -1,14 +1,15 @@
-// Live engine client: starts/stops the Python engine through Tauri, reads the host's event
-// stream (WebSocket) or the worker's /status, and sends the few actions the engine supports.
-import { state, settings, setSetting, chatKey, applyEvent, applyWorkerStatus, resetState, commit, emit, feed } from "./store.js";
+// Live engine client: starts/stops this Mac's peer through Tauri, reads its event stream
+// (WebSocket on the loopback-only local API), and sends the actions the peer supports.
+import { state, settings, setSetting, chatKey, applyEvent, resetState, commit, emit, feed, shortModel } from "./store.js";
 import { invoke, isTauri } from "./native.js";
-import { uid } from "./dom.js";
+import { uid, fmt } from "./dom.js";
 
-export const HOST_PORT = 8000, WORKER_PORT = 8001, SPLIT = 24;
-const HOST = `http://localhost:${HOST_PORT}`, WORKER = `http://localhost:${WORKER_PORT}`;
+export const HOST_PORT = 8000;
+const HOST = `http://localhost:${HOST_PORT}`;
 
-let ws = null, wsTimer = null, statusTimer = null, liveTimer = null, epoch = 0;
+let ws = null, wsTimer = null, liveTimer = null, epoch = 0;
 const toast = (text, kind = "info", detail) => emit("toast", { text, kind, detail });
+const post = (path, body, ms) => json(HOST + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, ms);
 
 async function reachable(url, ms = 1200) {
   const c = new AbortController(), t = setTimeout(() => c.abort(), ms);
@@ -30,14 +31,13 @@ async function json(url, opts = {}, ms = 4000) {
 export async function attachExisting() {
   stopTimers();
   const owned = isTauri ? await invoke("engine_running").catch(() => false) : false;
-  if (await reachable(HOST + "/")) { begin("host", owned); connectHost(`localhost:${HOST_PORT}`); return true; }
-  if (await reachable(WORKER + "/status")) { begin("worker", owned); startWorkerPolling(); return true; }
+  if (await reachable(HOST + "/")) { begin(owned); connectHost(`localhost:${HOST_PORT}`); return true; }
   return false;
 }
 
-function begin(role, owned) {
+function begin(owned) {
   const my = ++epoch;
-  resetState({ role, self: role === "host" ? "host" : null, hostAddr: settings.hostAddr });
+  resetState({ role: "host" });
   state.engine = { phase: "running", owned, line: "", error: "" };
   watchProcess(my);
   commit();
@@ -45,30 +45,23 @@ function begin(role, owned) {
 }
 
 // ---------- start / stop ----------
+/** Start this Mac's peer. Every Mac runs the same peer and finds the others itself. */
 export async function startHost() {
   if (state.source === "demo") return toast("Turn off Demo Mode to start a real node", "degraded");
-  return start("host", null);
-}
-/** There is no host to join any more: every Mac runs the same peer and finds the others itself. */
-export const joinHost = () => startHost();
-
-async function start(role, addr) {
   stopTimers();
   const my = ++epoch;
-  resetState({ role, self: role === "host" ? "host" : null, hostAddr: addr || "" });
+  resetState({ role: "host" });
   state.engine = { phase: "starting", owned: true, line: "Starting engine (first run installs Python packages)…", error: "" };
   commit();
-  try { await invoke("start_engine", { mode: "peer" }); }
+  try { await invoke("start_engine", { mode: "peer", name: settings.peerName || null }); }
   catch (e) { state.engine = { phase: "stopped", owned: false, line: "", error: String(e) }; commit(); toast("Couldn't start the engine", "gap", String(e)); return; }
   feed("engine", "Started this Mac's peer", "It joins the swarm and connects to other Macs directly", "info");
-  const url = role === "host" ? HOST + "/" : WORKER + "/status";
   for (let i = 0; i < 400 && my === epoch; i++) {
-    if (await reachable(url)) {
+    if (await reachable(HOST + "/")) {
       state.engine.phase = "running"; state.engine.line = "";
       commit();
       watchProcess(my);
-      if (role === "host") connectHost(`localhost:${HOST_PORT}`);
-      else startWorkerPolling();
+      connectHost(`localhost:${HOST_PORT}`);
       return;
     }
     if (i % 2 === 0) { state.engine.line = (await invoke("engine_log").catch(() => "")).split("\n").pop().slice(0, 140) || state.engine.line; commit(); }
@@ -104,7 +97,7 @@ export async function stopNode() {
   epoch++;
   stopTimers();
   if (state.engine.owned) await invoke("stop_engine").catch(() => {});
-  else await fetch((state.role === "host" ? HOST : WORKER) + "/api/shutdown", { method: "POST" }).catch(() => {});
+  else await fetch(HOST + "/api/shutdown", { method: "POST" }).catch(() => {});
   resetState({ role: null });
   feed("engine", "Node stopped", "", "info");
   toast("Node stopped", "info");
@@ -119,11 +112,11 @@ export async function quitApp() {
 export function detach() { epoch++; stopTimers(); }
 
 function stopTimers() {
-  clearTimeout(wsTimer); clearInterval(statusTimer); clearInterval(liveTimer);
+  clearTimeout(wsTimer); clearInterval(liveTimer);
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
 }
 
-// ---------- host event stream ----------
+// ---------- the peer's event stream ----------
 export function connectHost(addr) {
   const my = epoch;
   clearTimeout(wsTimer);
@@ -132,98 +125,81 @@ export function connectHost(addr) {
   let sock;
   try { sock = new WebSocket(`ws://${addr}/ws?key=${chatKey}`); } catch { state.conn = "down"; commit(); return; }
   ws = sock;
-  sock.onopen = () => { if (my !== epoch) return; state.conn = "live"; commit(); };
+  sock.onopen = () => { if (my !== epoch) return; state.conn = "live"; commit(); applyPendingServe(); };
   sock.onmessage = e => { if (my !== epoch || state.source !== "live") return; try { applyEvent(JSON.parse(e.data)); } catch (err) { console.error(err); } };
   sock.onclose = () => {
     if (my !== epoch) return;
     const was = state.conn;
     state.conn = "down";
-    if (was === "live") feed("engine", state.role === "host" ? "Lost connection to the engine" : "Lost connection to the host", "Reconnecting…", "warn");
+    if (was === "live") feed("engine", "Lost connection to the engine", "Reconnecting…", "warn");
     commit();
-    wsTimer = setTimeout(() => connectHost(addr), state.role === "worker" ? 5000 : 1500);
+    wsTimer = setTimeout(() => connectHost(addr), 1500);
   };
-}
-
-// ---------- worker ----------
-function startWorkerPolling() {
-  const my = epoch;
-  let fails = 0;
-  const tick = async () => {
-    try {
-      const r = await json(WORKER + "/status", {}, 2500);
-      if (my !== epoch || state.source !== "live") return;
-      if (r.body) { applyWorkerStatus(r.body); fails = 0; if (state.engine.phase === "unreachable") { state.engine.phase = "running"; commit(); } }
-    } catch {
-      if (my !== epoch) return;
-      if (++fails >= 3 && state.engine.phase === "running") { state.engine.phase = "unreachable"; commit(); }
-    }
-  };
-  tick();
-  statusTimer = setInterval(tick, 1000);
-  // Best effort: the host's event stream gives a worker the full swarm view.
-  if (state.hostAddr) connectHost(state.hostAddr);
 }
 
 // ---------- actions ----------
-export async function loadModel(split = SPLIT) {
+/** Quick start for the default model: this Mac serves the first half, a connected peer the rest. */
+export async function loadModel() {
   if (state.source === "demo") return emit("demo:load");
-  if (state.role !== "host") return toast("Only the host can load the model", "degraded");
+  if (state.engine.phase !== "running") return toast("Start your node first", "degraded");
   state.loadRequested = true; state.lastError = "";
   commit();
   try {
-    const r = await json(HOST + "/api/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ split }) });
+    const r = await post("/api/start", {});
     if (!r.ok) { state.loadRequested = false; state.lastError = r.body?.error || `HTTP ${r.status}`; toast("Couldn't load the model", "gap", state.lastError); }
-    else feed("load", "Model load requested", `Split at layer ${r.body?.split ?? split}`, "info");
+    else feed("load", "Model load requested", `This Mac serves layers 0–${r.body.split - 1}; a connected peer serves the rest`, "info");
   } catch (e) { state.loadRequested = false; toast("Couldn't reach the engine", "gap", String(e)); }
   commit();
 }
 
-export async function sendPrompt(prompt) {
+/** Serve `model` layers [lo, hi) on this Mac (or on a connected peer, by name). Progress arrives as events. */
+export async function serveSlice(model, lo, hi, peer = null) {
+  const what = `${shortModel(model)} ${fmt.layers(lo, hi)}`;
+  if (state.source === "demo") return emit("demo:serve", { model, lo, hi, peer });
+  if (state.engine.phase !== "running") return toast("Start your node first", "degraded");
+  try {
+    const r = await post("/api/serve", { model, lo, hi, peer });
+    if (!r.ok) return toast(`Couldn't serve ${what}`, "gap", r.body?.error || `HTTP ${r.status}`);
+    feed("load", `${peer || "This Mac"} will serve ${what}`, "Downloading only those layers", "info");
+    toast(`Serving ${what}${peer ? ` on ${peer}` : ""}`, "info", "Downloads only those layers, then loads them");
+    return true;
+  } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
+}
+
+export async function unserveSlice(model, lo, hi) {
+  const what = `${shortModel(model)} ${fmt.layers(lo, hi)}`;
+  if (state.source === "demo") return emit("demo:unserve", { model, lo, hi });
+  try {
+    const r = await post("/api/unserve", { model, lo, hi });
+    if (!r.ok) return toast(`Couldn't stop serving ${what}`, "gap", r.body?.error || `HTTP ${r.status}`);
+    feed("load", `This Mac stopped serving ${what}`, "", "info");
+    toast(`Stopped serving ${what}`, "info");
+  } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
+}
+
+/** The slice picked during onboarding, served once the peer is up. */
+function applyPendingServe() {
+  const p = settings.pendingServe;
+  if (!p || state.source !== "live") return;
+  setSetting("pendingServe", null);
+  serveSlice(p.model || state.hostInfo?.repo, p.lo, p.hi);
+}
+
+export async function sendPrompt(prompt, model) {
   prompt = prompt.trim();
   if (!prompt || state.chat.busy) return;
   const msgs = state.chat.messages;
   msgs.push({ id: uid(), role: "user", text: prompt });
-  const a = { id: uid(), role: "assistant", text: "", prompt, status: "pending", tokens: 0, timings: [], startedAt: performance.now(), model: state.hostInfo?.repo };
+  const a = { id: uid(), role: "assistant", text: "", prompt, status: "pending", tokens: 0, timings: [], startedAt: performance.now(), model };
   msgs.push(a);
   state.chat.busy = true;
   commit();
-  if (state.source === "demo") return emit("demo:chat", { prompt });
+  if (state.source === "demo") return emit("demo:chat", { prompt, model });
   try {
-    // a worker sends its prompt to the host over the same address it joined with
-    const base = state.role === "worker" ? `http://${state.hostAddr}` : HOST;
-    const r = await json(base + "/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, max_tokens: settings.maxTokens, key: chatKey }) });
+    const r = await post("/api/chat", { prompt, model, max_tokens: settings.maxTokens, key: chatKey });
     if (!r.ok) { a.status = "error"; a.error = r.body?.error || `HTTP ${r.status}`; state.chat.busy = false; }
   } catch (e) { a.status = "error"; a.error = String(e); state.chat.busy = false; }
   commit();
-}
-
-// ---------- slice downloads (replaces the old launcher) ----------
-let dlTimer = null;
-export async function refreshDownload() {
-  if (!isTauri) return;
-  try { state.download = { ...(state.download || {}), ...(await invoke("download_status", { split: SPLIT })) }; } catch { /* ignore */ }
-  const p = state.download?.progress;
-  if (state.download?.busy && p && (p.phase === "done" || p.phase === "error")) {
-    state.download.busy = false;
-    if (p.phase === "done") { toast(`${p.role === "host" ? "Host" : "Worker"} layers downloaded`, "serving"); feed("download", "Slice downloaded", p.role, "success"); }
-    else toast("Download failed", "gap", p.message);
-  }
-  commit();
-}
-export async function downloadSlice(role) {
-  try {
-    await invoke("start_download", { role, split: SPLIT });
-    state.download = { ...(state.download || {}), busy: true, role, progress: null };
-    feed("download", `Downloading ${role} layers`, role === "host" ? `Layers 0–${SPLIT - 1} + embeddings + head` : `Layers ${SPLIT}–47`, "info");
-    commit();
-  } catch (e) { toast("Couldn't start the download", "gap", String(e)); }
-}
-export function initDownloads() {
-  if (!isTauri) return;
-  refreshDownload();
-  clearInterval(dlTimer);
-  let n = 0;
-  dlTimer = setInterval(() => { if (state.download?.busy || (!document.hidden && ++n % 5 === 0)) refreshDownload(); }, 1000);
 }
 
 export async function logTail(name = "engine.log", lines = 800) {

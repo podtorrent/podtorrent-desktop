@@ -110,8 +110,7 @@ export default {
         graph.el.hidden = !g; grid.hidden = g;
         graph.setVisible(g);
         if (g) graph.update(); else renderGrid(s);
-        const partial = false;
-        text(note, partial ? "Showing this Mac only. The full swarm view is on the host (its event stream isn't reachable from here)." : "");
+        text(note, "");
         const m = models(s)[0];
         covCard.hidden = !m;
         if (m) {

@@ -1,5 +1,5 @@
 // Bridge to the Tauri shell. Everything degrades to a no-op in a plain browser (dev preview).
-import { state, settings, on, emit, commit, swarmStats, selfNode } from "./store.js";
+import { state, settings, on, emit, commit, swarmStats, selfNode, slicesLabel } from "./store.js";
 import { fmt } from "./dom.js";
 
 export const T = window.__TAURI__;
@@ -39,7 +39,7 @@ function updateTray() {
   let status = "Not running";
   if (state.source === "demo") status = `Demo · ${fmt.fixed(st.tps ?? 0)} tok/s`;
   else if (state.engine.phase === "starting") status = "Starting…";
-  else if (online) status = `${state.role === "host" ? "Host" : "Worker"}${me?.lo != null ? ` · layers ${fmt.layers(me.lo, me.hi)}` : ""} · ${fmt.fixed(st.tps ?? 0)} tok/s`;
+  else if (online) status = `${state.slices.length ? `Serving ${slicesLabel(state.slices)}` : "Peer · serving nothing"} · ${fmt.fixed(st.tps ?? 0)} tok/s`;
   const samples = state.tps.slice(-24);
   const key = status + samples.join(",") + online;
   if (key === lastTray) return;
@@ -53,7 +53,7 @@ export function initNative() {
   setInterval(pollHealth, 5000);
   setInterval(updateTray, 2000);
   on("signal", s => {
-    if (s.kind === "joined") notify(`${s.node} joined your swarm`, "It can now host layers for the model.");
+    if (s.kind === "joined") notify(`${s.node} joined your swarm`, "It can now serve layers and carry your prompts.");
     if (s.kind === "lost") notify(`${s.node} went offline`, "Its layers have no peer until it reconnects.");
     if (s.kind === "ready") notify("Model fully covered", "Every layer is loaded. The Playground is ready.");
     if (s.kind === "milestone") notify(`${fmt.compact(s.tokens)} tokens contributed`, "This Mac has processed that many tokens for the swarm.");

@@ -1,6 +1,6 @@
 # PodTorrent P2P: implementation plan
 
-Status: phases 1–5 built, awaiting the multi-Mac tests · updated 2026-10-08
+Status: phases 1–6 built, awaiting the multi-Mac tests · updated 2026-10-08
 
 ## Goal
 
@@ -166,10 +166,16 @@ Each phase ends in a runnable state and its own commit or PR.
    - [x] Coverage: records and `NodeInfo` carry `mem_free_gb` and each slice's `n_layers`. `/api/models` and a `models` event give, per model: per-layer peer counts (reachable and all online), state (`available` / `partial` / `offline`), gaps, redundancy, and the route. `route.coverage()` is unit tested.
    - [x] Tested locally: `tests.multi` runs two peers serving two models (the second is the first 8 layers under another name): both answer token-exact through A → B → A and A → B routes, unserving on B turns the model partial with the right gap, serving the gap on A restores it, an oversized slice is refused up front, and the config remembers every slice. `tests.golden` (5/5) and `--failover` still pass.
    - [ ] *Done when:* two Macs each serve slices of two models and both models answer from either Mac.
-6. **UI**
-   - Build the Models coverage view, Swarm reachability, My Node slices, the Playground route trace, onboarding, Demo Mode, and the copy cleanup.
-   - Update `docs/UI_DATA_GAPS.md`.
-   - Tauri: `serve {model, lo, hi}` / `unserve` commands over the local API.
+6. **UI** (built; checked in the browser preview against Demo Mode and a real local peer)
+   - [x] Store: handles the peer's `models`, `slices` and `reroute` events. Each model's coverage is computed from the swarm records (who serves which layers, and whether this Mac reaches them directly), with the engine's route, gaps and state.
+   - [x] Models: one card per model in the swarm, with a coverage bar (one cell per layer, stacked by peers; serving / loading / not reachable / no peer), `Available · N routes` / `Partial · layers 80–93 missing` / `Offline`, the route this Mac would use, and **Serve missing layers**, which pre-fills the new Serve layers sheet (model, range, and this Mac or a connected peer, with free memory).
+   - [x] My Node: a "Slices this Mac serves" card with download progress, free memory and Stop serving. Host addresses are gone.
+   - [x] Playground: the picker lists available models and chat sends `model`; each reply shows its route (`You → studio 0–59 → mac-mini 60–75 → mbp-16 76–93 → You`, both routes after a re-route), and the token trace labels hops from the route.
+   - [x] Onboarding: name this Mac → choose what to serve (nothing, a half, or a quarter, with a fit check) → done. The name goes to the engine as `PODTORRENT_NAME`; the slice is served once the peer is up.
+   - [x] Demo Mode emits the same events as the peer: four Macs, two models, an unreachable peer, a gap in the big model that a Mac joining after ~12 s fills. Serve, unserve and Load model are simulated too.
+   - [x] Copy cleanup: no host / worker / Tailscale wording left in the UI; the tray shows what this Mac serves. `docs/UI_DATA_GAPS.md` updated.
+   - [x] Tauri: removed the host/worker downloader (`start_download`, `download_status`); `start_engine` takes the peer name. The UI calls the local API for serve / unserve directly, so no new Tauri commands were needed.
+   - [ ] *Done when:* the app build runs this on two Macs.
 
 ## Risks and open items
 

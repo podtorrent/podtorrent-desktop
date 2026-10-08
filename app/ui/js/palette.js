@@ -1,6 +1,7 @@
 // ⌘K command palette: navigate, node actions, models, peers, Demo Mode, copy, logs, theme.
 import { h, text, fmt } from "./dom.js";
-import { state, settings, setSetting, emit, nodeList, models } from "./store.js";
+import { openServe } from "./serve.js";
+import { state, settings, setSetting, emit, nodeList, models, nodeSlices, slicesLabel } from "./store.js";
 import { icon } from "./icons.js";
 import { kbd } from "./ui.js";
 import { go, actions, toggleDemo, setDemoPreset, copyNodeId, toggleSidebar, toggleInspector, toggleSwarmLayout } from "./actions.js";
@@ -13,9 +14,10 @@ function commands() {
     ...[["swarm", "Swarm", "⌘1"], ["models", "Models", "⌘2"], ["playground", "Playground", "⌘3"], ["node", "My Node", "⌘4"], ["peers", "Peers", "⌘5"], ["activity", "Activity", "⌘6"], ["settings", "Settings", "⌘,"]]
       .map(([id, t, k]) => ({ group: "Go to", title: t, icon: id === "node" ? "node" : id, kbd: k, run: () => go(id) })),
     { group: "Node", title: "Start My Node", icon: "play", kbd: "⇧⌘H", run: actions.startHost, hide: !live || running },
-    { group: "Node", title: "Load model", icon: "download", kbd: "⇧⌘L", run: actions.load, hide: state.ready || (live && state.role !== "host") },
+    { group: "Node", title: "Load model", icon: "download", kbd: "⇧⌘L", run: actions.load, hide: state.ready || (live && !running) },
+    { group: "Node", title: "Serve layers…", icon: "download", run: () => openServe(), hide: live && !running, keywords: "slice model add" },
     { group: "Node", title: "Stop node", icon: "stop", kbd: "⇧⌘.", run: actions.stop, hide: !live || !running },
-    { group: "Node", title: "Copy node address", icon: "copy", run: copyNodeId, hide: !running && live, keywords: "id share" },
+    { group: "Node", title: "Copy peer ID", icon: "copy", run: copyNodeId, hide: !running && live, keywords: "id share" },
     { group: "Node", title: "Open raw logs", icon: "logs", run: () => { go("activity"); }, keywords: "engine.log debug" },
     { group: "View", title: settings.sidebarCollapsed ? "Show sidebar" : "Hide sidebar", icon: "sidebar", kbd: "⌘\\", run: toggleSidebar },
     { group: "View", title: "Toggle inspector", icon: "sliders", kbd: "⌘I", run: toggleInspector },
@@ -30,7 +32,7 @@ function commands() {
     { group: "Help", title: "Welcome tour", icon: "info", run: () => emit("onboarding") },
   ];
   for (const m of models()) c.push({ group: "Models", title: m.name, sub: m.verdict.title + " · " + m.verdict.reason, icon: "models", run: () => go(m.runnable ? "playground" : "models") });
-  for (const n of nodeList(state)) c.push({ group: "Peers", title: n.name, sub: `${n.role}${n.lo != null ? " · layers " + fmt.layers(n.lo, n.hi) : ""}${n.chip ? " · " + n.chip : ""}`, icon: n.name === state.self ? "person" : "node", run: () => { go("peers"); peerSheet(n.name); } });
+  for (const n of nodeList(state)) c.push({ group: "Peers", title: n.name, sub: `${n.name === state.self ? "you" : "peer"} · ${slicesLabel(nodeSlices(n.name), "serves nothing")}${n.chip ? " · " + n.chip : ""}`, icon: n.name === state.self ? "person" : "node", run: () => { go("peers"); peerSheet(n.name); } });
   return c.filter(x => !x.hide);
 }
 

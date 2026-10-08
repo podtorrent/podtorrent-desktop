@@ -1,6 +1,6 @@
 // Peers: sortable, filterable, virtualized table with per-row sparklines and a detail sheet.
 import { h, text, fmt, cls } from "../dom.js";
-import { state, nodeList, nodeState, nodeStateLabel, subscribe } from "../store.js";
+import { state, nodeList, nodeState, nodeStateLabel, subscribe, nodeSlices, slicesLabel } from "../store.js";
 import { empty, button, sparkline, sheet, badge } from "../ui.js";
 import { icon } from "../icons.js";
 import { actions, copyText, copyNodeId } from "../actions.js";
@@ -57,7 +57,7 @@ export default {
       el.querySelector(".badge.you").hidden = !me; cls(el, "you", me);
       text(el.querySelector(".rl"), n.role === "host" ? "you" : "");
       text(el.querySelector(".st"), nodeStateLabel(n, s));
-      text(el.querySelector(".ly"), n.lo != null ? fmt.layers(n.lo, n.hi) : "–");
+      text(el.querySelector(".ly"), slicesLabel(nodeSlices(n.name, s), "–"));
       text(el.querySelector(".rt"), n.role === "host" ? "local" : n.rtt_ms != null ? fmt.ms(n.rtt_ms) : "–");
       text(el.querySelector(".mt"), n.mem ? `${fmt.gb(n.mem.active_gb)} / ${fmt.gb(n.mem.total_gb)}` : "–");
       el.querySelector(".progress i").style.width = n.mem ? Math.min(100, (100 * n.mem.active_gb) / n.mem.total_gb) + "%" : 0;
@@ -160,7 +160,7 @@ export function peerSheet(name) {
     body: h("div.col", { style: { gap: "14px" } }, top,
       h("div.col", h("div.row", h("span.caps", "Throughput"), h("span.spacer"), tpsL), tps),
       n.role !== "host" ? h("div.col", h("div.row", h("span.caps", "Latency from this Mac"), h("span.spacer"), rttL), rtt) : null),
-    footer: [n.address ? button("Copy address", { icon: "copy", onclick: () => copyText(n.address, "Address copied") }) : null, n.status_url ? button("Worker status page", { icon: "link", onclick: () => window.open(n.status_url) }) : null, button("Done", { variant: "primary", onclick: () => s.close() })].filter(Boolean),
+    footer: [n.address ? button("Copy address", { icon: "copy", onclick: () => copyText(n.address, "Address copied") }) : null, button("Done", { variant: "primary", onclick: () => s.close() })].filter(Boolean),
   });
   const paint = st => {
     const cur = st.nodes[name];

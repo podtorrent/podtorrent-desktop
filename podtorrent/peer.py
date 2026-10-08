@@ -33,7 +33,6 @@ from .shard import Shard
 from .slicer import download_slice, estimate_slice_bytes, fetch_meta
 
 STATIC = Path(__file__).parent / "static"
-NAME = os.environ.get("PODTORRENT_NAME") or os.uname().nodename.split(".")[0]
 MLX = threading.Lock()   # one MLX computation at a time in this process
 CACHE_IDLE_S = 300
 HOP_TIMEOUT_S = 120
@@ -54,6 +53,10 @@ def read_config() -> dict:
         return json.loads(config_path().read_text())
     except (OSError, ValueError):
         return {}
+
+
+# PODTORRENT_NAME (set by the app from onboarding, or by tests), else config.json's `name`, else the hostname.
+NAME = os.environ.get("PODTORRENT_NAME") or read_config().get("name") or os.uname().nodename.split(".")[0]
 
 
 def write_config(c: dict):
@@ -412,7 +415,7 @@ class PeerApp:
     def models(self) -> list[dict]:
         """Coverage of every model anyone online serves: per-layer peer counts over reachable peers
         (and over all online peers), the gaps, and the route this Mac would use."""
-        names = {s.model for s in self.slices.loaded()} | {self.repo}
+        names = {s.model for s in list(self.slices.items.values())} | {self.repo}
         names |= {s["model"] for p in self.peers for s in self.peer_slices(p) if s.get("loaded") and s.get("model")}
         out = []
         for m in sorted(names):
