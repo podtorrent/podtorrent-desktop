@@ -34,6 +34,17 @@ uv run podtorrent peer                  # serve nothing yet; local API + dashboa
 uv run podtorrent peer --serve 24:48    # or serve a layer range right away (remembered in ~/.podtorrent/config.json)
 ```
 
+A peer can serve several slices, of several models (any `qwen3_moe` MLX repo), at once. While it runs:
+
+```bash
+uv run podtorrent serve 0:12                                   # another slice of the default model
+uv run podtorrent serve mlx-community/Qwen3-30B-A3B-4bit:24:48 --peer mac-b   # ask a connected peer instead
+uv run podtorrent unserve 0:12                                 # or `unserve <model>` for all its slices
+uv run podtorrent models                                       # per-layer coverage, gaps and route for each model
+```
+
+Before downloading, a slice is checked against this Mac's GPU memory budget (macOS's recommended working set, about 75% of RAM; cap it with `PODTORRENT_MEM_BUDGET_GB`) and refused if it won't fit.
+
 Peers appear in each other's swarm within seconds. Click **Load model** on any Mac: it serves layers `[0, 24)` itself and asks a connected Mac that serves nothing to load the rest. Once every layer has a reachable peer, the chat box unlocks. Any Mac can then chat; its prompts route through the peers' slices.
 
 `uv run podtorrent swarm --watch` lists every online peer and whether this Mac reaches it directly (with RTT) or not.
@@ -47,7 +58,7 @@ The local API binds to 127.0.0.1 only; other Macs talk to this one over QUIC on 
 | `peer` | `--model` | `mlx-community/Qwen3-30B-A3B-4bit` |
 | `peer` | `--model-dir` | `~/.podtorrent/models/<model>` |
 | `peer` | `--layers` | from the model's config (48) |
-| `peer` | `--serve LO:HI` | the last range served, else nothing |
+| `peer` | `--serve [MODEL:]LO:HI` (repeatable) | the slices served last time, else nothing |
 | `peer` | `--port`, `--open` | 8000, don't open a browser |
 
 ## Tests
@@ -55,7 +66,8 @@ The local API binds to 127.0.0.1 only; other Macs talk to this one over QUIC on 
 ```bash
 # Needs a model dir holding the first 16 layers + embeddings + head
 uv run python -m tests.golden <model-dir> --layers 16 --splits 5,10
-uv run python -m tests.golden <model-dir> --layers 16 --splits 5,10 --tokens 40 --prompts 6 --failover
+uv run python -m tests.golden <model-dir> --layers 16 --splits 5,10 --tokens 60 --prompts 6 --failover
+uv run python -m tests.multi <model-dir>   # several slices and models per peer, serve/unserve, memory check
 uv run --with pytest pytest tests/test_route.py
 ```
 

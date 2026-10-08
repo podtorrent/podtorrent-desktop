@@ -1,6 +1,6 @@
 # PodTorrent P2P: implementation plan
 
-Status: phases 1–3 built, awaiting the two-Mac test · updated 2026-10-07
+Status: phases 1–5 built, awaiting the multi-Mac tests · updated 2026-10-08
 
 ## Goal
 
@@ -158,12 +158,18 @@ Each phase ends in a runnable state and its own commit or PR.
    - [x] `PODTORRENT_NAME` overrides the peer name, so local multi-peer tests can tell peers apart.
    - [x] Tested locally: `tests.golden --failover` runs `[0,5) [5,10) [10,16) [10,16)`, kills the routed last-slice peer mid-answer, and the answer finishes on the other one (6/6 pass). After the replay, greedy output can drift from the reference, because a one-shot prefill's float math differs slightly from step-by-step decode. The test checks that every token before the switch matches.
    - [ ] *Done when:* three Macs serving 0–16, 16–32 and 32–48 answer a prompt, and killing a redundant peer mid-answer re-routes.
-5. **Multiple models and slices per peer**
-   - Add the slice config, `serve` / `unserve`, and memory checks.
-   - Add the coverage data to the registry.
+5. **Multiple models and slices per peer** (built, awaiting the multi-Mac test)
+   - [x] `Slices` holds any number of `(model, lo, hi)` slices, each with its own download / load state. A hop that spans adjacent slices on one peer runs through them in turn. Loading a slice that contains others of the same model replaces them once it's ready.
+   - [x] Memory check before any download: the slice's estimated size (from the index's `total_size`) plus 1 GB headroom must fit in the Metal working-set budget minus active memory. `PODTORRENT_MEM_BUDGET_GB` caps the budget. "Load model" only asks helpers with enough `mem_free_gb`.
+   - [x] Per-model heads, tokenizers, layer counts and routes. `/api/chat` and `/api/complete` take `model`; the default model is still `--model`. Remote `Load` accepts any `qwen3_moe` repo; other architectures are refused after fetching only `config.json`.
+   - [x] `~/.podtorrent/config.json` keeps `serve` as a list (a phase 3 single entry still loads). `podtorrent peer --serve [MODEL:]LO:HI` is repeatable. New `/api/serve` (optionally `peer`, to ask a connected peer), `/api/unserve`, and the `podtorrent serve | unserve | models` CLI.
+   - [x] Coverage: records and `NodeInfo` carry `mem_free_gb` and each slice's `n_layers`. `/api/models` and a `models` event give, per model: per-layer peer counts (reachable and all online), state (`available` / `partial` / `offline`), gaps, redundancy, and the route. `route.coverage()` is unit tested.
+   - [x] Tested locally: `tests.multi` runs two peers serving two models (the second is the first 8 layers under another name): both answer token-exact through A → B → A and A → B routes, unserving on B turns the model partial with the right gap, serving the gap on A restores it, an oversized slice is refused up front, and the config remembers every slice. `tests.golden` (5/5) and `--failover` still pass.
+   - [ ] *Done when:* two Macs each serve slices of two models and both models answer from either Mac.
 6. **UI**
    - Build the Models coverage view, Swarm reachability, My Node slices, the Playground route trace, onboarding, Demo Mode, and the copy cleanup.
    - Update `docs/UI_DATA_GAPS.md`.
+   - Tauri: `serve {model, lo, hi}` / `unserve` commands over the local API.
 
 ## Risks and open items
 

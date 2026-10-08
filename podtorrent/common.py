@@ -1,4 +1,5 @@
 """Small helpers shared by the peer runtime and the CLI."""
+import os
 import subprocess
 
 import mlx.core as mx
@@ -53,3 +54,16 @@ def from_wire(buf: bytes, shape) -> mx.array:
 
 def mem_total_gb() -> float:
     return mx.device_info()["memory_size"] / GB
+
+
+def mem_budget_gb() -> float:
+    """What Metal will comfortably hold: macOS's recommended GPU working set (about 75% of RAM).
+    PODTORRENT_MEM_BUDGET_GB caps it, e.g. to keep room for other apps."""
+    budget = mx.device_info()["max_recommended_working_set_size"] / GB
+    cap = os.environ.get("PODTORRENT_MEM_BUDGET_GB")
+    return min(budget, float(cap)) if cap else budget
+
+
+def mem_free_gb() -> float:
+    """Room left for more slices on this Mac."""
+    return max(mem_budget_gb() - mx.get_active_memory() / GB, 0.0)

@@ -45,6 +45,7 @@ message NodeInfo {
   int32 active_requests = 10;  // open KV caches
   bool busy = 11;              // a forward pass is running right now
   repeated Slice slices = 12;
+  float mem_free_gb = 13;      // room left for more slices (Metal working-set budget minus active)
 }
 
 message Slice {
@@ -52,6 +53,7 @@ message Slice {
   int32 lo = 2;
   int32 hi = 3;
   bool loaded = 4;
+  int32 n_layers = 5;          // the model's total layer count, for coverage
 }
 
 message LoadRequest {

@@ -479,8 +479,10 @@ class PeerNet(asyncio.DatagramProtocol):
                       "mem_total_gb": round(ni.mem_total_gb, 1), "mem_active_gb": round(ni.mem_active_gb, 1),
                       "requests_served": ni.requests_served, "tokens_processed": ni.tokens_processed,
                       "busy": ni.busy, "active_requests": ni.active_requests,
-                      "mem_peak_gb": round(ni.mem_peak_gb, 1), "ts": time.time(),
-                      "slices": [{"model": x.model, "lo": x.lo, "hi": x.hi, "loaded": x.loaded} for x in ni.slices]}
+                      "mem_peak_gb": round(ni.mem_peak_gb, 1), "mem_free_gb": round(ni.mem_free_gb, 1),
+                      "ts": time.time(),
+                      "slices": [{"model": x.model, "lo": x.lo, "hi": x.hi, "loaded": x.loaded,
+                                  "n_layers": x.n_layers} for x in ni.slices]}
             self.on_change()
         except Exception:  # noqa: BLE001
             pass

@@ -1,4 +1,4 @@
-from podtorrent.route import Hop, Offer, gaps, plan
+from podtorrent.route import Hop, Offer, coverage, gaps, plan
 
 
 def spans(hops):
@@ -67,3 +67,9 @@ def test_offers_beyond_model_clamped():
 def test_gaps_helper():
     assert gaps(10, []) == [(0, 10)]
     assert gaps(10, [Offer("a", "A", 2, 4), Offer("b", "B", 6, 10)]) == [(0, 2), (4, 6)]
+
+
+def test_coverage_counts_distinct_peers():
+    offers = [Offer("a", "A", 0, 4), Offer("a", "A", 2, 6), Offer("b", "B", 4, 8)]
+    assert coverage(8, offers) == [1, 1, 1, 1, 2, 2, 1, 1]
+    assert coverage(4, [Offer("a", "A", 2, 99)]) == [0, 0, 1, 1]

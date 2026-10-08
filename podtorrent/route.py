@@ -98,3 +98,12 @@ def gaps(n_layers: int, offers: list[Offer]) -> list[tuple[int, int]]:
             out.append((start, i))
             start = None
     return out
+
+
+def coverage(n_layers: int, offers: list[Offer]) -> list[int]:
+    """How many distinct peers serve each layer."""
+    peers: list[set[str]] = [set() for _ in range(max(n_layers, 0))]
+    for o in offers:
+        for i in range(max(o.lo, 0), min(o.hi, n_layers)):
+            peers[i].add(o.peer_id)
+    return [len(p) for p in peers]

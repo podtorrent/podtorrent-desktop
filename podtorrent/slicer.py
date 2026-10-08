@@ -53,6 +53,35 @@ def _fetch(client: httpx.Client, url: str, start: int, end: int) -> bytes:
     return r.content
 
 
+META_FILES = ("config.json", "model.safetensors.index.json", "tokenizer.json",
+              "tokenizer_config.json", "generation_config.json")
+
+
+def fetch_meta(repo: str, out_dir: str | Path) -> dict:
+    """Fetch the small config/index/tokenizer files (no weights) and return config.json."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for f in META_FILES:
+        if (out_dir / f).exists():
+            continue
+        try:
+            hf_hub_download(repo, f, local_dir=out_dir)
+        except Exception:
+            pass  # optional files
+    return json.loads((out_dir / "config.json").read_text())
+
+
+def estimate_slice_bytes(out_dir: str | Path, lo: int, hi: int) -> int:
+    """Rough size of layers [lo, hi) from the index's total size, ignoring embeddings and head
+    (fetch_meta first). Good enough for a memory check before downloading."""
+    out_dir = Path(out_dir)
+    cfg = json.loads((out_dir / "config.json").read_text())
+    index = json.loads((out_dir / "model.safetensors.index.json").read_text())
+    total = index.get("metadata", {}).get("total_size") or 0
+    extra = 2 * cfg.get("vocab_size", 0) * cfg.get("hidden_size", 0) // 2  # embed + head, ~4-bit + scales
+    return max(total - extra, 0) * (hi - lo) // max(cfg["num_hidden_layers"], 1)
+
+
 def download_slice(
     repo: str,
     out_dir: str | Path,
@@ -68,13 +97,7 @@ def download_slice(
     Also fetches config/tokenizer files. on_progress(bytes_done, bytes_total).
     """
     out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for f in ("config.json", "model.safetensors.index.json", "tokenizer.json",
-              "tokenizer_config.json", "generation_config.json"):
-        try:
-            hf_hub_download(repo, f, local_dir=out_dir)
-        except Exception:
-            pass  # optional files
+    fetch_meta(repo, out_dir)
 
     out_path = out_dir / f"{name}.safetensors"
     index = json.loads((out_dir / "model.safetensors.index.json").read_text())
