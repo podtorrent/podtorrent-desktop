@@ -1,13 +1,13 @@
 // App state, the engine-event reducer (shared by live and Demo Mode), and derived selectors.
 // Mutations mark the store dirty; subscribers run once per animation frame.
-import { median, fmt, ranges } from "./dom.js";
+import { median, fmt } from "./dom.js";
 
 const SETTINGS_KEY = "pt.settings";
 const HISTORY_KEY = "pt.history";
 const DEFAULT_SETTINGS = {
-  theme: "system", reduceEffects: false, demo: false, demoPreset: "pair", demoAutoplay: true,
+  theme: "system", reduceEffects: false, demo: false, demoPreset: "swarm", demoAutoplay: true,
   sidebarCollapsed: false, swarmLayout: "graph", inspector: true, maxTokens: 256, onboarded: false,
-  hostAddr: "", notifications: true,
+  peerName: "", pendingServe: null, notifications: true,
   valuationBasis: null, macPrice: null, amortMonths: null,
 };
 
@@ -23,33 +23,34 @@ export function setSetting(k, v) { settings[k] = v; save(SETTINGS_KEY, settings)
 function blank() {
   return {
     source: settings.demo ? "demo" : "live",
-    role: null,              // what this Mac runs: null | "host" | "worker"
+    role: null,              // "host" while this Mac's peer runs (every Mac is a peer; the name is historical)
     engine: { phase: "stopped", owned: false, line: "", error: "" }, // stopped|starting|running|unreachable
-    conn: "idle",            // host event stream: idle|connecting|live|down
+    conn: "idle",            // the peer's event stream: idle|connecting|live|down
     self: null,              // node name of this Mac
-    hostAddr: settings.hostAddr,
-    hostInfo: null,
+    hostInfo: null,          // this peer: name, peer_id, default model
+    slices: [],              // what this Mac serves: [{model, lo, hi, loaded, n_layers, phase, done?, total?}]
+    memFree: null,           // GB left for more slices
+    engineModels: null,      // the engine's coverage summary per model (route, gaps, state)
     nodes: {},
     layerMap: null,
     ready: false,
     loadRequested: false,
     lastError: "",
-    extraModels: [],         // Demo Mode only: additional models
     chat: { messages: [], busy: false, session: null }, // session: who the host is generating for {by, started}
     tps: [],                 // swarm tokens/s, 1 s samples, last 180
     tokenTimes: [],
     ttfts: [],
     feed: [],
-    download: null,
     health: null,
+    swarm: { status: "offline", selfId: "", peers: [] }, // global registry: every PodTorrent Mac online
     booted: false,
   };
 }
 
 export let state = blank();
 export function resetState(keep = {}) {
-  const health = state.health, download = state.download;
-  state = Object.assign(blank(), { health, download, booted: true }, keep);
+  const health = state.health;
+  state = Object.assign(blank(), { health, booted: true }, keep);
   commit();
 }
 
@@ -101,6 +102,7 @@ export function applyEvent(ev) {
     }
     case "host_info":
       state.hostInfo = ev;
+      if (ev.name) state.self = ev.name;
       if (state.nodes[ev.name || "host"]) state.nodes[ev.name || "host"].chip = ev.chip || "";
       break;
     case "node_status": {
@@ -111,19 +113,44 @@ export function applyEvent(ev) {
       if (was === "lost" && ev.status !== "lost") feed("back", `${ev.node} is reachable again`, "", "success", ts);
       break;
     }
+    case "swarm": applySwarm(ev); break;
     case "memory": node(ev.node).mem = { active_gb: ev.active_gb, peak_gb: ev.peak_gb, total_gb: ev.total_gb }; break;
     case "node_stats": node(ev.node).stats = ev; break;
     case "load_progress": {
       const n = node(ev.node), was = n.load?.phase;
       n.load = { phase: ev.phase, done: ev.done, total: ev.total };
+      const what = ev.model ? `${shortModel(ev.model)} ${fmt.layers(ev.lo, ev.hi)}` : n.lo != null ? `Layers ${fmt.layers(n.lo, n.hi)}` : "";
+      if (ev.model && ev.node === state.self) {
+        let sl = state.slices.find(x => x.model === ev.model && x.lo === ev.lo && x.hi === ev.hi);
+        if (!sl && ev.phase !== "error") state.slices.push(sl = { model: ev.model, lo: ev.lo, hi: ev.hi, loaded: false });
+        if (sl) Object.assign(sl, { phase: ev.phase, done: ev.done, total: ev.total, loaded: ev.phase === "ready" || sl.loaded });
+        if (ev.phase === "error") state.slices = state.slices.filter(x => x.loaded || x !== sl);
+      }
       if (ev.phase !== was) {
-        if (ev.phase === "downloading" && !was) feed("load", `${ev.node} is downloading its layers`, "", "info", ts);
-        if (ev.phase === "loading") feed("load", `${ev.node} is loading layers into memory`, "", "info", ts);
-        if (ev.phase === "ready") feed("load", `${ev.node} loaded its layers`, n.lo != null ? `Layers ${fmt.layers(n.lo, n.hi)}` : "", "success", ts);
-        if (ev.phase === "error") feed("load", `${ev.node} failed to load`, ev.message || "", "error", ts);
+        if (ev.phase === "downloading" && !was) feed("load", `${ev.node} is downloading ${what || "its layers"}`, "", "info", ts);
+        if (ev.phase === "loading") feed("load", `${ev.node} is loading ${what || "layers"} into memory`, "", "info", ts);
+        if (ev.phase === "ready") feed("load", `${ev.node} is serving ${what || "its layers"}`, "", "success", ts);
+        if (ev.phase === "error") feed("load", `${ev.node} couldn't serve ${what || "its layers"}`, ev.message || "", "error", ts);
       }
       break;
     }
+    case "slices":
+      state.slices = ev.slices || [];
+      if (ev.mem_free_gb != null) state.memFree = ev.mem_free_gb;
+      break;
+    case "models": {
+      const before = new Map((state.engineModels || []).map(m => [m.model, m.state]));
+      state.engineModels = ev.models || [];
+      for (const m of state.engineModels) {
+        const was = before.get(m.model);
+        if (was && was !== "available" && m.state === "available") { feed("covered", `${shortModel(m.model)} is available`, "Every layer has a reachable peer.", "success", ts); emit("signal", { kind: "ready", model: m.model }); }
+        if (was === "available" && m.state !== "available") feed("lost", `${shortModel(m.model)} is no longer covered`, m.gaps.length ? `Layers ${m.gaps.map(([a, b]) => fmt.layers(a, b)).join(", ")} have no reachable peer` : "", "warn", ts);
+      }
+      break;
+    }
+    case "reroute":
+      feed("rebalance", `Re-routed around ${ev.failed}`, `${ev.reason} · now ${(ev.route || []).map(([n, lo, hi]) => `${n} ${fmt.layers(lo, hi)}`).join(" → ")} · replayed ${ev.replay_tokens} tokens`, "warn", ts);
+      break;
     case "layer_map":
       state.layerMap = ev;
       for (const a of ev.assignments) Object.assign(node(a.node), { lo: a.lo, hi: a.hi, roles: a.roles || [] });
@@ -171,23 +198,14 @@ export function applyEvent(ev) {
   commit();
 }
 
-/** Worker mode: this Mac's /status (polled). */
-export function applyWorkerStatus(s) {
-  state.self = s.name;
-  const n = node(s.name);
-  const was = n.load?.phase;
-  Object.assign(n, {
-    role: "worker", chip: s.chip || n.chip, lo: s.loaded ? s.layer_lo : n.lo, hi: s.loaded ? s.layer_hi : n.hi,
-    mem: { active_gb: s.mem_active_gb, peak_gb: s.mem_peak_gb, total_gb: s.mem_total_gb },
-    stats: { busy: s.busy, active_requests: s.active_requests, tokens: s.tokens, requests: s.served },
-    load: { phase: s.phase === "idle" ? null : s.phase, done: s.done, total: s.total },
-    uptime_s: s.uptime_s, lastCompute: s.served ? s.last_compute_ms : null, last_forward_ts: s.last_forward_ts,
-  });
-  if (!n.load.phase) n.load = null;
-  if (state.conn !== "live") n.status = s.loaded ? "ready" : s.phase === "downloading" || s.phase === "loading" ? "loading" : "joined";
-  if (s.phase !== (was || "idle") && s.phase === "ready") feed("load", "This Mac loaded its layers", `Layers ${fmt.layers(s.layer_lo, s.layer_hi)}`, "success");
-  if (s.phase !== (was || "idle") && s.phase === "error") feed("load", "Loading failed on this Mac", s.message, "error");
-  commit();
+/** Global discovery: the rendezvous registry's peer list, as reported by this Mac's engine. */
+function applySwarm(ev) {
+  const was = new Set(state.swarm.peers.map(p => p.peer_id));
+  const peers = (ev.peers || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  if (state.swarm.status === "online" && ev.status === "online") {
+    for (const p of peers) if (!was.has(p.peer_id) && p.peer_id !== ev.self_id) feed("join", `${p.name || "A Mac"} came online`, p.chip || "", "info");
+  }
+  state.swarm = { status: ev.status, selfId: ev.self_id || "", peers };
 }
 
 /** Random per-launch key: the host streams a reply's text only to the socket holding the key
@@ -239,7 +257,7 @@ function recordHistory() {
     const d = dayStats(day);
     d.online_s++;
     if (nodeState(me) === "active" || (me.tps.at(-1) || 0) > 0) d.active_s++;
-    if (me.lo != null && nodeLoaded(me)) d.block_s += me.hi - me.lo;
+    d.block_s += state.slices.filter(x => x.loaded).reduce((a, x) => a + x.hi - x.lo, 0);
     history.first ||= Date.now() / 1000;
     dirtyH = true;
   }
@@ -275,6 +293,7 @@ export function nodeState(n, s = state) {
   return "idle";
 }
 export function nodeLoaded(n, s = state) {
+  if (n.name === s.self) return s.slices.some(x => x.loaded);
   if (n.load?.phase === "ready") return true;
   if (n.role === "host") return s.ready;
   return n.status === "ready";
@@ -290,61 +309,64 @@ export function nodeStateLabel(n, s = state) {
   return stateLabel[st];
 }
 
-/** Model coverage: per-layer peers and a plain-English verdict. */
+export const shortModel = repo => (repo || "").split("/").pop();
+
+/** The slices a node serves: this Mac's from the engine, others' from their swarm record. */
+export function nodeSlices(name, s = state) {
+  if (name === s.self) return s.slices;
+  const p = s.swarm.peers.find(x => (x.name || x.peer_id.slice(0, 8)) === name);
+  return p ? peerSlices(p) : [];
+}
+/** "Qwen3-30B-A3B-4bit 0–23 · Qwen3-8B 0–35", with the model left out when only one model is served. */
+export function slicesLabel(list, empty = "Nothing") {
+  if (!list.length) return empty;
+  const many = new Set(list.map(x => x.model)).size > 1 || list.some(x => x.model !== state.hostInfo?.repo);
+  return list.map(x => `${many ? shortModel(x.model) + " " : ""}${fmt.layers(x.lo, x.hi)}`).join(" · ");
+}
+const layerList = gaps => gaps.map(([a, b]) => b - a > 1 ? `${a}–${b - 1}` : `${a}`).join(", ");
+const peerSlices = p => p.link?.info?.slices || p.slices || [];
+
+/** Model coverage: one entry per model anyone online serves, from the engine's summary (route,
+ * gaps, state) plus the swarm records (who serves which layers, and whether we reach them). */
 export function models(s = state) {
-  const out = [];
-  if (s.hostInfo || s.source === "demo" || s.role === "host") {
-    const n = s.hostInfo?.n_layers || 48;
-    const repo = s.hostInfo?.repo || "mlx-community/Qwen3-30B-A3B-4bit";
-    let assignments = s.layerMap?.assignments, planned = false;
-    if (!assignments) {
-      planned = true;
-      const host = Object.values(s.nodes).find(x => x.role === "host");
-      const w = Object.values(s.nodes).find(x => x.role === "worker" && x.status !== "lost");
-      const k = Math.floor(n / 2);
-      assignments = [{ node: host?.name || "host", lo: 0, hi: k, roles: ["tokenizer", "embeddings", "lm_head"] }];
-      if (w) assignments.push({ node: w.name, lo: k, hi: n, roles: [] });
-    }
-    out.push(coverage({ id: repo, repo, n_layers: n, assignments, planned, primary: true }, s));
-  } else if (s.role === "worker") {
-    const me = s.nodes[s.self];
-    if (me && me.lo != null) out.push(coverage({ id: "worker", repo: "mlx-community/Qwen3-30B-A3B-4bit", n_layers: 48, assignments: [{ node: me.name, lo: me.lo, hi: me.hi, roles: [] }], partialView: true, primary: true }, s));
-  }
-  for (const m of s.extraModels) out.push(coverage(m, s));
-  return out;
+  return (s.engineModels || []).map(m => coverage(m, s)).sort((a, b) => (b.primary - a.primary) || a.name.localeCompare(b.name));
 }
 
 function coverage(m, s) {
-  const layers = Array.from({ length: m.n_layers }, (_, i) => ({ i, peers: [], state: "gap", serving: 0 }));
-  for (const a of m.assignments) {
-    const n = s.nodes[a.node];
-    for (let i = a.lo; i < a.hi && i < m.n_layers; i++) {
-      let st;
-      if (m.demoState) st = m.demoState(a, n);
-      else if (!n || n.status === "lost" || n.load?.phase === "error") st = "gap";
-      else if (n.load && (n.load.phase === "downloading" || n.load.phase === "loading")) st = "loading";
-      else if (!m.planned && nodeLoaded(n, s)) st = "serving";
-      else st = "planned";
-      layers[i].peers.push({ node: a.node, state: st, roles: a.roles || [] });
-    }
+  const n = m.n_layers;
+  const layers = Array.from({ length: n }, (_, i) => ({ i, peers: [], state: "gap", serving: 0 }));
+  const assignments = [];
+  const add = (node, lo, hi, st, roles = []) => {
+    assignments.push({ node, lo, hi, roles, state: st });
+    for (let i = Math.max(lo, 0); i < hi && i < n; i++) layers[i].peers.push({ node, state: st, roles });
+  };
+  const self = s.self || "You";
+  for (const x of s.slices) if (x.model === m.model) add(self, x.lo, x.hi, x.loaded ? "serving" : x.phase === "error" ? "gap" : "loading");
+  for (const p of s.swarm.peers) {
+    if (p.peer_id === s.swarm.selfId) continue;
+    const reach = p.link?.state === "direct";
+    for (const x of peerSlices(p)) if (x.model === m.model) add(p.name || p.peer_id.slice(0, 8), x.lo, x.hi, !x.loaded ? "loading" : reach ? "serving" : "planned");
   }
   const rank = { serving: 4, loading: 3, planned: 2, gap: 1 };
   for (const L of layers) {
     L.serving = L.peers.filter(p => p.state === "serving").length;
     L.state = L.peers.reduce((b, p) => rank[p.state] > rank[b] ? p.state : b, "gap");
   }
-  const missing = layers.filter(L => L.state === "gap").map(L => L.i);
+  const missing = layers.filter(L => !L.serving).map(L => L.i);
   const loading = layers.filter(L => L.state === "loading").length;
-  const serving = layers.filter(L => L.state === "serving").length;
-  const name = m.name || m.repo.split("/").pop();
+  const unreachable = layers.filter(L => L.state === "planned").length;
+  const name = shortModel(m.model);
+  const routes = m.redundancy || 0;
   let verdict;
-  if (m.partialView) verdict = { level: "info", title: "Partial view", reason: "This Mac is a worker. The host sees the whole model; this Mac only knows its own layers." };
-  else if (serving === m.n_layers) verdict = { level: "serving", title: "Ready to run", reason: `All ${m.n_layers} layers are loaded on ${new Set(m.assignments.map(a => a.node)).size} peers.` };
-  else if (missing.length) verdict = { level: "gap", title: "Can't run", reason: `Layers ${ranges(missing)} have no peer${m.planned && !s.layerMap ? ": a worker needs to join" : ""}.` };
-  else if (loading) verdict = { level: "degraded", title: "Loading", reason: `${serving + loading} of ${m.n_layers} layers assigned; ${loading} still downloading or loading.` };
-  else verdict = { level: "planned", title: "Not loaded", reason: "Every layer has a peer. Load the model to download and load each slice." };
+  if (m.state === "available") verdict = { level: "serving", title: `Available · ${routes} route${routes === 1 ? "" : "s"}`, reason: `Every layer has a reachable peer${routes > 1 ? `; each layer has at least ${routes}, so a failure re-routes` : ""}.` };
+  else if (loading && m.state !== "available") verdict = { level: "degraded", title: "Loading", reason: `${loading} of ${n} layers are still downloading or loading.${m.gaps.length ? ` Layers ${layerList(m.gaps)} have no peer yet.` : ""}` };
+  else if (m.state === "partial") verdict = { level: "gap", title: `Partial · layers ${layerList(m.gaps)} missing`, reason: unreachable ? `Some layers are only on Macs this one can't reach directly.` : `No reachable peer serves layers ${layerList(m.gaps)}. Serve them on this Mac, or ask a connected Mac to.` };
+  else verdict = { level: "gap", title: "Offline", reason: unreachable ? "Online Macs serve it, but none are reachable from here." : "Nobody online serves it right now." };
   const redundancy = Math.max(1, ...layers.map(L => L.peers.length));
-  return { ...m, name, layers, missing, serving, loading, verdict, redundancy, runnable: serving === m.n_layers };
+  return {
+    ...m, id: m.model, repo: m.model, name, layers, assignments, missing, gaps: m.gaps, serving: n - missing.length, loading, verdict,
+    redundancy, routes, runnable: m.state === "available", primary: !!m.default,
+  };
 }
 
 export function swarmStats(s = state) {

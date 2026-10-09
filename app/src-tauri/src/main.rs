@@ -12,8 +12,6 @@ use tauri_plugin_notification::NotificationExt;
 
 #[derive(Default)]
 struct Engine(Mutex<Option<Child>>);
-#[derive(Default)]
-struct Downloader(Mutex<Option<Child>>);
 /// Tray menu's status line, updated from the UI.
 struct TrayStatus(MenuItem<Wry>);
 
@@ -38,19 +36,18 @@ fn backend_dir(app: &AppHandle) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Start the Python engine: `host` or `join <addr>`. Output goes to ~/.podtorrent/engine.log.
+/// Start this Mac's peer (`podtorrent peer`). Output goes to ~/.podtorrent/engine.log.
+/// `mode` is "peer"; "host" is accepted from older UI builds. There is no address: peers find
+/// each other through the rendezvous. `name` (from onboarding) is what other peers see.
 #[tauri::command]
-fn start_engine(app: AppHandle, state: State<Engine>, mode: String, addr: Option<String>) -> Result<(), String> {
+fn start_engine(app: AppHandle, state: State<Engine>, mode: String, name: Option<String>) -> Result<(), String> {
     let mut slot = state.0.lock().unwrap();
     if let Some(mut old) = slot.take() {
         kill_group(&mut old);
     }
-    let args: Vec<String> = match (mode.as_str(), addr) {
-        ("host", _) => vec!["host".into(), "--no-open".into()],
-        ("join", Some(a)) if !a.trim().is_empty() && !a.contains(char::is_whitespace) && !a.starts_with('-') => {
-            vec!["join".into(), a.trim().into()]
-        }
-        _ => return Err("invalid mode or address".into()),
+    let args: Vec<String> = match mode.as_str() {
+        "peer" | "host" => vec!["peer".into()],
+        _ => return Err("invalid mode".into()),
     };
     let dir = backend_dir(&app);
     let data = data_dir();
@@ -65,66 +62,13 @@ fn start_engine(app: AppHandle, state: State<Engine>, mode: String, addr: Option
         .stdout(log.try_clone().map_err(|e| e.to_string())?)
         .stderr(log)
         .process_group(0);
+    let name: String = name.unwrap_or_default().chars().filter(|c| !c.is_control()).take(40).collect();
+    if !name.trim().is_empty() {
+        cmd.env("PODTORRENT_NAME", name.trim());
+    }
     let child = cmd.spawn().map_err(|e| format!("failed to start engine: {e}"))?;
     *slot = Some(child);
     Ok(())
-}
-
-fn spawn_uv(app: &AppHandle, args: &[String], log_name: &str) -> Result<Child, String> {
-    let dir = backend_dir(app);
-    let data = data_dir();
-    std::fs::create_dir_all(&data).map_err(|e| e.to_string())?;
-    let log = std::fs::File::create(data.join(log_name)).map_err(|e| e.to_string())?;
-    let uv = if dir.join("uv").exists() { dir.join("uv") } else { PathBuf::from("uv") };
-    Command::new(uv)
-        .args(["run", "--project"]).arg(&dir).arg("podtorrent").args(args)
-        .env("UV_PROJECT_ENVIRONMENT", data.join("venv"))
-        .env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default()))
-        .stdin(Stdio::null())
-        .stdout(log.try_clone().map_err(|e| e.to_string())?)
-        .stderr(log)
-        .process_group(0)
-        .spawn()
-        .map_err(|e| format!("failed to start: {e}"))
-}
-
-/// Download this Mac's layers on its own: role is "host" or "worker".
-#[tauri::command]
-fn start_download(app: AppHandle, state: State<Downloader>, role: String, split: u32) -> Result<(), String> {
-    if role != "host" && role != "worker" || !(1..48).contains(&split) {
-        return Err("invalid role or split".into());
-    }
-    let mut slot = state.0.lock().unwrap();
-    if let Some(c) = slot.as_mut() {
-        if c.try_wait().map_err(|e| e.to_string())?.is_none() {
-            return Err("a download is already running".into());
-        }
-    }
-    let _ = std::fs::remove_file(data_dir().join("download.json"));
-    *slot = Some(spawn_uv(&app, &["download".into(), role, "--split".into(), split.to_string()], "download.log")?);
-    Ok(())
-}
-
-/// Progress JSON written by the downloader, plus which slices are already on disk.
-#[tauri::command]
-fn download_status(split: u32) -> serde_json::Value {
-    let data = data_dir();
-    let progress = std::fs::read_to_string(data.join("download.json"))
-        .ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
-    let m = data.join("models/Qwen3-30B-A3B-4bit");
-    let have = |n: String| m.join(format!("{n}.safetensors")).exists();
-    serde_json::json!({
-        "progress": progress,
-        "host_cached": have(format!("host-0-{split}")) && have("head".into()),
-        "worker_cached": have(format!("layers-{split}-48")),
-        "log": engine_log_of("download.log"),
-    })
-}
-
-fn engine_log_of(name: &str) -> String {
-    let t = std::fs::read_to_string(data_dir().join(name)).unwrap_or_default();
-    let lines: Vec<&str> = t.lines().collect();
-    lines[lines.len().saturating_sub(2)..].join("\n")
 }
 
 #[tauri::command]
@@ -134,7 +78,7 @@ fn engine_log() -> String {
     lines[lines.len().saturating_sub(3)..].join("\n")
 }
 
-/// Read-only: the last `lines` lines of engine.log or download.log, for the Activity view.
+/// Read-only: the last `lines` lines of engine.log (or an older download.log), for the Activity view.
 #[tauri::command]
 fn engine_log_tail(name: Option<String>, lines: Option<usize>) -> Result<String, String> {
     let name = name.unwrap_or_else(|| "engine.log".into());
@@ -163,7 +107,7 @@ fn stop_engine(state: State<Engine>) {
     }
 }
 
-/// Stop the engine and any download, then quit. Called from the dashboard's Stop button.
+/// Stop the engine, then quit. Called from the dashboard's Stop button.
 #[tauri::command]
 fn quit_app(app: AppHandle) {
     stop_children(&app);
@@ -172,9 +116,6 @@ fn quit_app(app: AppHandle) {
 
 fn stop_children(app: &AppHandle) {
     if let Some(mut c) = app.state::<Engine>().0.lock().unwrap().take() {
-        kill_group(&mut c);
-    }
-    if let Some(mut c) = app.state::<Downloader>().0.lock().unwrap().take() {
         kill_group(&mut c);
     }
 }
@@ -337,8 +278,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .fullscreen()
         .build()?;
     let node = SubmenuBuilder::new(app, "Node")
-        .item(&item("node:start-host", "Start as Host", Some("Shift+CmdOrCtrl+H"))?)
-        .item(&item("node:join", "Join a Host…", Some("Shift+CmdOrCtrl+J"))?)
+        .item(&item("node:start-host", "Start My Node", Some("Shift+CmdOrCtrl+H"))?)
         .item(&item("node:load", "Load Model", Some("Shift+CmdOrCtrl+L"))?)
         .separator()
         .item(&item("node:stop", "Stop Node", Some("Shift+CmdOrCtrl+."))?)
@@ -356,9 +296,8 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .manage(Engine::default())
-        .manage(Downloader::default())
         .invoke_handler(tauri::generate_handler![
-            engine_log, engine_log_tail, engine_running, start_engine, start_download, download_status,
+            engine_log, engine_log_tail, engine_running, start_engine,
             stop_engine, quit_app, system_health, tray_update, notify
         ])
         .setup(|app| {

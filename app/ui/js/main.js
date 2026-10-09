@@ -7,7 +7,7 @@ import { mountShell } from "./shell.js";
 import { initShortcuts } from "./shortcuts.js";
 import { initOnboarding } from "./onboarding.js";
 import { handleMenu } from "./actions.js";
-import { attachExisting, initDownloads } from "./engine.js";
+import { attachExisting } from "./engine.js";
 import { startDemo } from "./demo.js";
 import { loadValuation } from "./valuation.js";
 
@@ -28,7 +28,6 @@ addEventListener("blur", commit);
   if (settings.demo) { await pollHealth(); startDemo(settings.demoPreset); }
   else await attachExisting();
   state.booted = true;
-  initDownloads();
   initOnboarding();
   commit();
 })();

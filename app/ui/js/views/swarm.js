@@ -54,9 +54,9 @@ export default {
       }
       emptyBox.replaceChildren(empty({
         icon: "swarm", title: "This Mac isn't in a swarm yet",
-        body: s.engine.error ? `The engine stopped: ${s.engine.error.split("\n").pop().slice(0, 160)}` : "Start as the host to run the dashboard and the first layers, or join a host to contribute the rest. Or explore a simulated swarm first.",
+        body: s.engine.error ? `The engine stopped: ${s.engine.error.split("\n").pop().slice(0, 160)}` : "Start your node to join the global swarm. Every Mac is an equal peer: it finds the others automatically, connects to them directly, serves a slice of the model and can chat with it. Or explore a simulated swarm first.",
         tone: s.engine.error ? "gap" : "",
-        actions: [button("Start as Host", { variant: "primary", icon: "play", onclick: actions.startHost }), button("Join a Host…", { icon: "link", onclick: actions.join }), button("Explore Demo", { variant: "ghost", icon: "sparkle", onclick: () => setDemo(true) })],
+        actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost }), button("Explore Demo", { variant: "ghost", icon: "sparkle", onclick: () => setDemo(true) })],
       }));
     }
 
@@ -78,7 +78,7 @@ export default {
         text(el.querySelector(".name"), n.name);
         el.querySelector(".badge.you").hidden = !me;
         cls(el, "mine", me);
-        text(el.querySelector(".role"), `${n.role === "host" ? "Host" : "Worker"} · ${nodeStateLabel(n, s)}`);
+        text(el.querySelector(".role"), `${n.role === "host" ? "You" : "Peer"} · ${nodeStateLabel(n, s)}`);
         text(el.querySelector(".chip"), n.chip || "Unknown chip");
         const r = el.querySelector(".range i");
         if (n.lo != null) { r.style.left = (n.lo / total) * 100 + "%"; r.style.width = ((n.hi - n.lo) / total) * 100 + "%"; r.className = st; } else r.style.width = 0;
@@ -110,8 +110,7 @@ export default {
         graph.el.hidden = !g; grid.hidden = g;
         graph.setVisible(g);
         if (g) graph.update(); else renderGrid(s);
-        const partial = s.role === "worker" && s.conn !== "live";
-        text(note, partial ? "Showing this Mac only. The full swarm view is on the host (its event stream isn't reachable from here)." : "");
+        text(note, "");
         const m = models(s)[0];
         covCard.hidden = !m;
         if (m) {

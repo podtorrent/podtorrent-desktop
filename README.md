@@ -1,6 +1,6 @@
 # PodTorrent
 
-Two Apple Silicon Macs jointly serve a model neither can hold alone (Qwen3-30B-A3B, 4-bit MLX), split by layer range. One Mac is the **host** (dashboard, tokenizer, embeddings, lm_head, first layers). The other is the **worker** (remaining layers). Each Mac downloads only its own tensors from Hugging Face.
+Apple Silicon Macs jointly serve a model none of them can hold alone (Qwen3-30B-A3B, 4-bit MLX), split by layer range. Every Mac runs the same **peer**: it serves a layer slice to the swarm and can request completions itself. Peers anywhere on the internet find each other through a small rendezvous service and connect directly over QUIC (UDP hole punching; no VPN, no relay). Each Mac downloads only its own tensors from Hugging Face. Design: [docs/P2P_PLAN.md](docs/P2P_PLAN.md).
 
 Two-Mac demo walkthrough: [docs/DEMO.md](docs/DEMO.md).
 
@@ -27,55 +27,61 @@ sudo sysctl iogpu.wired_limit_mb=13000   # resets on reboot; note the value you 
 
 ## Run
 
-On Mac A (host):
+On every Mac:
 
 ```bash
-uv run podtorrent host
+uv run podtorrent peer                  # serve nothing yet; local API + dashboard on http://127.0.0.1:8000
+uv run podtorrent peer --serve 24:48    # or serve a layer range right away (remembered in ~/.podtorrent/config.json)
 ```
 
-It prints its address and opens the dashboard at http://localhost:8000.
-
-On Mac B (worker), using Mac A's LAN IP (or mesh IP):
+A peer can serve several slices, of several models (any `qwen3_moe` MLX repo), at once. While it runs:
 
 ```bash
-uv run podtorrent join 192.168.1.10:8000
+uv run podtorrent serve 0:12                                   # another slice of the default model
+uv run podtorrent serve mlx-community/Qwen3-30B-A3B-4bit:24:48 --peer mac-b   # ask a connected peer instead
+uv run podtorrent unserve 0:12                                 # or `unserve <model>` for all its slices
+uv run podtorrent models                                       # per-layer coverage, gaps and route for each model
 ```
 
-Mac B appears in the dashboard's node list. Click **Load model** on the host dashboard. Each Mac downloads its own layer range (progress bars per node), loads it, and the chat box unlocks.
+Before downloading, a slice is checked against this Mac's GPU memory budget (macOS's recommended working set, about 75% of RAM; cap it with `PODTORRENT_MEM_BUDGET_GB`) and refused if it won't fit.
 
-The worker serves a read-only status page at `http://<worker-ip>:8001`.
+Peers appear in each other's swarm within seconds. Click **Load model** on any Mac: it serves layers `[0, 24)` itself and asks a connected Mac that serves nothing to load the rest. Once every layer has a reachable peer, the chat box unlocks. Any Mac can then chat; its prompts route through the peers' slices.
 
-Ports: 8000 dashboard (host), 50051 gRPC (worker), 8001 worker status page. All unauthenticated. Use only on a trusted LAN or private mesh.
+`uv run podtorrent swarm --watch` lists every online peer and whether this Mac reaches it directly (with RTT) or not.
+
+The local API binds to 127.0.0.1 only; other Macs talk to this one over QUIC on a UDP port (random; pin it with `PODTORRENT_UDP_PORT`). QUIC is encrypted and both ends prove their peer IDs, but the swarm is open: any PodTorrent peer can send work to yours.
 
 ## Options
 
 | Command | Flag | Default |
 | --- | --- | --- |
-| `host` | `--model` | `mlx-community/Qwen3-30B-A3B-4bit` |
-| `host` | `--model-dir` | `~/.podtorrent/models/<model>` |
-| `host` | `--layers` | 48 (total layers) |
-| `host` | `--port`, `--no-open` | 8000 |
-| `join` | `--name`, `--grpc-port`, `--status-port` | hostname, 50051, 8001 |
-| `join` | `--advertise` | auto-detected IP the host should dial |
-
-The split point is set in the dashboard (default: layer 24 of 48).
+| `peer` | `--model` | `mlx-community/Qwen3-30B-A3B-4bit` |
+| `peer` | `--model-dir` | `~/.podtorrent/models/<model>` |
+| `peer` | `--layers` | from the model's config (48) |
+| `peer` | `--serve [MODEL:]LO:HI` (repeatable) | the slices served last time, else nothing |
+| `peer` | `--port`, `--open` | 8000, don't open a browser |
 
 ## Tests
 
 ```bash
 # Needs a model dir holding the first 16 layers + embeddings + head
-uv run python -m tests.golden <model-dir> --layers 16 --split 8
+uv run python -m tests.golden <model-dir> --layers 16 --splits 5,10
+uv run python -m tests.golden <model-dir> --layers 16 --splits 5,10 --tokens 60 --prompts 6 --failover
+uv run python -m tests.multi <model-dir>   # several slices and models per peer, serve/unserve, memory check
+uv run --with pytest pytest tests/test_route.py
 ```
 
-Runs 20 prompts through a host and a worker process and requires token-exact output versus a single-process reference.
+Starts one peer process per slice (`[0,5)`, `[5,10)`, `[10,16)`), lets them connect over QUIC through the rendezvous, runs 20 prompts through the chain and requires token-exact output versus a single-process reference.
 
 ## Layout
 
 - `podtorrent/slicer.py`: downloads only the tensors for a layer range (HTTP range requests)
 - `podtorrent/shard.py`: loads a layer range into MLX
-- `podtorrent/worker.py`, `host.py`: gRPC pipeline ends
-- `podtorrent/server.py`, `static/index.html`: dashboard and event API
-- `podtorrent/pipeline.proto`: wire protocol (regenerate with `grpc_tools.protoc`)
+- `podtorrent/peer.py`: the peer runtime (serving, requesting, local API and event stream)
+- `podtorrent/route.py`: plans which peers run which layers
+- `podtorrent/net/`: identity keys, STUN, rendezvous client, QUIC transport and hole punching
+- `rendezvous/`: the Cloudflare Worker that keeps the global peer registry
+- `podtorrent/pipeline.proto`: message schema (regenerate with `uv run python -m grpc_tools.protoc -I podtorrent --python_out=podtorrent podtorrent/pipeline.proto`)
 
 ## Desktop app (Tauri)
 

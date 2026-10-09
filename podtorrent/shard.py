@@ -61,12 +61,18 @@ class Shard(nn.Module):
         self.load_weights(list(local.items()), strict=True)
         mx.eval(self.parameters())
 
-    def make_cache(self):
-        return [KVCache() for _ in self.layers]
+    def make_cache(self, lo=None, hi=None):
+        lo, hi = self.lo if lo is None else lo, self.hi if hi is None else hi
+        return [KVCache() for _ in range(lo, hi)]
 
-    def run_layers(self, h, cache):
+    def run_layers(self, h, cache, lo=None, hi=None):
+        """Run global layers [lo, hi) (default: all of this shard's); `cache` has one entry per layer."""
+        lo, hi = self.lo if lo is None else lo, self.hi if hi is None else hi
+        assert self.lo <= lo <= hi <= self.hi, (lo, hi, self.lo, self.hi)
+        if lo == hi:
+            return h
         mask = create_attention_mask(h, cache[0])
-        for layer, c in zip(self.layers, cache):
+        for layer, c in zip(self.layers[lo - self.lo:hi - self.lo], cache):
             h = layer(h, mask, c)
         return h
 

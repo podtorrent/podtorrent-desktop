@@ -5,7 +5,7 @@ import { state, nodeState, stateLabel } from "../store.js";
 import { popover } from "../ui.js";
 
 let pop = null;
-const LBL = { serving: "Serving", loading: "Loading", planned: "Assigned, not loaded", gap: "No peer" };
+const LBL = { serving: "Serving", loading: "Loading", planned: "Not reachable from here", gap: "No peer" };
 
 export function modelStrip({ compact = false } = {}) {
   const blocks = h("div.strip-blocks");
@@ -78,7 +78,7 @@ export function modelStrip({ compact = false } = {}) {
     const L = model.layers[+b.dataset.i];
     const body = h("div",
       h("div.row", h("b", `Layer ${L.i}`), h("span.spacer"), h(`span.badge.${L.state === "planned" ? "neutral" : L.state === "loading" ? "degraded" : L.state}`, LBL[L.state])),
-      h("div.small.muted", { style: { marginTop: "4px" } }, L.peers.length ? `${L.peers.length} peer${L.peers.length > 1 ? "s" : ""} assigned · ${L.serving} serving` : "No peer hosts this layer. The model can't run until one does."),
+      h("div.small.muted", { style: { marginTop: "4px" } }, L.peers.length ? `${L.peers.length} peer${L.peers.length > 1 ? "s" : ""} · ${L.serving} reachable and serving` : "No peer serves this layer. The model can't run until one does."),
       L.peers.length ? h("div.col", { style: { marginTop: "8px", gap: "6px" } }, L.peers.map(p => {
         const nd = state.nodes[p.node];
         const st = nd ? nodeState(nd) : "gap";

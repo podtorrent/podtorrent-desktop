@@ -52,6 +52,9 @@
     ],
     "resources": [
       "resources/backend/**/*"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }

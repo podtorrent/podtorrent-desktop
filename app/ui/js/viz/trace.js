@@ -31,7 +31,7 @@ export function tokenTrace(msg) {
     tabs.replaceChildren(...opts.map(([k, l]) => h("button.chip-btn", { type: "button", "aria-pressed": String(which.v === k), onclick: () => { which.v = k; render(); } }, l)));
     const t = opts.find(o => o[0] === which.v)?.[2];
     if (!t) { body.replaceChildren(h("div.faint.small", "No timing data for this reply.")); return; }
-    const r = routeOf(t, layersOf);
+    const r = routeOf(t, n => { const x = t.route?.find(([nn]) => nn === n); return x ? fmt.layers(x[1], x[2]) : layersOf(n); });
     let at = 0;
     const total = r.total || 1;
     const rows = r.segments.map(s => {

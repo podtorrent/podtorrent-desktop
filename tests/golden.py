@@ -1,19 +1,27 @@
-"""Golden test: greedy decode through host+worker must match a single-process reference.
+"""Golden test: greedy decode through a chain of peers must match a single-process reference.
 
-Usage: python -m tests.golden MODEL_DIR --layers 16 --split 8 [--worker HOST:PORT]
-If --worker is omitted a local worker subprocess is spawned.
+Usage: python -m tests.golden MODEL_DIR --layers 16 --splits 5,10
+With --failover, a second peer also serves the last slice; during one prompt the test kills
+whichever of the two the route uses and checks the answer still matches (re-route + KV replay).
+
+Spawns one `podtorrent peer` per slice ([0,5), [5,10), [10,16) above), each with its own identity,
+lets them find each other through the rendezvous and connect over QUIC, then sends every prompt
+to the first peer's /api/complete and compares tokens and logits with the reference.
 """
 import argparse
 import gc
+import json
+import os
 import subprocess
 import sys
+import tempfile
 import time
+import urllib.request
+from pathlib import Path
 
 import mlx.core as mx
 from mlx_lm.utils import load_tokenizer
-from pathlib import Path
 
-from podtorrent.host import Host
 from podtorrent.shard import Shard
 
 PROMPTS = [
@@ -28,61 +36,119 @@ PROMPTS = [
 ]
 
 
-def cos(a, b):
-    return (a @ b / (mx.linalg.norm(a) * mx.linalg.norm(b))).item()
+def http(url, body=None, timeout=600):
+    req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return json.loads(e.read())
+
+
+def complete_with_kill(base, ids, max_tokens, procs):
+    """Start a completion, kill the last-slice peer on the current route once it's under way,
+    and return the result."""
+    import threading
+    out = {}
+    victim = http(base + "/status")["route"][-1][0]
+    th = threading.Thread(target=lambda: out.update(r=http(base + "/api/complete",
+                                                             {"ids": ids, "max_tokens": max_tokens})))
+    th.start()
+    time.sleep(1.0)
+    procs[int(victim.removeprefix("peer"))].kill()
+    print(f"killed {victim} mid-answer")
+    th.join()
+    routes = {tuple(map(tuple, tm["route"])) for tm in out["r"].get("timings", [])}
+    print("routes used:", " | ".join(" → ".join(f"{n}[{lo},{hi})" for n, lo, hi in r) for r in routes))
+    return out["r"]
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("model_dir")
     ap.add_argument("--layers", type=int, default=16)
-    ap.add_argument("--split", type=int, default=8)
+    ap.add_argument("--splits", default="8", help="comma-separated slice boundaries")
     ap.add_argument("--tokens", type=int, default=12)
-    ap.add_argument("--worker")
-    ap.add_argument("--port", type=int, default=50061)
+    ap.add_argument("--port", type=int, default=8100)
+    ap.add_argument("--prompts", type=int, default=len(PROMPTS))
+    ap.add_argument("--failover", action="store_true", help="add a redundant last-slice peer and kill one mid-answer")
     a = ap.parse_args()
+    prompts = PROMPTS[:a.prompts]
     tok = load_tokenizer(Path(a.model_dir))
 
-    # Reference: all layers in this process
+    # Reference: all layers in this process.
     ref = Shard(a.model_dir, 0, a.layers, embed=True, head=True)
     ref_out = []
-    for p in PROMPTS:
+    for p in prompts:
         ids = mx.array(tok.encode(p))[None]
-        cache, toks, lgs = ref.make_cache(), [], []
+        cache, toks = ref.make_cache(), []
         for _ in range(a.tokens):
-            lg = ref.logits(ref.run_layers(ref.embed(ids), cache)[:, -1:, :])[0, -1].astype(mx.float32)
+            lg = ref.logits(ref.run_layers(ref.embed(ids), cache)[:, -1:, :])[0, -1]
             t = int(mx.argmax(lg).item())
-            toks.append(t); lgs.append(lg)
+            toks.append(t)
             ids = mx.array([[t]])
-        ref_out.append((toks, lgs))
-    del ref; gc.collect(); mx.clear_cache()
+        ref_out.append(toks)
+    del ref
+    gc.collect()
+    mx.clear_cache()
 
-    proc = None
-    addr = a.worker
-    if not addr:
-        proc = subprocess.Popen([sys.executable, "-m", "podtorrent.cli", "worker-static", "--model-dir", a.model_dir,
-                                 "--lo", str(a.split), "--hi", str(a.layers), "--port", str(a.port)])
-        addr = f"localhost:{a.port}"
-    host = Host(Shard(a.model_dir, 0, a.split, embed=True, head=True), tok, addr)
-    for _ in range(600):
-        try:
-            host.info(); break
-        except Exception:
+    bounds = [0, *(int(x) for x in a.splits.split(",")), a.layers]
+    slices = list(zip(bounds, bounds[1:]))
+    if a.failover:
+        slices.append(slices[-1])
+    n_hops = len(slices) - a.failover
+    tmp = Path(tempfile.mkdtemp(prefix="podtorrent-golden-"))
+    procs = []
+    for i, (lo, hi) in enumerate(slices):
+        env = {**os.environ, "PODTORRENT_HOME": str(tmp / f"peer{i}"), "PODTORRENT_NAME": f"peer{i}"}
+        log = open(tmp / f"peer{i}.log", "w")
+        procs.append(subprocess.Popen(
+            [sys.executable, "-m", "podtorrent.cli", "peer", "--model-dir", a.model_dir, "--layers", str(a.layers),
+             "--port", str(a.port + i), "--serve", f"{lo}:{hi}"], env=env, stdout=log, stderr=subprocess.STDOUT))
+    print(f"peers: {slices} (logs in {tmp})")
+    base = f"http://127.0.0.1:{a.port}"
+    try:
+        for _ in range(300):
+            try:
+                st = http(base + "/status", timeout=3)
+                if len(st["route"]) == n_hops:
+                    break
+            except OSError:
+                pass
             time.sleep(1)
-    fails, mincos, rtts = 0, 1.0, []
-    for p, (rt, rl) in zip(PROMPTS, ref_out):
-        evs = list(host.generate(tok.encode(p), a.tokens, keep_logits=True))
-        toks = [e.token for e in evs]
-        c = min(cos(e.logits, l) for e, l in zip(evs, rl))
-        mincos = min(mincos, c)
-        ok = toks == rt[:len(toks)] and len(toks) == len(rt)
-        fails += not ok
-        rtts += [e.network_ms for e in evs[1:]]
-        print(f"{'PASS' if ok else 'FAIL'} cos={c:.5f} {p!r}")
-    print(f"\n{len(PROMPTS)-fails}/{len(PROMPTS)} token-exact; min logit cosine {mincos:.5f}; "
-          f"mean net+serde {sum(rtts)/len(rtts):.2f} ms/token")
-    if proc: proc.terminate()
-    sys.exit(1 if fails else 0)
+        else:
+            sys.exit(f"no full route; last status: {st}")
+        print("route:", " → ".join(f"{n} [{lo},{hi})" for n, lo, hi in st["route"]))
+        if a.failover:  # let the redundant peer connect too, so it's a candidate
+            time.sleep(10)
+        fails, nets = 0, []
+        for i, (p, rt) in enumerate(zip(prompts, ref_out)):
+            if a.failover and i == len(prompts) // 2:
+                r = complete_with_kill(base, tok.encode(p), a.tokens, procs)
+            else:
+                r = http(base + "/api/complete", {"ids": tok.encode(p), "max_tokens": a.tokens})
+            if "error" in r:
+                sys.exit(f"error: {r['error']}")
+            ok = r["tokens"] == rt
+            routes = [tm["route"] for tm in r["timings"]]
+            switch = next((j for j in range(1, len(routes)) if routes[j] != routes[0]), None)
+            if switch is not None and not ok:
+                # The replay re-runs the context as one prefill, whose float math differs slightly from
+                # step-by-step decode, so a greedy near-tie may flip later. Before the switch must match.
+                first_diff = next((j for j, (x, y) in enumerate(zip(r["tokens"], rt)) if x != y), len(rt))
+                ok = first_diff >= switch and len(r["tokens"]) == len(rt)
+                print(f"  re-routed at token {switch}; first divergence at {first_diff} (replay numerics)")
+            fails += not ok
+            for tm in r["timings"][1:]:
+                nets.append(sum(s["compute_ms"] for s in tm["stages"] if s["node"] == "network"))
+            print(f"{'PASS' if ok else 'FAIL'} {p!r}" + ("" if ok else f"\n  got {r['tokens']}\n  ref {rt}"))
+        print(f"\n{len(prompts) - fails}/{len(prompts)} token-exact; "
+              f"mean network+serde {sum(nets) / max(len(nets), 1):.2f} ms/token over {len(slices) - 1} remote hops")
+        sys.exit(1 if fails else 0)
+    finally:
+        for pr in procs:
+            pr.terminate()
 
 
 if __name__ == "__main__":

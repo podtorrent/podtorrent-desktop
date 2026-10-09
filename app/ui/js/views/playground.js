@@ -1,6 +1,6 @@
 // Playground: streaming chat with model picker, inspector (⌘I), live tok/s and Token Trace.
 import { h, text, fmt, reconcile, cls } from "../dom.js";
-import { state, settings, setSetting, models, commit } from "../store.js";
+import { state, settings, setSetting, models, commit, on } from "../store.js";
 import { button, iconButton, slider, empty, kbd, popover } from "../ui.js";
 import { icon } from "../icons.js";
 import { modelStrip } from "../viz/strip.js";
@@ -8,6 +8,8 @@ import { tokenTrace } from "../viz/trace.js";
 import { renderMarkdown } from "../markdown.js";
 import { sendPrompt } from "../engine.js";
 import { go, copyText, actions } from "../actions.js";
+import { openServe } from "../serve.js";
+import { routeText } from "./models.js";
 
 const SUGGEST = [
   "Explain pipeline parallelism in three sentences.",
@@ -17,6 +19,7 @@ const SUGGEST = [
 ];
 
 let pickedModel = null;
+on("pick-model", id => { pickedModel = id; commit(); });
 
 export default {
   title: "Playground",
@@ -35,14 +38,15 @@ export default {
       e.stopPropagation();
       if (pop.el.classList.contains("show")) return pop.hide();
       const r = picker.getBoundingClientRect();
-      pop.show(h("div.col", { role: "listbox", style: { gap: "4px" } }, models(state).map(m => {
+      const avail = models(state).filter(m => m.runnable);
+      pop.show(h("div.col", { role: "listbox", style: { gap: "4px" } }, avail.length ? avail.map(m => {
         const st = modelStrip({ compact: true });
         const item = h("button.pick-item", { type: "button", role: "option", "aria-selected": String(current(state)?.id === m.id), onclick: () => { pickedModel = m.id; pop.hide(); commit(); } },
           h("div.row", h("b", m.name), h("span.spacer"), h(`span.badge.${m.runnable ? "serving" : m.verdict.level === "gap" ? "gap" : "neutral"}`, m.runnable ? "Ready" : m.verdict.title)), st,
           !m.runnable ? h("div.small.faint", m.verdict.reason) : null);
         requestAnimationFrame(() => st.set(m));
         return item;
-      })), r.left - 14, r.bottom - 10);
+      }) : h("div.small.muted", { style: { padding: "8px" } }, "No model is available right now. See Models.")), r.left - 14, r.bottom - 10);
     };
     const closePick = e => { if (!pop.el.contains(e.target)) pop.hide(); };
     document.addEventListener("pointerdown", closePick);
@@ -52,7 +56,7 @@ export default {
     const scroller = h("div.chat-scroll", log);
     const intro = h("div.chat-intro",
       h("div.art", icon("sparkle")), h("h2", "Ask the swarm"),
-      h("p.muted", "Your prompt is tokenized on the host, runs through every Mac's layers, and streams back token by token. Each reply shows the route it took."),
+      h("p.muted", "Your prompt is tokenized on this Mac, hops through each peer that serves a slice of the model, and streams back token by token. Each reply shows the route it took."),
       h("div.suggest", SUGGEST.map(t => h("button.suggest-btn", { type: "button", onclick: () => send(t) }, t))));
     const blocked = h("div.chat-blocked");
     const ta = h("textarea.composer-input", { rows: 1, placeholder: "Message the swarm…", "aria-label": "Prompt" });
@@ -84,7 +88,7 @@ export default {
       const m = current(state);
       if (!m?.runnable || state.chat.busy) return;
       stick = true;
-      sendPrompt(t ?? ta.value);
+      sendPrompt(t ?? ta.value, m.model);
       ta.value = ""; grow();
     }
     const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(200, ta.scrollHeight) + "px"; };
@@ -105,7 +109,7 @@ export default {
         iconButton("refresh", "Regenerate", () => { if (!state.chat.busy) send(m.prompt); }, { size: "sm" }));
       const det = h("details.trace-wrap", h("summary", icon("trace"), "Token trace", h("span.faint.ts")));
       det.addEventListener("toggle", () => { if (det.open) { if (!det._t) { det._t = tokenTrace(m); det.append(det._t); } else det._t.update(); } });
-      return h("div.msg.assistant", h("div.avatar", icon("swarm")), h("div.grow", body, meta, det));
+      return h("div.msg.assistant", h("div.avatar", icon("swarm")), h("div.grow", body, meta, h("div.small.faint.mroute", { style: { margin: "2px 0 6px" } }), det));
     }
     function fillMsg(el, m) {
       const body = el.querySelector(".msg-body");
@@ -120,10 +124,14 @@ export default {
       }
       const d = m.done;
       text(el.querySelector(".mm"), d ? `${d.tokens} tokens · ${fmt.fixed(d.tok_s)} tok/s · first token ${fmt.ms(d.ttft_ms)}` : m.status === "streaming" ? `${m.tokens} tokens…` : "");
+      const routes = [...new Set(m.timings.map(t => JSON.stringify(t.route || [])))].map(r => JSON.parse(r)).filter(r => r.length);
+      const rt = routes.map(r => routeText(r, state.self)).join("  ⟶ re-routed: ");
+      text(el.querySelector(".mroute"), rt ? `Route: ${rt}` : "");
+      el.querySelector(".mroute").dataset.tip = routes.length > 1 ? "A peer failed mid-answer; the reply re-routed and kept the tokens so far" : "";
       el.querySelector(".msg-meta").hidden = m.status === "pending";
       const det = el.querySelector(".trace-wrap");
       det.hidden = !m.timings.length;
-      text(det.querySelector(".ts"), m.timings.length ? ` · ${new Set(m.timings[0].stages.filter(x => x.node !== "network").map(x => x.node)).size} peers` : "");
+      text(det.querySelector(".ts"), m.timings.length ? ` · ${(m.timings[0].route || []).length || new Set(m.timings[0].stages.filter(x => x.node !== "network").map(x => x.node)).size} hops` : "");
       const tk = m.timings.length + m.status;
       if (det.open && det._t && det._k !== tk && (m.status !== "streaming" || m.timings.length % 8 === 0)) { det._k = tk; det._t.update(); }
     }
@@ -143,21 +151,22 @@ export default {
           text(inspector.querySelector(".ins-name"), m.name);
           insStrip.set(m, s.self); text(insVerdict, m.verdict.reason);
         }
-        picker.disabled = ms.length < 2;
+        picker.disabled = ms.filter(x => x.runnable).length < 2;
         // blocked / empty states
-        // a worker chats through the host, so it needs the host's event stream
-        const ok = m?.runnable && (s.role === "host" || s.source === "demo" || (s.role === "worker" && s.conn === "live"));
-        const k = `${ok}|${m?.id}|${m?.verdict.title}|${s.role}|${s.engine.phase}|${m?.missing.length}`;
+        const ok = !!m?.runnable;
+        const k = `${ok}|${m?.id}|${m?.verdict.title}|${s.engine.phase}|${s.source}`;
         if (k !== blockKey) {
           blockKey = k;
+          const gap = m?.gaps?.[0];
           if (ok) blocked.replaceChildren();
-          else if (s.role === "worker" && s.conn !== "live") blocked.replaceChildren(empty({ icon: "wifioff", title: "Not connected to the host", body: "This Mac sends its prompts through the host. Waiting for the host's event stream…" }));
-          else if (!m) blocked.replaceChildren(empty({ icon: "playground", title: "No model to talk to yet", body: "Start as host and load the model to chat with it.", actions: [button("Start as Host", { variant: "primary", onclick: actions.startHost })] }));
+          else if (s.source === "live" && s.engine.phase !== "running") blocked.replaceChildren(empty({ icon: "playground", title: "Start your node to chat", body: "This Mac joins the swarm and can then talk to any model the swarm covers, even if it serves nothing itself.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
+          else if (!m) blocked.replaceChildren(empty({ icon: "playground", title: "No model to talk to yet", body: "Nobody online serves a model yet. Serve some layers to start one.", actions: [button("Open Models", { variant: "primary", icon: "models", onclick: () => go("models") })] }));
           else blocked.replaceChildren(empty({
             icon: m.verdict.level === "gap" ? "alert" : "layers", tone: m.verdict.level === "gap" ? "gap" : "degraded",
-            title: m.verdict.level === "gap" ? `${m.name} can't run yet` : m.verdict.level === "degraded" ? "Loading the model…" : `${m.name} isn't loaded`,
-            body: m.verdict.reason + (m.missing.length && m.primary ? " A worker Mac needs to join and load them." : ""),
-            actions: [button("Open Models", { variant: "primary", icon: "models", onclick: () => go("models") }), m.missing.length && !m.primary ? button("Host missing blocks on this Mac", { disabled: true, tip: "The engine assigns layers itself; hosting a chosen range isn't supported yet" }) : null].filter(Boolean),
+            title: m.verdict.level === "degraded" ? `${m.name} is loading…` : `${m.name} can't run from this Mac yet`,
+            body: m.verdict.reason,
+            actions: [button("Open Models", { variant: gap ? "" : "primary", icon: "models", onclick: () => go("models") }),
+              gap ? button("Serve missing layers", { variant: "primary", icon: "download", onclick: () => openServe({ model: m.model, lo: gap[0], hi: gap[1] }) }) : null].filter(Boolean),
           }));
         }
         blocked.hidden = !!ok;
@@ -194,12 +203,13 @@ export default {
   },
 };
 
-/** True while the host is generating for someone else (it never says who, or what). Info only. */
+/** True while this peer is generating for another window or app (it never says who, or what). Info only. */
 function othersTurn(s) {
   return !!s.chat.session && !s.chat.busy;
 }
 
+/** The picked model while it's available, else the first available one, else the default (to explain why not). */
 function current(s) {
-  const ms = models(s);
-  return ms.find(m => m.id === pickedModel) || ms[0] || null;
+  const ms = models(s), avail = ms.filter(m => m.runnable);
+  return avail.find(m => m.id === pickedModel) || avail[0] || ms.find(m => m.id === pickedModel) || ms[0] || null;
 }

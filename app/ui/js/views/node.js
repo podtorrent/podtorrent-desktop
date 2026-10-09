@@ -1,14 +1,15 @@
 // My Node: set up this Mac's role (replaces the old launcher), then show what it contributes,
 // its health, and the controls the engine actually supports.
 import { h, text, fmt, cls } from "../dom.js";
-import { state, settings, setSetting, history, selfNode, nodeState, nodeStateLabel } from "../store.js";
+import { state, settings, setSetting, history, selfNode, nodeState, nodeStateLabel, shortModel } from "../store.js";
 import { valuation, valuationError, bases, basis, usdFor, kwh, usd } from "../valuation.js";
 import { button, armedButton, toggle, badge, setBadge, ticker } from "../ui.js";
 import { icon } from "../icons.js";
 import { areaChart, barChart } from "../viz/chart.js";
-import { downloadSlice, startHost, joinHost, stopNode, quitApp, SPLIT } from "../engine.js";
+import { startHost, stopNode, quitApp, unserveSlice } from "../engine.js";
+import { openServe } from "../serve.js";
 import { isTauri } from "../native.js";
-import { copyText, setDemo } from "../actions.js";
+import { setDemo } from "../actions.js";
 
 function gauge() {
   const ns = "http://www.w3.org/2000/svg", R = 52, C = 2 * Math.PI * R;
@@ -21,54 +22,25 @@ function gauge() {
   return svg;
 }
 
-function roleCard(role) {
-  const chip = badge("Checking…", "neutral", { dot: true });
-  const bar = h("div.progress", h("i")), dl = h("div.small.muted.dlt");
-  const down = button(role === "host" ? "Download host layers" : "Download worker layers", { icon: "download", onclick: () => downloadSlice(role) });
-  const addr = role === "worker" ? h("input.input.mono", { placeholder: "100.x.y.z:8000", value: settings.hostAddr || "", "aria-label": "Host address" }) : null;
-  const go = role === "host" ? button("Start as Host", { variant: "primary", size: "lg", icon: "play", onclick: () => startHost() })
-    : button("Join Host", { variant: "primary", size: "lg", icon: "link", onclick: () => joinHost(addr.value) });
-  addr?.addEventListener("keydown", e => { if (e.key === "Enter") joinHost(addr.value); });
-  const el = h("section.card.role-card",
-    h("div.row", h("div.role-ic", icon(role === "host" ? "host" : "layers")), h("div.grow", h("h2", role === "host" ? "Host" : "Worker"), h("div.small.muted", role === "host" ? `Runs the dashboard, tokenizer and layers 0–${SPLIT - 1}` : `Contributes layers ${SPLIT}–47 to a host`)), chip),
-    h("div.col", { style: { gap: "6px", margin: "14px 0" } }, bar, dl),
-    h("div.col", { style: { gap: "8px" } }, down, addr ? h("div.field", h("label", "Host address (Tailscale IP:8000)"), addr) : null, go));
-  el.set = s => {
-    const st = s.download || {}, p = st.progress, mine = p && p.role === role && p.split === SPLIT;
-    const cached = role === "host" ? st.host_cached : st.worker_cached;
-    bar.hidden = true; text(dl, "");
-    down.disabled = !!st.busy || !isTauri;
-    if (mine && st.busy && p.phase === "downloading") {
-      const pc = p.total ? p.done / p.total : 0;
-      setBadge(chip, `Downloading ${fmt.pct(pc)}`, "active", { dot: true, pulse: true });
-      bar.hidden = false; bar.firstChild.style.width = pc * 100 + "%";
-      text(dl, `${fmt.bytes(p.done)} of ${fmt.bytes(p.total)}`);
-    } else if (mine && p.phase === "error") { setBadge(chip, "Error", "gap", { dot: true }); text(dl, p.message); }
-    else if (cached) { setBadge(chip, "Downloaded", "serving", { dot: true }); text(dl, "Slice is on disk and will be reused."); down.lastChild.textContent = "Re-check download"; }
-    else if (st.busy && st.role === role) { setBadge(chip, "Starting", "active", { dot: true, pulse: true }); text(dl, (st.log || "").split("\n").pop().slice(0, 100) || "Preparing Python environment (first run)…"); }
-    else if (!isTauri) { setBadge(chip, "Unknown", "neutral", { dot: true }); text(dl, "Open the PodTorrent app to manage downloads."); }
-    else { setBadge(chip, "Not downloaded", "neutral", { dot: true }); text(dl, "About 8.5 GB. You can also skip this: the host downloads on Load model."); }
-    go.disabled = !isTauri;
-  };
-  return el;
-}
-
 const PRESS = { normal: ["Normal", "serving"], warn: ["Elevated", "degraded"], critical: ["Critical", "gap"], unknown: ["Unknown", "neutral"] };
 const THERM = { nominal: ["Nominal", "serving"], fair: ["Fair", "degraded"], serious: ["Serious", "gap"], critical: ["Critical", "gap"], unknown: ["Unknown", "neutral"] };
 
 export default {
   title: "My Node",
-  subtitle: s => s.role ? `${s.role === "host" ? "Host" : "Worker"} · ${s.engine.phase === "running" ? "contributing" : s.engine.phase}` : "Not contributing",
+  subtitle: s => s.role ? `Peer · ${s.engine.phase === "running" ? "contributing" : s.engine.phase}` : "Not contributing",
   mount(root) {
     // ---- setup (no engine) ----
-    const hostCard = roleCard("host"), workerCard = roleCard("worker");
+    const startBtn = button("Start My Node", { variant: "primary", size: "lg", icon: "play", onclick: () => startHost() });
+    const startCard = h("section.card.role-card",
+      h("div.row", h("div.role-ic", icon("node")), h("div.grow", h("h2", "This Mac as a peer"), h("div.small.muted", "Joins the global swarm, connects directly to the other Macs, and serves whichever layers you choose, of any model. Only those layers are downloaded."))),
+      h("div.col", { style: { gap: "8px", marginTop: "14px" } }, startBtn));
     const machine = h("div.small.muted");
     const errBox = h("div.next.err");
     const setup = h("div.page",
-      h("div.page-h", h("div", h("h1", "Share this Mac"), h("p", "PodTorrent pools two Macs to run a model neither can hold alone. Pick this Mac's role. Each Mac downloads only its own slice, and the other Mac doesn't need to be online yet."), machine)),
+      h("div.page-h", h("div", h("h1", "Share this Mac"), h("p", "PodTorrent pools Macs to run a model none of them can hold alone. Every Mac runs the same node; each downloads only the slice it serves."), machine)),
       errBox,
-      h("div.role-grid", hostCard, workerCard),
-      h("div.small.faint", "Macs on different networks connect over Tailscale. Ports 8000 (host), 50051 and 8001 (worker), unauthenticated: use a private tailnet only. ",
+      startCard,
+      h("div.small.faint", "Macs on different networks connect directly over encrypted QUIC (UDP hole punching). The swarm is open: any PodTorrent peer can send work to this Mac. ",
         h("a", { href: "#", onclick: e => { e.preventDefault(); setDemo(true); } }, "Explore Demo Mode first →")));
 
     // ---- starting ----
@@ -82,20 +54,24 @@ export default {
     const gv = h("b.num"), gs = h("span.small.faint");
     const chipEl = h("h1.hero-chip"), roleB = h("span.badge"), stateB = h("span.badge.dot");
     const hv = { layers: h("b.num"), today: h("b.num"), all: h("b.num"), req: h("b.num"), up: h("b.num") };
+    const sliceList = h("div.col.slice-list");
+    const freeNote = h("span.small.faint");
+    const slicesCard = h("section.card",
+      h("div.card-h", h("h2", "Slices this Mac serves"), h("span.spacer"), freeNote,
+        button("Serve layers…", { icon: "download", size: "sm", onclick: () => openServe() })),
+      h("div.card-b", sliceList));
     const tk = { today: ticker(hv.today, v => fmt.compact(v)), all: ticker(hv.all, v => fmt.compact(v)), req: ticker(hv.req, v => fmt.int(v)) };
-    const addrs = h("div.addr-list");
     const hero = h("section.card.hero",
       h("div.hero-l", h("div.gauge-wrap", g, h("div.gauge-c", gv, gs))),
       h("div.hero-m",
         h("div.row", h("span.you-pill", icon("person"), "This Mac"), roleB, stateB),
         chipEl, h("div.small.muted.hero-sub"),
         h("div.hero-stats",
-          h("div", h("span.caps", "Layers hosted"), hv.layers),
+          h("div", h("span.caps", "Layers served"), hv.layers),
           h("div", h("span.caps", "Tokens today"), hv.today),
           h("div", h("span.caps", "All time"), hv.all),
           h("div", h("span.caps", "Requests helped"), hv.req),
-          h("div", h("span.caps", "Uptime"), hv.up)),
-        addrs),
+          h("div", h("span.caps", "Uptime"), hv.up))),
       h("div.hero-r",
         armedButton("Stop node", "Click again to stop", () => stopNode(), { icon: "stop", size: "lg" }),
         armedButton("Stop & quit", "Click again to quit", () => quitApp(), { icon: "power" })));
@@ -105,15 +81,15 @@ export default {
     const setTile = (el, v, kind, sub) => { const x = el.querySelector(".tile-v"); x.className = `tile-v ${kind}`; text(x, v); text(el.querySelector(".tile-s"), sub || " "); };
     const rules = h("section.card",
       h("div.card-h", h("h2", "Contribution rules"), h("span.spacer"), badge("Needs engine support", "neutral")),
-      ...[["Pause contributing", "Stop serving without leaving the swarm"], ["Only when plugged in", "Pause automatically on battery"], ["Only when idle", "Pause while you're using this Mac"], ["Memory cap", "Limit how much unified memory the swarm may use"]].map(([t, d]) =>
+      ...[["Pause contributing", "Stop serving without leaving the swarm"], ["Only when plugged in", "Pause automatically on battery"], ["Only when idle", "Pause while you're using this Mac"]].map(([t, d]) =>
         h("div.list-row", h("div.grow", h("div.t", t), h("div.d", d)), toggle(false, () => {}, t))),
-      h("div.card-b.small.faint", { style: { paddingTop: "10px" } }, "Today the engine serves a fixed layer range until you stop it. Use Stop node to stop contributing."));
+      h("div.card-b.small.faint", { style: { paddingTop: "10px" } }, "To stop serving a slice, use Stop serving above; Stop node leaves the swarm. Slices that won't fit in this Mac's GPU memory are refused before downloading (cap it with PODTORRENT_MEM_BUDGET_GB)."));
     rules.querySelectorAll(".toggle").forEach(t => { t.disabled = true; });
     const contrib = contributionCard(), payback = paybackCard();
     const tpsChart = areaChart({ color: "you", labels: ["2 min ago", "now"] });
     const dayChart = barChart({ color: "you" });
     const dayNote = h("span.small.faint");
-    const running = h("div.page", hero,
+    const running = h("div.page", hero, slicesCard,
       h("div.tiles", Object.values(tiles)),
       h("div.two.contrib-row", contrib, payback),
       h("div.two",
@@ -123,6 +99,29 @@ export default {
 
     root.append(setup, starting, running);
 
+    const PH = { checking: ["Checking", "degraded"], downloading: ["Downloading", "degraded"], loading: ["Loading", "degraded"], ready: ["Serving", "serving"], error: ["Failed", "gap"] };
+    function paintSlices(s) {
+      text(freeNote, s.memFree != null ? `${fmt.gb(s.memFree)} free for models` : "");
+      const k = JSON.stringify(s.slices.map(x => [x.model, x.lo, x.hi, x.loaded, x.phase, Math.round(100 * (x.done || 0) / (x.total || 1))]));
+      if (sliceList.dataset.k === k) return;
+      sliceList.dataset.k = k;
+      if (!s.slices.length) {
+        sliceList.replaceChildren(h("div.small.muted", "This Mac serves nothing yet. It can still chat with any model the swarm covers. Serve some layers to contribute: open Models to see which layers are missing."));
+        return;
+      }
+      sliceList.replaceChildren(...s.slices.map(x => {
+        const [label, kind] = x.loaded ? PH.ready : PH[x.phase] || ["Starting", "degraded"];
+        const pc = x.phase === "downloading" && x.total ? x.done / x.total : null;
+        return h("div.list-row",
+          h("div.grow",
+            h("div.t", h("b", shortModel(x.model)), ` · layers ${fmt.layers(x.lo, x.hi)}`, h("span.faint", ` (${x.hi - x.lo} of ${x.n_layers || "?"})`)),
+            h("div.d", pc != null ? `${fmt.bytes(x.done)} of ${fmt.bytes(x.total)}` : x.model),
+            pc != null ? h("div.progress", { style: { marginTop: "6px" } }, h("i", { style: { width: pc * 100 + "%" } })) : null),
+          badge(pc != null ? `${label} ${fmt.pct(pc)}` : label, kind, { dot: true, pulse: !x.loaded }),
+          armedButton("Stop serving", "Click to confirm", () => unserveSlice(x.model, x.lo, x.hi), { size: "sm", icon: "stop", disabled: !x.loaded }));
+      }));
+    }
+
     return {
       update(s) {
         const phase = s.engine.phase;
@@ -130,8 +129,8 @@ export default {
         setup.hidden = show !== "setup"; starting.hidden = show !== "start"; running.hidden = show !== "run";
         const hl = s.health;
         if (show === "setup") {
-          hostCard.set(s); workerCard.set(s);
-          text(machine, hl ? `This Mac: ${hl.chip || "Apple Silicon"} · ${fmt.gb(hl.mem_total_gb)} unified memory · macOS ${hl.os}. A slice needs about 8.5 GB${hl.mem_total_gb ? ` (${fmt.pct(8.5 / hl.mem_total_gb)} of this Mac)` : ""} plus KV cache.` : "");
+          startBtn.disabled = !isTauri;
+          text(machine, hl ? `This Mac: ${hl.chip || "Apple Silicon"} · ${fmt.gb(hl.mem_total_gb)} unified memory · macOS ${hl.os}. Half of Qwen3-30B-A3B (4-bit) needs about 8 GB plus KV cache; serve fewer layers on a smaller Mac.` : "");
           errBox.hidden = !s.engine.error;
           if (s.engine.error) errBox.replaceChildren(icon("alert"), h("div.grow", h("b", "The engine stopped"), h("div.mono.small", s.engine.error.split("\n").slice(-3).join("\n"))));
           return;
@@ -143,24 +142,19 @@ export default {
         text(gv, m ? fmt.gb(m.active_gb) : "–");
         text(gs, m ? `of ${fmt.gb(m.total_gb)} in use` : "");
         text(chipEl, me?.chip || hl?.chip || "This Mac");
-        text(running.querySelector(".hero-sub"), [me?.name, s.source === "demo" ? "Demo Mode" : s.role === "host" ? "Host engine on :8000" : `Worker · status on :8001${s.hostAddr ? ` · host ${s.hostAddr}` : ""}`].filter(Boolean).join(" · "));
-        setBadge(roleB, s.role === "host" ? "Host" : "Worker", "you");
+        text(running.querySelector(".hero-sub"), [me?.name, s.source === "demo" ? "Demo Mode" : "Peer in the global swarm"].filter(Boolean).join(" · "));
+        setBadge(roleB, "Peer", "you");
         const st = me ? nodeState(me, s) : "idle";
         setBadge(stateB, phase === "unreachable" ? "Not responding" : me ? nodeStateLabel(me, s) : "Starting", phase === "unreachable" ? "gap" : st === "idle" ? "neutral" : st, { dot: true, pulse: st === "active" });
-        text(hv.layers, me?.lo != null ? `${fmt.layers(me.lo, me.hi)}${me.roles?.length ? " + head" : ""}` : "None yet");
+        const loaded = s.slices.filter(x => x.loaded);
+        text(hv.layers, loaded.length ? String(loaded.reduce((a, x) => a + x.hi - x.lo, 0)) : "None yet");
+        paintSlices(s);
         const day = new Date().toISOString().slice(0, 10);
         const days = s.source === "demo" ? demoDays() : history.days;
         tk.today.set(days[day] || 0);
         tk.all.set(Object.values(days).reduce((a, b) => a + b, 0));
         tk.req.set(me?.stats?.requests ?? 0);
         text(hv.up, fmt.dur(me?.uptime_s ?? Date.now() / 1000 - (me?.firstSeen || Date.now() / 1000)));
-        // host addresses for the worker to join
-        const a = s.role === "host" ? s.hostInfo?.addresses || [] : [];
-        const ak = a.join();
-        if (addrs.dataset.k !== ak) {
-          addrs.dataset.k = ak;
-          addrs.replaceChildren(...(a.length ? [h("span.small.faint", "Workers join at")] : []), ...a.map((ip, i) => h("button.addr", { type: "button", "data-tip": i === 0 && ip.startsWith("100.") ? "Tailscale address · click to copy" : "Click to copy", onclick: () => copyText(`${ip}:${s.hostInfo.port}`, "Address copied") }, `${ip}:${s.hostInfo.port}`, icon("copy"))));
-        }
         // health
         if (hl) {
           const p = PRESS[hl.mem_pressure] || PRESS.unknown, t = THERM[hl.thermal] || THERM.unknown;

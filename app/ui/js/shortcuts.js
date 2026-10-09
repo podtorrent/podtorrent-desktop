@@ -10,7 +10,7 @@ import { openPalette, paletteOpen } from "./palette.js";
 export const SHORTCUTS = [
   ["Navigation", [["Swarm", "⌘ 1"], ["Models", "⌘ 2"], ["Playground", "⌘ 3"], ["My Node", "⌘ 4"], ["Peers", "⌘ 5"], ["Activity", "⌘ 6"], ["Settings", "⌘ ,"]]],
   ["Anywhere", [["Command palette", "⌘ K"], ["Toggle sidebar", "⌘ \\"], ["Toggle inspector", "⌘ I"], ["Graph / grid", "⌘ G"], ["Demo Mode", "⌥ ⌘ D"], ["Shortcuts", "?"], ["Close sheet or palette", "esc"]]],
-  ["Node", [["Start as host", "⇧ ⌘ H"], ["Join a host", "⇧ ⌘ J"], ["Load model", "⇧ ⌘ L"], ["Stop node", "⇧ ⌘ ."], ["Close window (keeps running)", "⌘ W"], ["Quit", "⌘ Q"]]],
+  ["Node", [["Start my node", "⇧ ⌘ H"], ["Load model", "⇧ ⌘ L"], ["Stop node", "⇧ ⌘ ."], ["Close window (keeps running)", "⌘ W"], ["Quit", "⌘ Q"]]],
   ["Playground", [["Send", "↵"], ["New line", "⇧ ↵"]]],
 ];
 
