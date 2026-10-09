@@ -589,6 +589,7 @@ class PeerApp:
         rebuild the KV cache on the new route; tokens already yielded are kept."""
         model = model or self.repo
         failed: set[str] = set()
+        strikes: dict[str, int] = {}   # timeouts per peer; one slow token (GC, Wi-Fi blip, DERP flip) isn't death
         hops, gaps = self.route(model)
         if not hops:
             raise RuntimeError(f"{model} not covered: " + (", ".join(f"layers {a}–{b - 1}" for a, b in gaps)
@@ -634,8 +635,11 @@ class PeerApp:
                         stages += [{"node": "network", "compute_ms": max(rtt - resp.compute_ms, 0.0)},
                                    {"node": hop.name, "compute_ms": resp.compute_ms}]
                 except HopFailed as f:
-                    failed.add(f.hop.peer_id)
                     reroutes += 1
+                    pid = f.hop.peer_id
+                    strikes[pid] = strikes.get(pid, 0) + 1
+                    if f.reason != "TimeoutError" or strikes[pid] > 1 or pid == self.me:
+                        failed.add(pid)
                     new_hops, gaps = self.route(model, failed)
                     if not new_hops or reroutes > MAX_REROUTES:
                         raise RuntimeError(f"{f.hop.name} failed ({f.reason}) and no other route covers "

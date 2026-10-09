@@ -5,7 +5,7 @@
   "scripts": {
     "tauri": "tauri",
     "dev": "sh scripts/bundle-backend.sh && tauri dev",
-    "build": "sh scripts/bundle-backend.sh && tauri build"
+    "build": "node scripts/bump-version.js && sh scripts/bundle-backend.sh && tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
