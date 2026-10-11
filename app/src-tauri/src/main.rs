@@ -57,6 +57,8 @@ fn start_engine(app: AppHandle, state: State<Engine>, mode: String, name: Option
     let mut cmd = Command::new(uv);
     cmd.args(["run", "--project"]).arg(&dir).args(["podtorrent"]).args(&args)
         .env("UV_PROJECT_ENVIRONMENT", data.join("venv"))
+        // uv's own native Python: a system one (e.g. an Intel Miniconda under Rosetta) can't load MLX.
+        .env("UV_PYTHON_PREFERENCE", "only-managed")
         .env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default()))
         .stdin(Stdio::null())
         .stdout(log.try_clone().map_err(|e| e.to_string())?)
