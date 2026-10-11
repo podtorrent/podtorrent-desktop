@@ -61,6 +61,7 @@ def fetch_meta(repo: str, out_dir: str | Path) -> dict:
     """Fetch the small config/index/tokenizer files (no weights) and return config.json."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / ".repo").write_text(repo)  # lets the catalog map this folder back to its repo
     for f in META_FILES:
         if (out_dir / f).exists():
             continue

@@ -1,17 +1,11 @@
-// Models: every model anyone in the swarm serves, and whether it can run from this Mac right now.
-// Each card: verdict (Available · N routes / Partial · layers missing / Offline), a coverage bar
-// with one cell per layer shaded by how many reachable peers serve it, the route this Mac would
-// use, and the action that helps ("Serve missing layers" pre-fills the gap).
+// Models: stats, what's on this machine, every model the swarm serves (one row each: ready or
+// waiting for layers, with who serves / loads / can't be reached), and the Hugging Face finder.
 import { h, text, fmt, reconcile } from "../dom.js";
 import { models, emit } from "../store.js";
-import { empty, button } from "../ui.js";
-import { icon } from "../icons.js";
-import { modelStrip } from "../viz/strip.js";
+import { empty, button, stat } from "../ui.js";
 import { actions, go } from "../actions.js";
-import { loadModel } from "../engine.js";
 import { openServe } from "../serve.js";
-
-const VIcon = { serving: "check", gap: "alert", degraded: "download", planned: "layers", info: "info" };
+import { catalogSection, secHead, localModels, openGet } from "../catalog.js";
 
 /** "You → mac-a [0,16) → mac-c [16,48) → You" */
 export function routeText(route, self) {
@@ -19,16 +13,42 @@ export function routeText(route, self) {
   return ["You", ...route.map(([n, lo, hi]) => `${n === self ? "This Mac" : n} ${fmt.layers(lo, hi)}`), "You"].join(" → ");
 }
 
-function nextHint(m, s) {
-  if (m.runnable) return { ok: true, text: `Runs from this Mac: ${routeText(m.route, s.self)}.` };
-  const direct = s.swarm.peers.filter(p => p.peer_id !== s.swarm.selfId && p.link?.state === "direct");
-  const gap = m.gaps[0];
-  if (s.source === "live" && s.engine.phase !== "running") return { text: "Start your node to serve layers and use the swarm's models." };
-  if (m.loading) return { text: "Slices are downloading or loading. The model becomes available when every layer has a reachable peer." };
-  if (m.primary && !m.serving && direct.length && !s.loadRequested)
-    return { text: `Quick start: this Mac serves the first half and asks ${direct[0].name || "a connected Mac"} to serve the rest.`, action: button("Load model", { variant: "primary", icon: "download", kbd: "⇧⌘L", onclick: () => loadModel() }) };
-  if (gap) return { text: `Layers ${fmt.layers(gap[0], gap[1])} have no reachable peer. Serve them on this Mac${direct.length ? " or on a connected Mac" : ""}.`, action: button("Serve missing layers", { variant: "primary", icon: "download", onclick: () => openServe({ model: m.model, lo: gap[0], hi: gap[1] }) }) };
-  return { text: m.verdict.reason };
+const ranges = idx => {   // [0,1,2,7] -> [[0,3],[7,8]]
+  const out = [];
+  for (const i of idx) { if (out.length && out[out.length - 1][1] === i) out[out.length - 1][1]++; else out.push([i, i + 1]); }
+  return out;
+};
+const list = rs => rs.map(([a, b]) => fmt.layers(a, b)).join(", ");
+
+/** Status badge for a swarm model: ready, loading, or not ready (waiting for layers). */
+function status(m) {
+  const waiting = m.layers.filter(L => L.state === "gap").length;
+  if (m.runnable) return ["Ready to use", "serving", `All ${m.n_layers} layers are served`];
+  if (waiting) return ["Not ready", "gap", `Waiting for ${waiting} of ${m.n_layers} layers`];
+  if (m.loading) return ["Loading", "degraded", `${m.loading} of ${m.n_layers} layers are loading`];
+  return ["Not ready", "gap", "Its layers are on peers this machine can't reach yet"];
+}
+
+/** One small cell per layer, coloured by the best state any peer has for it. */
+function stateBar(m) {
+  const cls = { serving: ".srv", loading: ".load", planned: ".plan", gap: ".gap" };
+  return h("div.lbar", { role: "img", "aria-label": `${m.n_layers} layers` }, ...m.layers.map(L => h(`i${cls[L.state]}`)));
+}
+
+/** Detail lines: who serves what, who is loading (with progress), what's unreachable, and what we wait for. */
+function details(m, s) {
+  const lines = [];
+  const who = n => n === s.self ? `${n} (this machine)` : n;
+  const by = st => m.assignments.filter(a => a.state === st);
+  for (const a of by("serving")) lines.push(["srv", `Layers ${fmt.layers(a.lo, a.hi)}`, `served by ${who(a.node)}`]);
+  for (const a of by("loading")) {
+    const ld = s.nodes[a.node]?.load, pct = ld?.total ? ` · ${Math.round(100 * ld.done / ld.total)}%` : "";
+    lines.push(["load", `Layers ${fmt.layers(a.lo, a.hi)}`, `${who(a.node)} is loading them${pct}`]);
+  }
+  for (const a of by("planned")) lines.push(["plan", `Layers ${fmt.layers(a.lo, a.hi)}`, `on ${a.node}, not reachable from here yet`]);
+  const waiting = ranges(m.layers.filter(L => L.state === "gap").map(L => L.i));
+  if (waiting.length) lines.push(["gap", `Layers ${list(waiting)}`, "waiting for a machine or peer to serve them"]);
+  return h("div.sw-det", ...lines.map(([k, a, b]) => h("div", h(`i.${k}`), h("b", a), h("span", b))));
 }
 
 export default {
@@ -36,63 +56,56 @@ export default {
   subtitle: s => { const ms = models(s); return ms.length ? `${ms.filter(m => m.runnable).length} of ${ms.length} available` : ""; },
   toolbar() { return [button("Serve layers…", { icon: "download", size: "sm", onclick: () => openServe() })]; },
   mount(root) {
-    const list = h("div.col", { style: { gap: "16px" } });
+    const rows = h("div.cat-list.sw-list");
     const intro = h("div.page-h", h("div", h("h1", "Models"),
-      h("p", "Every model someone in the swarm serves. A model is split into layers; it runs when every layer has a peer this Mac can reach. Peers can serve any range, of any model, and more peers per layer means a failure just re-routes.")));
-    const page = h("div.page", intro, list);
-    const emptyBox = h("div.page");
-    root.append(page, emptyBox);
+      h("p", "Each model is split into layers. It runs once every layer has a machine or peer serving it.")));
+    const S = {
+      run: stat({ label: "Ready to use", icon: "check", format: v => fmt.int(v), color: "var(--c-serving)", tip: "Models every layer of which a reachable peer serves" }),
+      lay: stat({ label: "Layers this Mac serves", icon: "layers", format: v => fmt.int(v), color: "var(--c-you)" }),
+      disk: stat({ label: "Downloaded", icon: "download", format: v => fmt.bytes(v), tip: "Model files on this Mac" }),
+      mem: stat({ label: "Free for models", icon: "memory", unit: "GB", format: v => fmt.fixed(v, 1), tip: "Memory left for more layers" }),
+    };
+    const stats = h("div.grid-stats.four", Object.values(S));
+    const cat = catalogSection();
+    const swarmH = secHead("peers", "In the swarm");
+    const emptyBox = h("div");
+    const swarmCard = h("section.card.cat-card", swarmH, rows,
+      h("div.lbar-key.small.faint", ...[["srv", "Served"], ["load", "Loading"], ["plan", "Not reachable from here"], ["gap", "Waiting for a peer"]].map(([c, l]) => h("span", h(`i.${c}`), l))));
+    const page = h("div.page", intro, stats, cat.mine, swarmCard, emptyBox, cat.finder);
+    root.append(page);
     let emptyKey = "";
 
-    function makeCard() {
-      const strip = modelStrip();
-      const el = h("section.card.model-card",
-        h("div.model-h",
-          h("div.verdict-ic"),
-          h("div.grow", h("div.row", h("h2.mname"), h("span.faint.small.repo")), h("div.vt"), h("div.small.muted.vr")),
-          h("div.mact")),
-        h("div.strip-wrap", strip,
-          h("div.legend.small",
-            ...[["serving", "Serving"], ["loading", "Loading"], ["planned", "Not reachable from here"], ["gap", "No peer"]].map(([k, l]) => h("span", h(`i.${k}`), l)),
-            h("span", h("i.you-o"), "This Mac"), h("span.spacer"), h("span.faint.redund"))),
-        h("div.ready-wrap"));
-      el._strip = strip;
-      return el;
+    function makeRow() {
+      return h("div.list-row.sw-row",
+        h("div.grow", h("div.t"), h("div.d"), h("div.lbar-wrap.bar"), h("div.det")),
+        h("div.col.sw-side", h("span.badge"), h("div.act")));
     }
-    function fillCard(el, m, s) {
-      el._strip.set(m, s.self);
-      const v = m.verdict;
-      const ic = el.querySelector(".verdict-ic");
-      ic.className = `verdict-ic ${v.level}`;
-      if (ic.dataset.ic !== v.level) { ic.replaceChildren(icon(VIcon[v.level] || "info")); ic.dataset.ic = v.level; }
-      text(el.querySelector(".mname"), m.name);
-      text(el.querySelector(".repo"), `${m.repo} · ${m.n_layers} layers${m.primary ? " · default" : ""}`);
-      const vt = el.querySelector(".vt"); vt.className = `vt ${v.level}`; text(vt, v.title);
-      text(el.querySelector(".vr"), v.reason);
-      const peers = new Set(m.assignments.map(a => a.node)).size;
-      text(el.querySelector(".redund"), `${peers} peer${peers === 1 ? "" : "s"} · up to ${m.redundancy} per layer`);
-      const act = el.querySelector(".mact");
-      const k = `${m.runnable}|${m.gaps.map(String)}`;
-      if (act.dataset.k !== k) {
-        act.dataset.k = k;
-        const gap = m.gaps[0];
-        act.replaceChildren(...[
-          m.runnable ? button("Open Playground", { icon: "playground", onclick: () => { emit("pick-model", m.model); go("playground"); } }) : null,
-          gap ? button("Serve missing layers", { icon: "download", onclick: () => openServe({ model: m.model, lo: gap[0], hi: gap[1] }) })
-            : button("Serve layers…", { icon: "download", onclick: () => openServe({ model: m.model, lo: 0, hi: m.n_layers }) })].filter(Boolean));
-      }
-      const rw = el.querySelector(".ready-wrap");
-      const hint = nextHint(m, s);
-      const key = hint.text + !!hint.action;
-      if (rw.dataset.k === key) return;
-      rw.dataset.k = key;
-      rw.replaceChildren(h(`div.next${hint.ok ? ".ok" : ""}`, icon(hint.ok ? "check" : "arrowright"), h("span.grow", hint.text), hint.action || null));
+    function fillRow(el, m, s) {
+      const [label, kind, sum] = status(m);
+      el.querySelector(".t").replaceChildren(m.name, h("span.faint.small", " " + m.repo.split("/")[0]));
+      text(el.querySelector(".d"), sum + (m.primary ? " · default model" : ""));
+      const b = el.querySelector(".badge"); b.className = `badge ${kind} dot`; text(b, label);
+      el.querySelector(".bar").replaceChildren(stateBar(m));
+      el.querySelector(".det").replaceChildren(details(m, s));
+      const act = el.querySelector(".act"), gap = m.gaps[0];
+      const k = `${m.runnable}|${gap}`;
+      if (act.dataset.k === k) return;
+      act.dataset.k = k;
+      act.replaceChildren(m.runnable
+        ? button("Open Playground", { size: "sm", icon: "playground", onclick: () => { emit("pick-model", m.model); go("playground"); } })
+        : gap ? button("Serve them yourself…", { size: "sm", variant: "ghost", icon: "download", tip: "Downloads those layers and keeps them in memory. The next step shows the size first.", onclick: () => openGet(m.model) })
+        : "");
     }
-
     return {
       update(s) {
         const ms = models(s);
-        page.hidden = !ms.length; emptyBox.hidden = !!ms.length;
+        cat.update(s);
+        const loc = localModels();
+        S.run.set(ms.filter(m => m.runnable).length, `of ${ms.length} in the swarm`);
+        S.lay.set(s.slices.reduce((a, x) => a + (x.hi - x.lo), 0), `${new Set(s.slices.map(x => x.model)).size} model(s)`);
+        S.disk.set(loc.length ? loc.reduce((a, m) => a + m.disk_bytes, 0) : null, `${loc.length} model folder(s)`);
+        S.mem.set(s.memFree, "");
+        swarmCard.hidden = !ms.length; emptyBox.hidden = !!ms.length;
         if (!ms.length) {
           const k = s.engine.phase + s.source;
           if (k !== emptyKey) {
@@ -104,7 +117,7 @@ export default {
           return;
         }
         emptyKey = "";
-        reconcile(list, ms, m => m.id, makeCard, (el, m) => fillCard(el, m, s));
+        reconcile(rows, ms, m => m.id, makeRow, (el, m) => fillRow(el, m, s));
       },
     };
   },
