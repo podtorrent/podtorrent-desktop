@@ -6,6 +6,8 @@ import { uid, fmt } from "./dom.js";
 
 export const HOST_PORT = 8000;
 const HOST = `http://localhost:${HOST_PORT}`;
+/** Approximate size of the first-run install off Apple Silicon (CUDA PyTorch, unpacked). */
+const SETUP_BYTES = 4.5e9;
 
 let ws = null, wsTimer = null, liveTimer = null, epoch = 0;
 const toast = (text, kind = "info", detail) => emit("toast", { text, kind, detail });
@@ -56,15 +58,28 @@ export async function startHost() {
   try { await invoke("start_engine", { mode: "peer", name: settings.peerName || null }); }
   catch (e) { state.engine = { phase: "stopped", owned: false, line: "", error: String(e) }; commit(); toast("Couldn't start the engine", "gap", String(e)); return; }
   feed("engine", "Started this Mac's peer", "It joins the swarm and connects to other Macs directly", "info");
-  for (let i = 0; i < 400 && my === epoch; i++) {
+  // Give up after ~400 s without progress; a first-run PyTorch download keeps resetting the clock.
+  // Progress is cache growth since this start, so later launches (cache already full) show none.
+  const base = await invoke("setup_progress").catch(() => 0);
+  let got = 0;
+  for (let i = 0, idle = 0; idle < 400 && my === epoch; i++, idle++) {
     if (await reachable(HOST + "/")) {
-      state.engine.phase = "running"; state.engine.line = "";
+      state.engine.phase = "running"; state.engine.line = ""; state.engine.setup = null;
       commit();
       watchProcess(my);
       connectHost(`localhost:${HOST_PORT}`);
       return;
     }
-    if (i % 2 === 0) { state.engine.line = (await invoke("engine_log").catch(() => "")).split("\n").pop().slice(0, 140) || state.engine.line; commit(); }
+    if (i % 2 === 0) {
+      const bytes = (await invoke("setup_progress").catch(() => 0)) - base;
+      if (bytes > got + 1e6) { idle = 0; got = bytes; }
+      // Unpacked CUDA PyTorch plus Python is roughly SETUP_BYTES; it's an estimate, so stop short of full.
+      state.engine.setup = got > 50e6 ? { bytes: got, frac: Math.min(got / SETUP_BYTES, 0.97) } : null;
+      state.engine.line = state.engine.setup
+        ? `Installing PyTorch for your GPU (one time, needs internet) · ${(got / 1e9).toFixed(1)} GB so far`
+        : (await invoke("engine_log").catch(() => "")).split("\n").pop().slice(0, 140) || state.engine.line;
+      commit();
+    }
     if (i > 3 && !(await invoke("engine_running").catch(() => true))) break;
     await new Promise(r => setTimeout(r, 1000));
   }

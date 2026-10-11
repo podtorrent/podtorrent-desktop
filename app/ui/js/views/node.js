@@ -45,7 +45,8 @@ export default {
 
     // ---- starting ----
     const startLine = h("div.mono.small.muted");
-    const starting = h("div.page", h("div.card.pad.starting", h("div.row", h("span.statedot.active"), h("h2", "Starting your node…")), h("div.progress.indeterminate", h("i")), startLine,
+    const startBar = h("div.progress.indeterminate", h("i"));
+    const starting = h("div.page", h("div.card.pad.starting", h("div.row", h("span.statedot.active"), h("h2", "Starting your node…")), startBar, startLine,
       h("div.small.faint", "First run installs the Python environment (one time, needs internet). Output: ~/.podtorrent/engine.log"),
       h("div", button("Cancel", { onclick: () => stopNode() }))));
 
@@ -135,7 +136,13 @@ export default {
           if (s.engine.error) errBox.replaceChildren(icon("alert"), h("div.grow", h("b", "The engine stopped"), h("div.mono.small", s.engine.error.split("\n").slice(-3).join("\n"))));
           return;
         }
-        if (show === "start") { text(startLine, s.engine.line); return; }
+        if (show === "start") {
+          const su = s.engine.setup;
+          startBar.classList.toggle("indeterminate", !su);
+          startBar.firstChild.style.width = su ? `${(su.frac * 100).toFixed(1)}%` : "";
+          text(startLine, s.engine.line);
+          return;
+        }
         const me = selfNode(s);
         const m = me?.mem || (hl ? { active_gb: 0, total_gb: hl.mem_total_gb } : null);
         g.set(m ? m.active_gb / m.total_gb : 0);

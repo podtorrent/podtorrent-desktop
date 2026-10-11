@@ -4,7 +4,9 @@ import { fmt } from "./dom.js";
 
 export const T = window.__TAURI__;
 export const isTauri = !!T?.core;
-if (isTauri) document.documentElement.classList.add("tauri");
+// Only the macOS app has a native menu bar (it owns the shortcuts) and a vibrant, transparent window.
+export const isMacApp = isTauri && /Mac/.test(navigator.platform);
+if (isMacApp) document.documentElement.classList.add("tauri");
 
 export async function invoke(cmd, args) {
   if (!isTauri) throw new Error("Not running inside the PodTorrent app");

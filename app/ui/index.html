@@ -17,7 +17,8 @@
     const t = s.theme || "system";
     document.documentElement.dataset.resolvedTheme = t === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : t;
     if (s.reduceEffects) document.documentElement.classList.add("reduce-effects");
-    if (window.__TAURI__) document.documentElement.classList.add("tauri");
+    // "tauri" = native vibrancy behind the page, which only the macOS window has
+    if (window.__TAURI__ && /Mac/.test(navigator.platform)) document.documentElement.classList.add("tauri");
   } catch {}
 </script>
 </head>
