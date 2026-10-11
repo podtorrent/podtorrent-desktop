@@ -22,6 +22,7 @@ import mlx.core as mx
 from aiohttp import WSMsgType, web
 from mlx_lm.utils import load_tokenizer
 
+from . import catalog
 from . import pipeline_pb2 as pb
 from .cli import default_dir
 from .common import CHIP, GB, cors, from_wire, mem_free_gb, mem_total_gb, to_wire
@@ -287,6 +288,7 @@ class PeerApp:
         self.stats = {"tokens": 0, "prompt_tokens": 0, "generated_tokens": 0, "requests": 0}
         self._route_key = ""
         self._known: set[str] = set()
+        self._names: dict[str, str] = {}   # peer_id -> display name, for peers that vanish
         self.peers: list[dict] = []   # swarm records, each with this Mac's `link` to it
 
     def model_dir(self, model: str) -> Path:
@@ -367,6 +369,7 @@ class PeerApp:
                 seen.add(pid)
                 if pid not in self._known:
                     self._known.add(pid)
+                    self._names[pid] = name
                     self.emit("node_joined", key=f"node:{name}", node=name, address=link.get("addr", ""),
                               role="peer", chip=p.get("chip"), mem_total_gb=p.get("mem_total_gb"))
                 loaded = any(s.get("loaded") for s in self.peer_slices(p))
@@ -381,7 +384,14 @@ class PeerApp:
         for pid in self._known - seen:
             self._known.discard(pid)
             rec = next((p for p in peers if p["peer_id"] == pid), None)
-            name = (rec or {}).get("name") or pid[:8]
+            if rec is None:
+                # Gone from the registry entirely: forget it, so it is not replayed to new clients.
+                name = self._names.pop(pid, pid[:8])
+                for k in ("node", "status", "mem", "stats"):
+                    self.state.pop(f"{k}:{name}", None)
+                self.emit("node_left", node=name)
+                continue
+            name = rec.get("name") or pid[:8]
             self.emit("node_status", key=f"status:{name}", node=name, status="lost", rtt_ms=None,
                       heartbeat_ts=time.time())
         self.route_events()
@@ -600,6 +610,10 @@ class PeerApp:
         seq = list(ids)
         x = mx.array(seq)[None]
         eos = set(getattr(tok_, "eos_token_ids", None) or {tok_.eos_token_id})
+        # chat turn terminators aren't always in the tokenizer's EOS set (Qwen's is <|endoftext|>)
+        vocab = tok_.get_vocab() if hasattr(tok_, "get_vocab") else {}
+        eos |= {vocab[t] for t in ("<|im_end|>", "<|eot_id|>", "<|end|>", "<end_of_turn>", "<|endoftext|>")
+                if t in vocab}
         produced, reroutes = 0, 0
         try:
             while produced < max_tokens:
@@ -664,12 +678,12 @@ class PeerApp:
                     mx.eval(tok)
                 post = (time.perf_counter() - t2) * 1000
                 tok = int(tok.item())
+                if tok in eos:  # stop without emitting the terminator's text
+                    break
                 head = {"node": NAME, "compute_ms": pre + post, "pre_ms": pre, "post_ms": post}
                 yield tok, tok_.decode([tok]), {"stages": [head, *stages], "bytes": nbytes,
                                                     "route": [[h_.name, h_.lo, h_.hi] for h_ in hops]}
                 produced += 1
-                if tok in eos:
-                    break
                 seq.append(tok)
                 x = mx.array([[tok]])
         finally:
@@ -831,6 +845,67 @@ class PeerApp:
         return web.json_response({"ok": True, "removed": [[s.model, s.lo, s.hi] for s in gone],
                                   "slices": self.slices.slices()})
 
+    # ---- catalog: find, download and delete models ----
+    async def catalog_search(self, request):
+        q = request.query.get("q", "").strip()
+        try:
+            results = await asyncio.to_thread(catalog.search, q)
+        except Exception as e:
+            return web.json_response({"error": f"Hugging Face search failed: {e}"}, status=502)
+        return web.json_response({"results": results})
+
+    async def catalog_info(self, request):
+        """Size and layer count of a repo, plus a suggested slice for this Mac."""
+        repo = request.query.get("repo", "").strip()
+        if "/" not in repo:
+            return web.json_response({"error": "expected owner/name"}, status=400)
+        try:
+            inf = await asyncio.to_thread(catalog.info, repo)
+        except Exception as e:
+            return web.json_response({"error": f"couldn't read {repo}: {e}"}, status=502)
+        self._n_layers.setdefault(repo, inf["n_layers"])
+        m = next((m for m in self.models() if m["model"] == repo), None)
+        have = [[s.lo, s.hi] for s in self.slices.items.values() if s.model == repo]
+        free = mem_free_gb()
+        # Only suggest layers no online peer serves or is loading, so we don't duplicate their work.
+        n = inf["n_layers"]
+        taken = [c > 0 for c in m["online_coverage"]] if m else [False] * n
+        for p in self.peers:
+            for sl in self.peer_slices(p):
+                if sl.get("model") == repo:
+                    for i in range(max(int(sl["lo"]), 0), min(int(sl["hi"]), n)):
+                        taken[i] = True
+        for lo, hi in have:
+            for i in range(lo, min(hi, n)):
+                taken[i] = True
+        free_gaps = catalog._runs([i for i, t in enumerate(taken) if not t]) if m else []
+        inf["suggest"] = catalog.suggest(n, inf["layer_bytes"], free, free_gaps, have,
+                                           in_swarm=bool(m and m["state"] != "offline"))
+        inf["swarm"] = m
+        inf["mem_free_gb"] = round(free, 1)
+        return web.json_response(inf)
+
+    async def catalog_local(self, _):
+        known = [self.repo, *{s.model for s in self.slices.items.values()}]
+        items = await asyncio.to_thread(catalog.local, known)
+        served = {(s.model, s.lo, s.hi) for s in self.slices.items.values()}
+        for it in items:
+            it["serving"] = [[lo, hi] for m, lo, hi in served if m == it["repo"]]
+        return web.json_response({"models": items})
+
+    async def catalog_delete(self, request):
+        """Stop serving a model and remove its files from this Mac."""
+        b = await request.json()
+        repo, d = str(b.get("repo") or ""), str(b.get("dir") or "")
+        if repo and any(s.model == repo for s in self.slices.items.values()):
+            await asyncio.to_thread(self._unserve_local, repo)
+        try:
+            await asyncio.to_thread(catalog.delete, d)
+        except (ValueError, OSError) as e:
+            return web.json_response({"error": str(e)}, status=400)
+        self._n_layers.pop(repo, None) if repo != self.repo else None
+        return web.json_response({"ok": True})
+
     async def models_api(self, _):
         return web.json_response({"models": self.models(), "mem_free_gb": round(mem_free_gb(), 1),
                                   "slices": self.slices.slices()})
@@ -940,6 +1015,10 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
     app = web.Application(middlewares=[cors], client_max_size=16 << 20)
     app.add_routes([web.get("/", app_state.index), web.get("/ws", app_state.ws), web.get("/status", app_state.status),
                     web.get("/api/models", app_state.models_api),
+                    web.get("/api/catalog/search", app_state.catalog_search),
+                    web.get("/api/catalog/info", app_state.catalog_info),
+                    web.get("/api/catalog/local", app_state.catalog_local),
+                    web.post("/api/catalog/delete", app_state.catalog_delete),
                     web.post("/api/start", app_state.start), web.post("/api/serve", app_state.serve),
                     web.post("/api/unserve", app_state.unserve),
                     web.post("/api/chat", app_state.chat), web.post("/api/complete", app_state.complete),

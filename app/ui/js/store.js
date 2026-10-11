@@ -113,6 +113,9 @@ export function applyEvent(ev) {
       if (was === "lost" && ev.status !== "lost") feed("back", `${ev.node} is reachable again`, "", "success", ts);
       break;
     }
+    case "node_left":
+      if (state.nodes[ev.node]) { delete state.nodes[ev.node]; feed("lost", `${ev.node} left the swarm`, "", "info", ts); }
+      break;
     case "swarm": applySwarm(ev); break;
     case "memory": node(ev.node).mem = { active_gb: ev.active_gb, peak_gb: ev.peak_gb, total_gb: ev.total_gb }; break;
     case "node_stats": node(ev.node).stats = ev; break;

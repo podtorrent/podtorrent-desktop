@@ -206,3 +206,34 @@ export async function logTail(name = "engine.log", lines = 800) {
   if (!isTauri) return null;
   return invoke("engine_log_tail", { name, lines });
 }
+
+// ---------- catalog: find, download and delete models ----------
+const get = (path, ms) => json(HOST + path, {}, ms);
+const live = () => state.source === "live" && state.engine.phase === "running";
+
+/** MLX models on Hugging Face matching `q` (empty: most downloaded). */
+export async function catalogSearch(q) {
+  if (!live()) return { error: "Start your node to search Hugging Face" };
+  try { const r = await get(`/api/catalog/search?q=${encodeURIComponent(q)}`, 15000); return r.ok ? r.body : { error: r.body?.error || `HTTP ${r.status}` }; }
+  catch (e) { return { error: String(e) }; }
+}
+/** Layers, size and a suggested slice for this Mac. */
+export async function catalogInfo(repo) {
+  try { const r = await get(`/api/catalog/info?repo=${encodeURIComponent(repo)}`, 20000); return r.ok ? r.body : { error: r.body?.error || `HTTP ${r.status}` }; }
+  catch (e) { return { error: String(e) }; }
+}
+/** Model folders on this Mac, with the layers each one holds. */
+export async function catalogLocal() {
+  if (!live()) return [];
+  try { const r = await get("/api/catalog/local", 15000); return r.ok ? r.body.models : []; }
+  catch { return []; }
+}
+export async function catalogDelete(m) {
+  try {
+    const r = await post("/api/catalog/delete", { repo: m.repo, dir: m.dir }, 30000);
+    if (!r.ok) return toast(`Couldn't delete ${shortModel(m.repo)}`, "gap", r.body?.error || `HTTP ${r.status}`);
+    feed("load", `Deleted ${shortModel(m.repo)} from this Mac`, fmt.bytes(m.disk_bytes) + " freed", "info");
+    toast(`Deleted ${shortModel(m.repo)}`, "info", fmt.bytes(m.disk_bytes) + " freed");
+    return true;
+  } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
+}
