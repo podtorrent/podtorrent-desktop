@@ -11,6 +11,7 @@ The local HTTP API (127.0.0.1 only) keeps the old host's shape so the desktop UI
 import asyncio
 import json
 import os
+import platform
 import threading
 import time
 import uuid
@@ -18,23 +19,23 @@ import webbrowser
 from pathlib import Path
 from typing import Callable
 
-import mlx.core as mx
 from aiohttp import WSMsgType, web
-from mlx_lm.utils import load_tokenizer
 
+from . import backend as B
 from . import catalog
 from . import pipeline_pb2 as pb
 from .cli import default_dir
-from .common import CHIP, GB, cors, from_wire, mem_free_gb, mem_total_gb, to_wire
+from .backend import CHIP, GB, from_wire, load_tokenizer, mem_free_gb, mem_total_gb, to_wire
+from .common import cors
 from .net.identity import home, load_identity
 from .net.quic import M_FORWARD, M_LOAD, PeerNet, Stream, _frame, _read_frame
 from .net.rendezvous import SwarmClient
 from .route import Hop, Offer, coverage, plan
-from .shard import Shard
+from .backend import Shard
 from .slicer import download_slice, estimate_slice_bytes, fetch_meta
 
 STATIC = Path(__file__).parent / "static"
-MLX = threading.Lock()   # one MLX computation at a time in this process
+MLX = threading.Lock()   # one computation at a time in this process (MLX or PyTorch)
 CACHE_IDLE_S = 300
 HOP_TIMEOUT_S = 120
 MAX_REROUTES = 3
@@ -57,7 +58,7 @@ def read_config() -> dict:
 
 
 # PODTORRENT_NAME (set by the app from onboarding, or by tests), else config.json's `name`, else the hostname.
-NAME = os.environ.get("PODTORRENT_NAME") or read_config().get("name") or os.uname().nodename.split(".")[0]
+NAME = os.environ.get("PODTORRENT_NAME") or read_config().get("name") or platform.node().split(".")[0]
 
 
 def write_config(c: dict):
@@ -142,7 +143,7 @@ class Slices:
             at = min(s.hi, hi)
         return out
 
-    def run(self, session: str, model: str, lo: int, hi: int, h: mx.array) -> tuple[mx.array, float]:
+    def run(self, session: str, model: str, lo: int, hi: int, h) -> tuple[object, float]:
         with MLX:
             t = time.perf_counter()
             self.busy = True
@@ -153,7 +154,7 @@ class Slices:
                     cache = entry[0] if entry else s.shard.make_cache(a, b)
                     self.caches[key] = (cache, time.time())
                     h = s.shard.run_layers(h, cache, a, b)
-                mx.eval(h)
+                B.materialize(h)
             finally:
                 self.busy = False
         ms = (time.perf_counter() - t) * 1000
@@ -203,7 +204,7 @@ class Slices:
             free = mem_free_gb() + sum(gb(d, s.lo, s.hi) for s in replaced)
             if need + MEM_HEADROOM_GB > free:
                 raise MemoryError(f"{model.split('/')[-1]} layers [{lo},{hi}) need ~{need:.1f} GB, "
-                                  f"but this Mac has {free:.1f} GB free for models")
+                                  f"but this machine has {free:.1f} GB free for models")
             s = self.items[(model, lo, hi)] = Served(model, lo, hi, n)
 
             def emit(phase, done=0, total=0, msg=""):
@@ -218,7 +219,7 @@ class Slices:
                     for r in replaced:
                         r.shard = None
                         self.items.pop((r.model, r.lo, r.hi), None)
-                    mx.clear_cache()
+                    B.clear_cache()
                     s.shard = Shard(d, lo, hi)
                 emit("ready", 1, 1)
                 return s
@@ -241,7 +242,7 @@ class Slices:
                                           for s in self.items.values() if s.model == m):
                     self.caches.pop(k, None)
             if gone:
-                mx.clear_cache()
+                B.clear_cache()
         return gone
 
     def info(self) -> pb.NodeInfo:
@@ -249,7 +250,7 @@ class Slices:
         return pb.NodeInfo(
             name=NAME, layer_lo=first.lo if first else 0, layer_hi=first.hi if first else 0,
             loaded=first is not None,
-            mem_active_gb=mx.get_active_memory() / GB, mem_peak_gb=mx.get_peak_memory() / GB,
+            mem_active_gb=B.mem_active_gb(), mem_peak_gb=B.mem_peak_gb(),
             mem_total_gb=mem_total_gb(), mem_free_gb=mem_free_gb(), requests_served=self.served,
             tokens_processed=self.tokens, active_requests=len(self.caches), busy=self.busy,
             slices=[pb.Slice(model=r["model"], lo=r["lo"], hi=r["hi"], loaded=r["loaded"], n_layers=r["n_layers"])
@@ -342,8 +343,8 @@ class PeerApp:
 
     def self_events(self):
         s = self.slices
-        self.emit("memory", key=f"mem:{NAME}", node=NAME, active_gb=mx.get_active_memory() / GB,
-                  peak_gb=mx.get_peak_memory() / GB, total_gb=mem_total_gb())
+        self.emit("memory", key=f"mem:{NAME}", node=NAME, active_gb=B.mem_active_gb(),
+                  peak_gb=B.mem_peak_gb(), total_gb=mem_total_gb())
         self.emit("node_stats", key=f"stats:{NAME}", node=NAME, busy=self.active > 0 or s.busy,
                   active_requests=self.active + len(s.caches), tokens=self.stats["tokens"] + s.tokens,
                   requests=self.stats["requests"] + s.served, **{k: v for k, v in self.stats.items() if k not in ("tokens", "requests")})
@@ -608,7 +609,7 @@ class PeerApp:
         session = uuid.uuid4().hex
         streams: dict[int, Stream] = {}
         seq = list(ids)
-        x = mx.array(seq)[None]
+        x = B.token_ids(seq)
         eos = set(getattr(tok_, "eos_token_ids", None) or {tok_.eos_token_id})
         # chat turn terminators aren't always in the tokenizer's EOS set (Qwen's is <|endoftext|>)
         vocab = tok_.get_vocab() if hasattr(tok_, "get_vocab") else {}
@@ -619,8 +620,7 @@ class PeerApp:
             while produced < max_tokens:
                 t0 = time.perf_counter()
                 with MLX:
-                    h = embed_head.embed(x)
-                    mx.eval(h)
+                    h = B.materialize(embed_head.embed(x))
                 pre = (time.perf_counter() - t0) * 1000
                 stages, nbytes = [], 0
                 try:
@@ -670,14 +670,12 @@ class PeerApp:
                     except Exception:  # noqa: BLE001
                         pass
                     hops, session = new_hops, uuid.uuid4().hex
-                    x = mx.array(seq)[None]
+                    x = B.token_ids(seq)
                     continue
                 t2 = time.perf_counter()
                 with MLX:
-                    tok = mx.argmax(embed_head.logits(h[:, -1:, :])[0, -1])
-                    mx.eval(tok)
+                    tok = B.argmax_last(embed_head.logits(h[:, -1:, :]))
                 post = (time.perf_counter() - t2) * 1000
-                tok = int(tok.item())
                 if tok in eos:  # stop without emitting the terminator's text
                     break
                 head = {"node": NAME, "compute_ms": pre + post, "pre_ms": pre, "post_ms": post}
@@ -685,7 +683,7 @@ class PeerApp:
                                                     "route": [[h_.name, h_.lo, h_.hi] for h_ in hops]}
                 produced += 1
                 seq.append(tok)
-                x = mx.array([[tok]])
+                x = B.token_ids([tok])
         finally:
             self.slices.release(session)
             if streams:
