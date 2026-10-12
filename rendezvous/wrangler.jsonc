@@ -7,5 +7,6 @@
     "bindings": [{ "name": "SWARM", "class_name": "Swarm" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Swarm"] }],
+  "routes": [{ "pattern": "rendezvous.podtorrent.com", "custom_domain": true }],
   "observability": { "enabled": true }
 }

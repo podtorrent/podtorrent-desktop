@@ -33,7 +33,7 @@ export function mountShell() {
   const demoPill = h("button.badge.demo.demo-pill", { type: "button", "data-tip": "Demo Mode · ⌥⌘D to turn off", onclick: () => setDemo(false) }, "Demo");
   const sidebar = h("aside.sidebar", { "aria-label": "Sidebar" },
     h("div.sidebar-top", { "data-tauri-drag-region": "" }, demoPill),
-    h("div.brand", { "data-tauri-drag-region": "" }, h("div.logo", h("img", { src: "favicon.svg", alt: "" })), h("div", h("b", "PodTorrent"), h("div.sub", "Your machines, one swarm"))),
+    h("div.brand", { "data-tauri-drag-region": "" }, h("div.logo", h("img", { src: "favicon.svg", alt: "" })), h("div", h("b", "PodTorrent"), h("div.sub", "Many machines, one swarm"))),
     h("nav.nav", NAV.map(navItem), h("div.sect", " "), navItem(["settings", "Settings", "settings", "⌘,"])),
     nodeCard);
 
