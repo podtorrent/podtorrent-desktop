@@ -14,7 +14,7 @@ import { routeText } from "./models.js";
 const SUGGEST = [
   "Explain pipeline parallelism in three sentences.",
   "Write a Python function that measures tokens per second.",
-  "Why does unified memory matter for running big models on a Mac?",
+  "Why does memory matter for running big models?",
   "What does the network hop cost per token?",
 ];
 
@@ -56,7 +56,7 @@ export default {
     const scroller = h("div.chat-scroll", log);
     const intro = h("div.chat-intro",
       h("div.art", icon("sparkle")), h("h2", "Ask the swarm"),
-      h("p.muted", "Your prompt is tokenized on this Mac, hops through each peer that serves a slice of the model, and streams back token by token. Each reply shows the route it took."),
+      h("p.muted", "Your prompt is tokenized on this machine, hops through each peer that serves a slice of the model, and streams back token by token. Each reply shows the route it took."),
       h("div.suggest", SUGGEST.map(t => h("button.suggest-btn", { type: "button", onclick: () => send(t) }, t))));
     const blocked = h("div.chat-blocked");
     const ta = h("textarea.composer-input", { rows: 1, placeholder: "Message the swarm…", "aria-label": "Prompt" });
@@ -64,7 +64,7 @@ export default {
     const stopBtn = h("button.send-btn.stop", { type: "button", "aria-label": "Stop", "data-tip": "The engine can't cancel a running generation yet", disabled: true }, icon("stop"));
     const meter = h("div.meter", h("span.statedot.active"), h("b.num.mv", "0.0"), h("span", "tok/s"), h("span.faint.num.mt"));
     const composer = h("div.composer", h("div.composer-box", ta, stopBtn, sendBtn), h("div.composer-f.small.faint", meter, h("span.spacer"), h("span.hint", "Single-turn · greedy decoding · ", kbd("↵"), " send, ", kbd("⇧ ↵"), " newline")));
-    const inUse = h("div.chat-inuse.small", { role: "status" }, h("span.statedot.active"), h("span", "Another Mac is using the model too. Replies share it, so they may stream slower."));
+    const inUse = h("div.chat-inuse.small", { role: "status" }, h("span.statedot.active"), h("span", "Another machine is using the model too. Replies share it, so they may stream slower."));
     const chat = h("div.chat", h("div.chat-top", picker), scroller, intro, blocked, inUse, composer);
 
     // ---- inspector ----
@@ -159,11 +159,11 @@ export default {
           blockKey = k;
           const gap = m?.gaps?.[0];
           if (ok) blocked.replaceChildren();
-          else if (s.source === "live" && s.engine.phase !== "running") blocked.replaceChildren(empty({ icon: "playground", title: "Start your node to chat", body: "This Mac joins the swarm and can then talk to any model the swarm covers, even if it serves nothing itself.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
+          else if (s.source === "live" && s.engine.phase !== "running") blocked.replaceChildren(empty({ icon: "playground", title: "Start your node to chat", body: "This machine joins the swarm and can then talk to any model the swarm covers, even if it serves nothing itself.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
           else if (!m) blocked.replaceChildren(empty({ icon: "playground", title: "No model to talk to yet", body: "Nobody online serves a model yet. Serve some layers to start one.", actions: [button("Open Models", { variant: "primary", icon: "models", onclick: () => go("models") })] }));
           else blocked.replaceChildren(empty({
             icon: m.verdict.level === "gap" ? "alert" : "layers", tone: m.verdict.level === "gap" ? "gap" : "degraded",
-            title: m.verdict.level === "degraded" ? `${m.name} is loading…` : `${m.name} can't run from this Mac yet`,
+            title: m.verdict.level === "degraded" ? `${m.name} is loading…` : `${m.name} can't run from this machine yet`,
             body: m.verdict.reason,
             actions: [button("Open Models", { variant: gap ? "" : "primary", icon: "models", onclick: () => go("models") }),
               gap ? button("Serve missing layers", { variant: "primary", icon: "download", onclick: () => openServe({ model: m.model, lo: gap[0], hi: gap[1] }) }) : null].filter(Boolean),

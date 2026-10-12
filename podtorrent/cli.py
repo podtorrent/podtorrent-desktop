@@ -50,7 +50,7 @@ def print_models(r: dict):
         if m["route"]:
             print("  route: " + " → ".join(f"{n} [{lo},{hi})" for n, lo, hi in m["route"]))
     mine = ", ".join(f"{s['model'].split('/')[-1]} [{s['lo']},{s['hi']}) {s['phase']}" for s in r.get("slices", []))
-    print(f"this Mac serves: {mine or 'nothing'} · {r.get('mem_free_gb', '?')} GB free for models")
+    print(f"this machine serves: {mine or 'nothing'} · {r.get('mem_free_gb', '?')} GB free for models")
 
 
 def main():
@@ -58,7 +58,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     for cmd in ("peer", "host"):  # `host` is the pre-P2P name, kept for old app builds
-        p = sub.add_parser(cmd, help="run this Mac's peer: serve layers, request completions, local API"
+        p = sub.add_parser(cmd, help="run this machine's peer: serve layers, request completions, local API"
                            if cmd == "peer" else argparse.SUPPRESS)
         p.add_argument("--model", default=DEFAULT_REPO)
         p.add_argument("--model-dir")
@@ -70,7 +70,7 @@ def main():
         p.add_argument("--open", action="store_true", help="open the dashboard in a browser")
         p.add_argument("--no-open", action="store_true", help=argparse.SUPPRESS)
 
-    d = sub.add_parser("download", help="download this Mac's layers only (no peer needed)")
+    d = sub.add_parser("download", help="download this machine's layers only (no peer needed)")
     d.add_argument("role", choices=["host", "worker"])
     d.add_argument("--split", type=int, default=24, help="host gets layers [0, split), worker the rest")
     d.add_argument("--model", default=DEFAULT_REPO)

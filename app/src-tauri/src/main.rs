@@ -181,7 +181,12 @@ fn statics() -> &'static Static {
         Static {
             chip: sys.cpus().first().map(|c| c.brand().trim().to_string()).unwrap_or_default(),
             mem_bytes: sys.total_memory(),
-            os: System::os_version().unwrap_or_default(),
+            // "macOS 15.5" / "Windows 11 Pro": the UI shows it as is.
+            os: if cfg!(target_os = "macos") {
+                format!("macOS {}", System::os_version().unwrap_or_default())
+            } else {
+                System::long_os_version().unwrap_or_default()
+            },
         }
     })
 }

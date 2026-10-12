@@ -57,7 +57,7 @@ export async function startHost() {
   commit();
   try { await invoke("start_engine", { mode: "peer", name: settings.peerName || null }); }
   catch (e) { state.engine = { phase: "stopped", owned: false, line: "", error: String(e) }; commit(); toast("Couldn't start the engine", "gap", String(e)); return; }
-  feed("engine", "Started this Mac's peer", "It joins the swarm and connects to other Macs directly", "info");
+  feed("engine", "Started this machine's peer", "It joins the swarm and connects to other machines directly", "info");
   // Give up after ~400 s without progress; a first-run PyTorch download keeps resetting the clock.
   // Progress is cache growth since this start, so later launches (cache already full) show none.
   const base = await invoke("setup_progress").catch(() => 0);
@@ -162,7 +162,7 @@ export async function loadModel() {
   try {
     const r = await post("/api/start", {});
     if (!r.ok) { state.loadRequested = false; state.lastError = r.body?.error || `HTTP ${r.status}`; toast("Couldn't load the model", "gap", state.lastError); }
-    else feed("load", "Model load requested", `This Mac serves layers 0–${r.body.split - 1}; a connected peer serves the rest`, "info");
+    else feed("load", "Model load requested", `This machine serves layers 0–${r.body.split - 1}; a connected peer serves the rest`, "info");
   } catch (e) { state.loadRequested = false; toast("Couldn't reach the engine", "gap", String(e)); }
   commit();
 }
@@ -175,7 +175,7 @@ export async function serveSlice(model, lo, hi, peer = null) {
   try {
     const r = await post("/api/serve", { model, lo, hi, peer });
     if (!r.ok) return toast(`Couldn't serve ${what}`, "gap", r.body?.error || `HTTP ${r.status}`);
-    feed("load", `${peer || "This Mac"} will serve ${what}`, "Downloading only those layers", "info");
+    feed("load", `${peer || "This machine"} will serve ${what}`, "Downloading only those layers", "info");
     toast(`Serving ${what}${peer ? ` on ${peer}` : ""}`, "info", "Downloads only those layers, then loads them");
     return true;
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
@@ -187,7 +187,7 @@ export async function unserveSlice(model, lo, hi) {
   try {
     const r = await post("/api/unserve", { model, lo, hi });
     if (!r.ok) return toast(`Couldn't stop serving ${what}`, "gap", r.body?.error || `HTTP ${r.status}`);
-    feed("load", `This Mac stopped serving ${what}`, "", "info");
+    feed("load", `This machine stopped serving ${what}`, "", "info");
     toast(`Stopped serving ${what}`, "info");
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
 }
@@ -247,7 +247,7 @@ export async function catalogDelete(m) {
   try {
     const r = await post("/api/catalog/delete", { repo: m.repo, dir: m.dir }, 30000);
     if (!r.ok) return toast(`Couldn't delete ${shortModel(m.repo)}`, "gap", r.body?.error || `HTTP ${r.status}`);
-    feed("load", `Deleted ${shortModel(m.repo)} from this Mac`, fmt.bytes(m.disk_bytes) + " freed", "info");
+    feed("load", `Deleted ${shortModel(m.repo)} from this machine`, fmt.bytes(m.disk_bytes) + " freed", "info");
     toast(`Deleted ${shortModel(m.repo)}`, "info", fmt.bytes(m.disk_bytes) + " freed");
     return true;
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }

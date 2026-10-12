@@ -32,15 +32,15 @@ export default {
     // ---- setup (no engine) ----
     const startBtn = button("Start My Node", { variant: "primary", size: "lg", icon: "play", onclick: () => startHost() });
     const startCard = h("section.card.role-card",
-      h("div.row", h("div.role-ic", icon("node")), h("div.grow", h("h2", "This Mac as a peer"), h("div.small.muted", "Joins the global swarm, connects directly to the other Macs, and serves whichever layers you choose, of any model. Only those layers are downloaded."))),
+      h("div.row", h("div.role-ic", icon("node")), h("div.grow", h("h2", "This machine as a peer"), h("div.small.muted", "Joins the global swarm, connects directly to the other machines, and serves whichever layers you choose, of any model. Only those layers are downloaded."))),
       h("div.col", { style: { gap: "8px", marginTop: "14px" } }, startBtn));
     const machine = h("div.small.muted");
     const errBox = h("div.next.err");
     const setup = h("div.page",
-      h("div.page-h", h("div", h("h1", "Share this Mac"), h("p", "PodTorrent pools Macs to run a model none of them can hold alone. Every Mac runs the same node; each downloads only the slice it serves."), machine)),
+      h("div.page-h", h("div", h("h1", "Share this machine"), h("p", "PodTorrent pools machines to run a model none of them can hold alone. Every machine runs the same node; each downloads only the slice it serves."), machine)),
       errBox,
       startCard,
-      h("div.small.faint", "Macs on different networks connect directly over encrypted QUIC (UDP hole punching). The swarm is open: any PodTorrent peer can send work to this Mac. ",
+      h("div.small.faint", "Machines on different networks connect directly over encrypted QUIC (UDP hole punching). The swarm is open: any PodTorrent peer can send work to this machine. ",
         h("a", { href: "#", onclick: e => { e.preventDefault(); setDemo(true); } }, "Explore Demo Mode first →")));
 
     // ---- starting ----
@@ -58,14 +58,14 @@ export default {
     const sliceList = h("div.col.slice-list");
     const freeNote = h("span.small.faint");
     const slicesCard = h("section.card",
-      h("div.card-h", h("h2", "Slices this Mac serves"), h("span.spacer"), freeNote,
+      h("div.card-h", h("h2", "Slices this machine serves"), h("span.spacer"), freeNote,
         button("Serve layers…", { icon: "download", size: "sm", onclick: () => openServe() })),
       h("div.card-b", sliceList));
     const tk = { today: ticker(hv.today, v => fmt.compact(v)), all: ticker(hv.all, v => fmt.compact(v)), req: ticker(hv.req, v => fmt.int(v)) };
     const hero = h("section.card.hero",
       h("div.hero-l", h("div.gauge-wrap", g, h("div.gauge-c", gv, gs))),
       h("div.hero-m",
-        h("div.row", h("span.you-pill", icon("person"), "This Mac"), roleB, stateB),
+        h("div.row", h("span.you-pill", icon("person"), "This machine"), roleB, stateB),
         chipEl, h("div.small.muted.hero-sub"),
         h("div.hero-stats",
           h("div", h("span.caps", "Layers served"), hv.layers),
@@ -82,9 +82,9 @@ export default {
     const setTile = (el, v, kind, sub) => { const x = el.querySelector(".tile-v"); x.className = `tile-v ${kind}`; text(x, v); text(el.querySelector(".tile-s"), sub || " "); };
     const rules = h("section.card",
       h("div.card-h", h("h2", "Contribution rules"), h("span.spacer"), badge("Needs engine support", "neutral")),
-      ...[["Pause contributing", "Stop serving without leaving the swarm"], ["Only when plugged in", "Pause automatically on battery"], ["Only when idle", "Pause while you're using this Mac"]].map(([t, d]) =>
+      ...[["Pause contributing", "Stop serving without leaving the swarm"], ["Only when plugged in", "Pause automatically on battery"], ["Only when idle", "Pause while you're using this machine"]].map(([t, d]) =>
         h("div.list-row", h("div.grow", h("div.t", t), h("div.d", d)), toggle(false, () => {}, t))),
-      h("div.card-b.small.faint", { style: { paddingTop: "10px" } }, "To stop serving a slice, use Stop serving above; Stop node leaves the swarm. Slices that won't fit in this Mac's GPU memory are refused before downloading (cap it with PODTORRENT_MEM_BUDGET_GB)."));
+      h("div.card-b.small.faint", { style: { paddingTop: "10px" } }, "To stop serving a slice, use Stop serving above; Stop node leaves the swarm. Slices that won't fit in this machine's GPU memory are refused before downloading (cap it with PODTORRENT_MEM_BUDGET_GB)."));
     rules.querySelectorAll(".toggle").forEach(t => { t.disabled = true; });
     const contrib = contributionCard(), payback = paybackCard();
     const tpsChart = areaChart({ color: "you", labels: ["2 min ago", "now"] });
@@ -94,7 +94,7 @@ export default {
       h("div.tiles", Object.values(tiles)),
       h("div.two.contrib-row", contrib, payback),
       h("div.two",
-        h("section.card", h("div.card-h", h("h2", "Tokens per second"), h("span.spacer"), h("span.small.faint", "this Mac")), h("div.card-b", tpsChart)),
+        h("section.card", h("div.card-h", h("h2", "Tokens per second"), h("span.spacer"), h("span.small.faint", "this machine")), h("div.card-b", tpsChart)),
         h("section.card", h("div.card-h", h("h2", "Contribution history"), h("span.spacer"), dayNote), h("div.card-b", dayChart))),
       rules);
 
@@ -107,7 +107,7 @@ export default {
       if (sliceList.dataset.k === k) return;
       sliceList.dataset.k = k;
       if (!s.slices.length) {
-        sliceList.replaceChildren(h("div.small.muted", "This Mac serves nothing yet. It can still chat with any model the swarm covers. Serve some layers to contribute: open Models to see which layers are missing."));
+        sliceList.replaceChildren(h("div.small.muted", "This machine serves nothing yet. It can still chat with any model the swarm covers. Serve some layers to contribute: open Models to see which layers are missing."));
         return;
       }
       sliceList.replaceChildren(...s.slices.map(x => {
@@ -131,7 +131,7 @@ export default {
         const hl = s.health;
         if (show === "setup") {
           startBtn.disabled = !isTauri;
-          text(machine, hl ? `This Mac: ${hl.chip || "Apple Silicon"} · ${fmt.gb(hl.mem_total_gb)} unified memory · macOS ${hl.os}. Half of Qwen3-30B-A3B (4-bit) needs about 8 GB plus KV cache; serve fewer layers on a smaller Mac.` : "");
+          text(machine, hl ? `This machine: ${hl.chip || "Unknown chip"} · ${fmt.gb(hl.mem_total_gb)} memory · ${hl.os}. Half of Qwen3-30B-A3B (4-bit) needs about 8 GB plus KV cache; serve fewer layers on a smaller machine.` : "");
           errBox.hidden = !s.engine.error;
           if (s.engine.error) errBox.replaceChildren(icon("alert"), h("div.grow", h("b", "The engine stopped"), h("div.mono.small", s.engine.error.split("\n").slice(-3).join("\n"))));
           return;
@@ -148,7 +148,7 @@ export default {
         g.set(m ? m.active_gb / m.total_gb : 0);
         text(gv, m ? fmt.gb(m.active_gb) : "–");
         text(gs, m ? `of ${fmt.gb(m.total_gb)} in use` : "");
-        text(chipEl, me?.chip || hl?.chip || "This Mac");
+        text(chipEl, me?.chip || hl?.chip || "This machine");
         text(running.querySelector(".hero-sub"), [me?.name, s.source === "demo" ? "Demo Mode" : "Peer in the global swarm"].filter(Boolean).join(" · "));
         setBadge(roleB, "Peer", "you");
         const st = me ? nodeState(me, s) : "idle";
@@ -165,9 +165,9 @@ export default {
         // health
         if (hl) {
           const p = PRESS[hl.mem_pressure] || PRESS.unknown, t = THERM[hl.thermal] || THERM.unknown;
-          setTile(tiles.press, p[0], p[1], "macOS memory pressure");
-          setTile(tiles.therm, t[0], t[1], hl.thermal === "nominal" ? "No throttling" : "macOS may slow the GPU");
-          setTile(tiles.power, hl.power === "ac" ? "Plugged in" : hl.power === "battery" ? "On battery" : "Unknown", hl.power === "battery" ? "degraded" : "serving", hl.battery_pct != null ? `Battery ${hl.battery_pct}%` : "Desktop Mac");
+          setTile(tiles.press, p[0], p[1], "Memory pressure");
+          setTile(tiles.therm, t[0], t[1], hl.thermal === "nominal" ? "No throttling" : "The system may slow the GPU");
+          setTile(tiles.power, hl.power === "ac" ? "Plugged in" : hl.power === "battery" ? "On battery" : "Unknown", hl.power === "battery" ? "degraded" : "serving", hl.battery_pct != null ? `Battery ${hl.battery_pct}%` : "Desktop");
           setTile(tiles.lp, hl.low_power ? "On" : "Off", hl.low_power ? "degraded" : "serving", hl.low_power ? "Inference will be slower" : "Full performance");
         } else for (const el of Object.values(tiles)) setTile(el, "–", "neutral", isTauri ? "Reading…" : "Available in the app");
         tpsChart.set(me ? me.tps.slice(-120) : []);
@@ -176,7 +176,7 @@ export default {
         dayChart.set(rows);
         const sum = summarize(s, me, days, day);
         contrib.set(sum, s); payback.set(sum);
-        text(dayNote, s.source === "demo" ? "Demo data" : "tokens per day, this Mac");
+        text(dayNote, s.source === "demo" ? "Demo data" : "tokens per day, this machine");
         cls(running, "unreachable", phase === "unreachable");
         running.querySelectorAll(".hero-r .btn").forEach(b => { b.disabled = s.source === "demo"; b.dataset.tip = s.source === "demo" ? "Not available in Demo Mode" : ""; });
       },
@@ -222,7 +222,7 @@ function contributionCard() {
         mk("tokens", "Tokens served"), mk("req", "Requests helped"), mk("up", "Uptime"),
         mk("blocks", "Blocks hosted", "(now · block-hours)"), mk("kwh", "Energy used", "(est.)"),
         h("div.c-row.c-value", h("span.c-l", "Value created ", h("span.badge.neutral", "Estimate")), valT, valA)),
-      h("div.field.c-basis", h("label", "Valuation basis: equivalent API price for the tokens this Mac served"), sel),
+      h("div.field.c-basis", h("label", "Valuation basis: equivalent API price for the tokens this machine served"), sel),
       foot));
   let selKey = "";
   el.set = (m, s) => {
@@ -262,7 +262,7 @@ function paybackCard() {
       h("div.gauge-wrap", ring, h("div.gauge-c", pct, sub)),
       h("div.pb-r",
         h("div.pb-inputs",
-          h("div.field", h("label", "This Mac's purchase price (USD)"), price),
+          h("div.field", h("label", "This machine's purchase price (USD)"), price),
           h("div.field", h("label", "Amortize over (months)"), amort)),
         lines)));
   el.set = m => {
@@ -272,7 +272,7 @@ function paybackCard() {
     const value = b ? usdFor(m.all.tokens, b) : null, perDay = b ? usdFor(m.tokPerDay, b) : null;
     if (!P || value == null) {
       ring.set(0); text(pct, "–"); text(sub, P ? "no prices" : "enter price");
-      lines.replaceChildren(h("div.small.muted", P ? "Price benchmarks aren't loaded." : "Enter what this Mac cost to see how much of it the value it creates covers."));
+      lines.replaceChildren(h("div.small.muted", P ? "Price benchmarks aren't loaded." : "Enter what this machine cost to see how much of it the value it creates covers."));
       return;
     }
     const f = value / P;

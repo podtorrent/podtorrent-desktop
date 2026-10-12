@@ -26,7 +26,8 @@ fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });
 fs.copyFileSync(findUv(), path.join(out, uvName));
 fs.chmodSync(path.join(out, uvName), 0o755);
-for (const f of ["pyproject.toml", "uv.lock", "README.md"]) fs.copyFileSync(path.join(root, f), path.join(out, f));
+// .python-version pins the interpreter uv installs; without it uv takes the newest, which PyTorch may not support yet.
+for (const f of ["pyproject.toml", "uv.lock", "README.md", ".python-version"]) fs.copyFileSync(path.join(root, f), path.join(out, f));
 fs.cpSync(path.join(root, "podtorrent"), path.join(out, "podtorrent"), {
   recursive: true,
   filter: src => path.basename(src) !== "__pycache__",

@@ -711,16 +711,16 @@ class PeerApp:
         try:
             n, errors, model = self.n_layers, [], self.repo
             mine = [(s.lo, s.hi) for s in self.slices.loaded(model)] or [(0, k)]
-            threads = [threading.Thread(target=self._try, args=(errors, "this Mac", self._load_local, model, *r))
+            threads = [threading.Thread(target=self._try, args=(errors, "this machine", self._load_local, model, *r))
                        for r in mine if not self.slices.find(model, *r)]
-            threads.append(threading.Thread(target=self._try, args=(errors, "this Mac", self.ensure_head, model)))
+            threads.append(threading.Thread(target=self._try, args=(errors, "this machine", self.ensure_head, model)))
             # Layers nobody reachable serves (besides what this Mac is about to load): ask a peer.
             others = [o for o in self.offers(model) if o.peer_id != self.me] + [Offer(self.me, NAME, *r) for r in mine]
             _, gaps = plan(n, others)
             for lo, hi in gaps:
                 pid = self.pick_helper({self.me}, self.slice_gb(model, lo, hi))
                 if not pid:
-                    errors.append(f"layers {lo}–{hi - 1} have no peer, and no other connected Mac has room to serve them")
+                    errors.append(f"layers {lo}–{hi - 1} have no peer, and no other connected machine has room to serve them")
                     continue
                 threads.append(threading.Thread(target=self._try, args=(errors, self.net._name(pid),
                                                                          self.remote_load, pid, model, lo, hi)))

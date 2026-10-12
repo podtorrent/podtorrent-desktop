@@ -10,7 +10,7 @@ import { catalogSection, secHead, localModels, openGet } from "../catalog.js";
 /** "You → mac-a [0,16) → mac-c [16,48) → You" */
 export function routeText(route, self) {
   if (!route?.length) return "";
-  return ["You", ...route.map(([n, lo, hi]) => `${n === self ? "This Mac" : n} ${fmt.layers(lo, hi)}`), "You"].join(" → ");
+  return ["You", ...route.map(([n, lo, hi]) => `${n === self ? "This machine" : n} ${fmt.layers(lo, hi)}`), "You"].join(" → ");
 }
 
 const ranges = idx => {   // [0,1,2,7] -> [[0,3],[7,8]]
@@ -61,8 +61,8 @@ export default {
       h("p", "Each model is split into layers. It runs once every layer has a machine or peer serving it.")));
     const S = {
       run: stat({ label: "Ready to use", icon: "check", format: v => fmt.int(v), color: "var(--c-serving)", tip: "Models every layer of which a reachable peer serves" }),
-      lay: stat({ label: "Layers this Mac serves", icon: "layers", format: v => fmt.int(v), color: "var(--c-you)" }),
-      disk: stat({ label: "Downloaded", icon: "download", format: v => fmt.bytes(v), tip: "Model files on this Mac" }),
+      lay: stat({ label: "Layers this machine serves", icon: "layers", format: v => fmt.int(v), color: "var(--c-you)" }),
+      disk: stat({ label: "Downloaded", icon: "download", format: v => fmt.bytes(v), tip: "Model files on this machine" }),
       mem: stat({ label: "Free for models", icon: "memory", unit: "GB", format: v => fmt.fixed(v, 1), tip: "Memory left for more layers" }),
     };
     const stats = h("div.grid-stats.four", Object.values(S));
@@ -111,7 +111,7 @@ export default {
           if (k !== emptyKey) {
             emptyKey = k;
             emptyBox.replaceChildren(s.engine.phase === "running"
-              ? empty({ icon: "models", title: "No models in the swarm yet", body: "Nobody online serves a model yet. Serve some layers on this Mac to start one.", actions: [button("Serve layers…", { variant: "primary", icon: "download", onclick: () => openServe() })] })
+              ? empty({ icon: "models", title: "No models in the swarm yet", body: "Nobody online serves a model yet. Serve some layers on this machine to start one.", actions: [button("Serve layers…", { variant: "primary", icon: "download", onclick: () => openServe() })] })
               : empty({ icon: "models", title: "No models yet", body: "Start your node to see the models the swarm serves, and to serve layers yourself.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
           }
           return;

@@ -35,7 +35,7 @@ export function secHead(ic, title, extra) {
 function statusBadges(repo) {
   const l = localOf(repo), m = swarmOf(repo), out = [];
   if (l?.complete) out.push(badge("Downloaded", "serving", { dot: true }));
-  else if (l?.layers.length) out.push(badge(`On this Mac · ${rangesText(l.layers)}`, "you", { dot: true }));
+  else if (l?.layers.length) out.push(badge(`On this machine · ${rangesText(l.layers)}`, "you", { dot: true }));
   if (m?.runnable || m?.state === "available") out.push(badge("Available in swarm", "serving"));
   else if (m && m.state !== "offline") out.push(badge(`Swarm missing ${m.gaps.map(([a, b]) => fmt.layers(a, b)).join(", ")}`, "degraded"));
   return out;
@@ -98,7 +98,7 @@ export function catalogSection() {
     secHead("search", "Find models", status),
     h("div.cat-search", icon("search"), q), chips, results);
   const localList = h("div.cat-list");
-  const mine = h("section.card.cat-card", secHead("memory", "On this Mac", h("span.small.muted.disk")), localList);
+  const mine = h("section.card.cat-card", secHead("memory", "On this machine", h("span.small.muted.disk")), localList);
 
   let items = [], seq = 0, t, searched = false;
   async function run() {

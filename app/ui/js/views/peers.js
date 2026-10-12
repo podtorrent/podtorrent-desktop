@@ -101,12 +101,12 @@ export default {
           const k = s.engine.phase;
           if (k !== emptyKey) {
             emptyKey = k;
-            emptyBox.replaceChildren(empty({ icon: "peers", title: s.engine.phase === "starting" ? "Starting your node…" : "No peers yet", body: "Start your node. Other Macs running PodTorrent appear here automatically, and this Mac connects to them directly.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
+            emptyBox.replaceChildren(empty({ icon: "peers", title: s.engine.phase === "starting" ? "Starting your node…" : "No peers yet", body: "Start your node. Other machines running PodTorrent appear here automatically, and this machine connects to them directly.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
           }
           return;
         }
         emptyKey = "";
-        note.textContent = n === 1 ? "Only this Mac so far. Start PodTorrent on another Mac and it appears here within seconds." : "";
+        note.textContent = n === 1 ? "Only this machine so far. Start PodTorrent on another machine and it appears here within seconds." : "";
         paint(s);
       },
     };
@@ -120,15 +120,15 @@ function swarmCard(s) {
   const sw = s.swarm, [label, kind] = SWARM_STATUS[sw.status] || SWARM_STATUS.offline;
   const others = sw.peers.filter(p => p.peer_id !== sw.selfId).length;
   const head = h("div.card-h", h("b", "Online in the swarm"), badge(label, kind, { dot: true, pulse: sw.status === "connecting" }),
-    h("span.spacer"), h("span.small.muted", sw.status === "online" ? `${sw.peers.length} Mac${sw.peers.length === 1 ? "" : "s"} · ${others} besides you` : ""));
+    h("span.spacer"), h("span.small.muted", sw.status === "online" ? `${sw.peers.length} machine${sw.peers.length === 1 ? "" : "s"} · ${others} besides you` : ""));
   if (s.engine.phase !== "running" && !sw.peers.length)
-    return h("div.card", head, h("div.card-b.small.muted", "Start your node to appear in the global swarm and see every other Mac running PodTorrent."));
+    return h("div.card", head, h("div.card-b.small.muted", "Start your node to appear in the global swarm and see every other machine running PodTorrent."));
   if (sw.status !== "online")
     return h("div.card", head, h("div.card-b.small.muted", "Can't reach the discovery service. Retrying…"));
   return h("div.card", head, h("div.swarm-list", sw.peers.map(p => {
     const me = p.peer_id === sw.selfId;
     const slices = (p.slices || []).map(x => `${x.model.split("/").pop()} ${fmt.layers(x.lo, x.hi)}`).join(" · ") || "Serves nothing yet";
-    const [dot, linkText, tip] = me ? ["serving", "This Mac", ""] : linkLabel(p.link);
+    const [dot, linkText, tip] = me ? ["serving", "This machine", ""] : linkLabel(p.link);
     return h("div.swarm-row", h(`span.statedot.${dot}`),
       h("div.col", h("div.row", h("b.ellipsis", p.name || p.peer_id.slice(0, 8)), me ? badge("You", "you") : null),
         h("span.small.muted.ellipsis", [p.chip, p.mem_total_gb ? fmt.gb(p.mem_total_gb) : ""].filter(Boolean).join(" · "))),
@@ -159,7 +159,7 @@ export function peerSheet(name) {
     title: name, onclose: () => unsub?.(),
     body: h("div.col", { style: { gap: "14px" } }, top,
       h("div.col", h("div.row", h("span.caps", "Throughput"), h("span.spacer"), tpsL), tps),
-      n.role !== "host" ? h("div.col", h("div.row", h("span.caps", "Latency from this Mac"), h("span.spacer"), rttL), rtt) : null),
+      n.role !== "host" ? h("div.col", h("div.row", h("span.caps", "Latency from this machine"), h("span.spacer"), rttL), rtt) : null),
     footer: [n.address ? button("Copy address", { icon: "copy", onclick: () => copyText(n.address, "Address copied") }) : null, button("Done", { variant: "primary", onclick: () => s.close() })].filter(Boolean),
   });
   const paint = st => {

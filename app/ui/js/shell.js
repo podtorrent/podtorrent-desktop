@@ -33,7 +33,7 @@ export function mountShell() {
   const demoPill = h("button.badge.demo.demo-pill", { type: "button", "data-tip": "Demo Mode · ⌥⌘D to turn off", onclick: () => setDemo(false) }, "Demo");
   const sidebar = h("aside.sidebar", { "aria-label": "Sidebar" },
     h("div.sidebar-top", { "data-tauri-drag-region": "" }, demoPill),
-    h("div.brand", { "data-tauri-drag-region": "" }, h("div.logo", h("img", { src: "favicon.svg", alt: "" })), h("div", h("b", "PodTorrent"), h("div.sub", "Your Macs, one swarm"))),
+    h("div.brand", { "data-tauri-drag-region": "" }, h("div.logo", h("img", { src: "favicon.svg", alt: "" })), h("div", h("b", "PodTorrent"), h("div.sub", "Your machines, one swarm"))),
     h("nav.nav", NAV.map(navItem), h("div.sect", " "), navItem(["settings", "Settings", "settings", "⌘,"])),
     nodeCard);
 
@@ -96,7 +96,7 @@ export function mountShell() {
       nodeCard.querySelector(".nc-layers").dataset.tip = s.slices.length ? slicesLabel(s.slices) : "Serving nothing";
       const tps = me?.tps.slice(-5) || [];
       text(nodeCard.querySelector(".nc-tps"), tps.length ? fmt.fixed(tps.reduce((a, b) => a + b, 0) / tps.length) : "0.0");
-      nodeCard.setAttribute("aria-label", me ? `This Mac: ${nodeStateLabel(me, s)}` : "This Mac");
+      nodeCard.setAttribute("aria-label", me ? `This machine: ${nodeStateLabel(me, s)}` : "This machine");
     }
     demoPill.hidden = s.source !== "demo";
     // banners: demo, offline, engine trouble
