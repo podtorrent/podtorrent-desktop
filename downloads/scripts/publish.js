@@ -23,7 +23,12 @@ const noLatest = args.includes("--no-latest") && args.splice(args.indexOf("--no-
 const [cmd, arg] = args;
 
 const wrangler = (...a) =>
-  execFileSync("npx", ["wrangler", "r2", "object", ...a, "--remote"], { cwd: path.join(here, ".."), stdio: ["ignore", "pipe", "inherit"] });
+  // npx is npx.cmd on Windows, which execFileSync can only launch through a shell.
+  execFileSync("npx", ["wrangler", "r2", "object", ...a, "--remote"], {
+    cwd: path.join(here, ".."),
+    stdio: ["ignore", "pipe", "inherit"],
+    shell: process.platform === "win32",
+  });
 const getJson = (key) => {
   try {
     return JSON.parse(wrangler("get", `${BUCKET}/${key}`, "--pipe").toString());
