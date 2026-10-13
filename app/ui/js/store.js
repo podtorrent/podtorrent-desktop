@@ -206,7 +206,7 @@ function applySwarm(ev) {
   const was = new Set(state.swarm.peers.map(p => p.peer_id));
   const peers = (ev.peers || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   if (state.swarm.status === "online" && ev.status === "online") {
-    for (const p of peers) if (!was.has(p.peer_id) && p.peer_id !== ev.self_id) feed("join", `${p.name || "A Mac"} came online`, p.chip || "", "info");
+    for (const p of peers) if (!was.has(p.peer_id) && p.peer_id !== ev.self_id) feed("join", `${p.name || "A machine"} came online`, p.chip || "", "info");
   }
   state.swarm = { status: ev.status, selfId: ev.self_id || "", peers };
 }
@@ -363,8 +363,8 @@ function coverage(m, s) {
   let verdict;
   if (m.state === "available") verdict = { level: "serving", title: `Available · ${routes} route${routes === 1 ? "" : "s"}`, reason: `Every layer has a reachable peer${routes > 1 ? `; each layer has at least ${routes}, so a failure re-routes` : ""}.` };
   else if (loading && m.state !== "available") verdict = { level: "degraded", title: "Loading", reason: `${loading} of ${n} layers are still downloading or loading.${m.gaps.length ? ` Layers ${layerList(m.gaps)} have no peer yet.` : ""}` };
-  else if (m.state === "partial") verdict = { level: "gap", title: `Partial · layers ${layerList(m.gaps)} missing`, reason: unreachable ? `Some layers are only on Macs this one can't reach directly.` : `No reachable peer serves layers ${layerList(m.gaps)}. Serve them on this Mac, or ask a connected Mac to.` };
-  else verdict = { level: "gap", title: "Offline", reason: unreachable ? "Online Macs serve it, but none are reachable from here." : "Nobody online serves it right now." };
+  else if (m.state === "partial") verdict = { level: "gap", title: `Partial · layers ${layerList(m.gaps)} missing`, reason: unreachable ? `Some layers are only on machines this one can't reach directly.` : `No reachable peer serves layers ${layerList(m.gaps)}. Serve them on this machine, or ask a connected machine to.` };
+  else verdict = { level: "gap", title: "Offline", reason: unreachable ? "Online machines serve it, but none are reachable from here." : "Nobody online serves it right now." };
   const redundancy = Math.max(1, ...layers.map(L => L.peers.length));
   return {
     ...m, id: m.model, repo: m.model, name, layers, assignments, missing, gaps: m.gaps, serving: n - missing.length, loading, verdict,

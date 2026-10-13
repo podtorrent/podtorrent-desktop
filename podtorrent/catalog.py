@@ -96,7 +96,7 @@ def suggest(n_layers: int, layer_bytes: int, free_gb: float, gaps: list, have: l
         hi = n_layers
     hi = min(hi, lo + fit)
     return {"lo": lo, "hi": hi, "fits": fit, "fits_all": fit >= n_layers,
-            "reason": ("Fills the swarm's missing layers" if gaps else "Extends what this Mac serves" if have
+            "reason": ("Fills the swarm's missing layers" if gaps else "Extends what this machine serves" if have
                        else "Adds a second copy, so failures re-route" if in_swarm else "Starts the model in the swarm") if hi > lo else "Not enough free memory for one layer"}
 
 

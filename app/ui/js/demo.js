@@ -13,8 +13,8 @@ const SELF = "this-mac";
 // and optionally `joinAt` (seconds after start) to join live.
 const PRESETS = {
   swarm: {
-    label: "Four Macs, two models",
-    hint: "Two models, one gap in the big one, an unreachable peer, and a Mac that joins after ~12 s and fills the gap.",
+    label: "Four machines, two models",
+    hint: "Two models, one gap in the big one, an unreachable peer, and a machine that joins after ~12 s and fills the gap.",
     mine: [[QWEN, 0, 16]],
     peers: [
       { name: "studio", chip: "Apple M2 Ultra", mem: 128, rtt: 9, slices: [[QWEN, 16, 48], [BIG, 0, 60]] },
@@ -24,20 +24,20 @@ const PRESETS = {
     ],
   },
   pair: {
-    label: "Two Macs",
-    hint: "The everyday setup: this Mac serves layers 0–23 of Qwen3-30B-A3B, another Mac serves 24–47.",
+    label: "Two machines",
+    hint: "The everyday setup: this machine serves layers 0–23 of Qwen3-30B-A3B, another machine serves 24–47.",
     mine: [[QWEN, 0, 24]],
     peers: [{ name: "mac-mini", chip: "Apple M2", mem: 16, rtt: 22, slices: [[QWEN, 24, 48]] }],
   },
   fresh: {
     label: "Fresh pair",
-    hint: "Two Macs connected, nothing served yet. Click Load model, or Serve layers, to watch the downloads.",
+    hint: "Two machines connected, nothing served yet. Click Load model, or Serve layers, to watch the downloads.",
     mine: [],
     peers: [{ name: "mac-mini", chip: "Apple M2", mem: 16, rtt: 18, slices: [] }],
   },
   degraded: {
     label: "Degraded",
-    hint: "A Mac behind a symmetric NAT can't be reached, so its layers are a gap; another is on a slow link.",
+    hint: "A machine behind a symmetric NAT can't be reached, so its layers are a gap; another is on a slow link.",
     mine: [[QWEN, 0, 16]],
     peers: [
       { name: "mac-mini", chip: "Apple M2", mem: 16, rtt: 340, slices: [[QWEN, 16, 32]] },
@@ -48,9 +48,9 @@ const PRESETS = {
 export const presets = PRESETS;
 
 const ANSWERS = [
-  `Pipeline parallelism splits a model **by layer**. Each Mac holds a contiguous slice and passes the hidden state to the next:\n\n1. This Mac embeds the prompt.\n2. The hidden state (about 4 KB per token in fp16) hops through each peer's layers in order.\n3. It comes back here for the head and sampling.\n\nNo Mac needs the whole model in memory.`,
+  `Pipeline parallelism splits a model **by layer**. Each machine holds a contiguous slice and passes the hidden state to the next:\n\n1. This machine embeds the prompt.\n2. The hidden state (about 4 KB per token in fp16) hops through each peer's layers in order.\n3. It comes back here for the head and sampling.\n\nNo machine needs the whole model in memory.`,
   `Here's a tiny helper that measures tokens per second:\n\n\`\`\`python\nimport time\n\ndef tok_per_s(stream):\n    t0, n = time.perf_counter(), 0\n    for _ in stream:\n        n += 1\n    return n / (time.perf_counter() - t0)\n\`\`\`\n\nRun it over the token stream and you'll see each network hop is a small slice of every step.`,
-  `Unified memory is the trick. On Apple Silicon the GPU reads the same RAM as the CPU, so a 16 GB Mac can hold half of a 4-bit 30B model plus its KV cache. Two of them together hold the whole thing.`,
+  `Memory is the limit. A 4-bit 30B model needs about 17 GB, so a machine with 16 GB of GPU memory can hold half of it plus its KV cache. Two of them together hold the whole thing.`,
   `Short answer: **yes**, but latency adds up per hop. Every generated token crosses each hop once, typically 5–40 ms per hop between home networks. That's why the route planner prefers fewer, closer peers.`,
 ];
 
@@ -204,7 +204,7 @@ export function startDemo(presetName = settings.demoPreset) {
   offs.push(on("demo:serve", ({ model, lo, hi, peer }) => running && serve(model, lo, hi, peer)));
   offs.push(on("demo:unserve", ({ model, lo, hi }) => {
     const i = mine.findIndex(x => x.model === model && x.lo === lo && x.hi === hi);
-    if (i >= 0) { mine.splice(i, 1); feed("load", `This Mac stopped serving ${shortModel(model)} ${fmt.layers(lo, hi)}`, "", "info"); publish(); }
+    if (i >= 0) { mine.splice(i, 1); feed("load", `This machine stopped serving ${shortModel(model)} ${fmt.layers(lo, hi)}`, "", "info"); publish(); }
   }));
   // Load model (Fresh pair): this Mac serves the first half, a connected peer the rest
   offs.push(on("demo:load", () => {

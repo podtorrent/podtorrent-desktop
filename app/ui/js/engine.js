@@ -6,6 +6,8 @@ import { uid, fmt } from "./dom.js";
 
 export const HOST_PORT = 8000;
 const HOST = `http://localhost:${HOST_PORT}`;
+/** Approximate size of the first-run install off Apple Silicon (CUDA PyTorch, unpacked). */
+const SETUP_BYTES = 4.5e9;
 
 let ws = null, wsTimer = null, liveTimer = null, epoch = 0;
 const toast = (text, kind = "info", detail) => emit("toast", { text, kind, detail });
@@ -55,16 +57,29 @@ export async function startHost() {
   commit();
   try { await invoke("start_engine", { mode: "peer", name: settings.peerName || null }); }
   catch (e) { state.engine = { phase: "stopped", owned: false, line: "", error: String(e) }; commit(); toast("Couldn't start the engine", "gap", String(e)); return; }
-  feed("engine", "Started this Mac's peer", "It joins the swarm and connects to other Macs directly", "info");
-  for (let i = 0; i < 400 && my === epoch; i++) {
+  feed("engine", "Started this machine's peer", "It joins the swarm and connects to other machines directly", "info");
+  // Give up after ~400 s without progress; a first-run PyTorch download keeps resetting the clock.
+  // Progress is cache growth since this start, so later launches (cache already full) show none.
+  const base = await invoke("setup_progress").catch(() => 0);
+  let got = 0;
+  for (let i = 0, idle = 0; idle < 400 && my === epoch; i++, idle++) {
     if (await reachable(HOST + "/")) {
-      state.engine.phase = "running"; state.engine.line = "";
+      state.engine.phase = "running"; state.engine.line = ""; state.engine.setup = null;
       commit();
       watchProcess(my);
       connectHost(`localhost:${HOST_PORT}`);
       return;
     }
-    if (i % 2 === 0) { state.engine.line = (await invoke("engine_log").catch(() => "")).split("\n").pop().slice(0, 140) || state.engine.line; commit(); }
+    if (i % 2 === 0) {
+      const bytes = (await invoke("setup_progress").catch(() => 0)) - base;
+      if (bytes > got + 1e6) { idle = 0; got = bytes; }
+      // Unpacked CUDA PyTorch plus Python is roughly SETUP_BYTES; it's an estimate, so stop short of full.
+      state.engine.setup = got > 50e6 ? { bytes: got, frac: Math.min(got / SETUP_BYTES, 0.97) } : null;
+      state.engine.line = state.engine.setup
+        ? `Installing PyTorch for your GPU (one time, needs internet) · ${(got / 1e9).toFixed(1)} GB so far`
+        : (await invoke("engine_log").catch(() => "")).split("\n").pop().slice(0, 140) || state.engine.line;
+      commit();
+    }
     if (i > 3 && !(await invoke("engine_running").catch(() => true))) break;
     await new Promise(r => setTimeout(r, 1000));
   }
@@ -147,7 +162,7 @@ export async function loadModel() {
   try {
     const r = await post("/api/start", {});
     if (!r.ok) { state.loadRequested = false; state.lastError = r.body?.error || `HTTP ${r.status}`; toast("Couldn't load the model", "gap", state.lastError); }
-    else feed("load", "Model load requested", `This Mac serves layers 0–${r.body.split - 1}; a connected peer serves the rest`, "info");
+    else feed("load", "Model load requested", `This machine serves layers 0–${r.body.split - 1}; a connected peer serves the rest`, "info");
   } catch (e) { state.loadRequested = false; toast("Couldn't reach the engine", "gap", String(e)); }
   commit();
 }
@@ -160,7 +175,7 @@ export async function serveSlice(model, lo, hi, peer = null) {
   try {
     const r = await post("/api/serve", { model, lo, hi, peer });
     if (!r.ok) return toast(`Couldn't serve ${what}`, "gap", r.body?.error || `HTTP ${r.status}`);
-    feed("load", `${peer || "This Mac"} will serve ${what}`, "Downloading only those layers", "info");
+    feed("load", `${peer || "This machine"} will serve ${what}`, "Downloading only those layers", "info");
     toast(`Serving ${what}${peer ? ` on ${peer}` : ""}`, "info", "Downloads only those layers, then loads them");
     return true;
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
@@ -172,7 +187,7 @@ export async function unserveSlice(model, lo, hi) {
   try {
     const r = await post("/api/unserve", { model, lo, hi });
     if (!r.ok) return toast(`Couldn't stop serving ${what}`, "gap", r.body?.error || `HTTP ${r.status}`);
-    feed("load", `This Mac stopped serving ${what}`, "", "info");
+    feed("load", `This machine stopped serving ${what}`, "", "info");
     toast(`Stopped serving ${what}`, "info");
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
 }
@@ -232,7 +247,7 @@ export async function catalogDelete(m) {
   try {
     const r = await post("/api/catalog/delete", { repo: m.repo, dir: m.dir }, 30000);
     if (!r.ok) return toast(`Couldn't delete ${shortModel(m.repo)}`, "gap", r.body?.error || `HTTP ${r.status}`);
-    feed("load", `Deleted ${shortModel(m.repo)} from this Mac`, fmt.bytes(m.disk_bytes) + " freed", "info");
+    feed("load", `Deleted ${shortModel(m.repo)} from this machine`, fmt.bytes(m.disk_bytes) + " freed", "info");
     toast(`Deleted ${shortModel(m.repo)}`, "info", fmt.bytes(m.disk_bytes) + " freed");
     return true;
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }

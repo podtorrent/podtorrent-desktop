@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from .quic import PeerNet
 
 # Override with PODTORRENT_RENDEZVOUS, e.g. ws://localhost:8787 for `wrangler dev`.
-DEFAULT_URL = "wss://podtorrent-rendezvous.logesh-063.workers.dev"
+DEFAULT_URL = "wss://rendezvous.podtorrent.com"
 PING_S = 10
 STUN_REFRESH_S = 120
 # python.org builds ship without system CAs; certifi's bundle works everywhere.

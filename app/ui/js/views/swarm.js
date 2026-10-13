@@ -53,8 +53,8 @@ export default {
         return;
       }
       emptyBox.replaceChildren(empty({
-        icon: "swarm", title: "This Mac isn't in a swarm yet",
-        body: s.engine.error ? `The engine stopped: ${s.engine.error.split("\n").pop().slice(0, 160)}` : "Start your node to join the global swarm. Every Mac is an equal peer: it finds the others automatically, connects to them directly, serves a slice of the model and can chat with it. Or explore a simulated swarm first.",
+        icon: "swarm", title: "This machine isn't in a swarm yet",
+        body: s.engine.error ? `The engine stopped: ${s.engine.error.split("\n").pop().slice(0, 160)}` : "Start your node to join the global swarm. Every machine is an equal peer: it finds the others automatically, connects to them directly, serves a slice of the model and can chat with it. Or explore a simulated swarm first.",
         tone: s.engine.error ? "gap" : "",
         actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost }), button("Explore Demo", { variant: "ghost", icon: "sparkle", onclick: () => setDemo(true) })],
       }));
@@ -99,8 +99,8 @@ export default {
         if (has) emptyKey = "";
         if (!has) { graph.setVisible(false); return renderEmpty(s); }
         const st = swarmStats(s);
-        S.peers.set(st.online, st.total > st.online ? `${st.total - st.online} offline` : st.online === 1 ? "just this Mac" : "all reachable");
-        S.mem.set(st.pooled || null, st.online ? `across ${st.online} Mac${st.online > 1 ? "s" : ""}` : "");
+        S.peers.set(st.online, st.total > st.online ? `${st.total - st.online} offline` : st.online === 1 ? "just this machine" : "all reachable");
+        S.mem.set(st.pooled || null, st.online ? `across ${st.online} machine${st.online > 1 ? "s" : ""}` : "");
         S.tps.set(st.tps, s.chat.busy || st.tps ? "live, 5 s average" : "idle", s.tps.slice(-40));
         S.ttft.setUnit(st.ttft >= 1000 ? "s" : "ms");
         S.ttft.set(st.ttft, s.ttfts.length ? `${s.ttfts.length} repl${s.ttfts.length > 1 ? "ies" : "y"} this session` : "no replies yet");

@@ -1,6 +1,7 @@
 """Golden test: greedy decode through a chain of peers must match a single-process reference.
 
-Usage: python -m tests.golden MODEL_DIR --layers 16 --splits 5,10
+Usage: python -m tests.golden MODEL_DIR --layers 16 --splits 5,10 [--torch 1]
+With --torch, the listed peers run PyTorch instead of MLX (mixed chains; needs the torch extra).
 With --failover, a second peer also serves the last slice; during one prompt the test kills
 whichever of the two the route uses and checks the answer still matches (re-route + KV replay).
 
@@ -73,6 +74,7 @@ def main():
     ap.add_argument("--port", type=int, default=8100)
     ap.add_argument("--prompts", type=int, default=len(PROMPTS))
     ap.add_argument("--failover", action="store_true", help="add a redundant last-slice peer and kill one mid-answer")
+    ap.add_argument("--torch", default="", help="comma-separated peer indices to run on PyTorch instead of MLX")
     a = ap.parse_args()
     prompts = PROMPTS[:a.prompts]
     tok = load_tokenizer(Path(a.model_dir))
@@ -102,11 +104,14 @@ def main():
     procs = []
     for i, (lo, hi) in enumerate(slices):
         env = {**os.environ, "PODTORRENT_HOME": str(tmp / f"peer{i}"), "PODTORRENT_NAME": f"peer{i}"}
+        if str(i) in a.torch.split(","):
+            env["PODTORRENT_BACKEND"] = "torch"
         log = open(tmp / f"peer{i}.log", "w")
         procs.append(subprocess.Popen(
             [sys.executable, "-m", "podtorrent.cli", "peer", "--model-dir", a.model_dir, "--layers", str(a.layers),
              "--port", str(a.port + i), "--serve", f"{lo}:{hi}"], env=env, stdout=log, stderr=subprocess.STDOUT))
-    print(f"peers: {slices} (logs in {tmp})")
+    torch_peers = {int(x) for x in a.torch.split(",") if x}
+    print(f"peers: {slices}, on PyTorch: {sorted(torch_peers) or 'none'} (logs in {tmp})")
     base = f"http://127.0.0.1:{a.port}"
     try:
         for _ in range(300):

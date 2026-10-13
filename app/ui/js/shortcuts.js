@@ -3,7 +3,7 @@
 import { h } from "./dom.js";
 import { on, emit } from "./store.js";
 import { kbd, sheet, sheetOpen } from "./ui.js";
-import { isTauri } from "./native.js";
+import { isMacApp } from "./native.js";
 import { handleMenu, go } from "./actions.js";
 import { openPalette, paletteOpen } from "./palette.js";
 
@@ -33,8 +33,8 @@ export function initShortcuts() {
   document.addEventListener("keydown", e => {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
     if (e.metaKey || e.ctrlKey) {
-      // In the app the menu bar handles these; letting the event through avoids double-firing.
-      if (isTauri) return;
+      // In the macOS app the menu bar handles these; letting the event through avoids double-firing.
+      if (isMacApp) return;
       let id = null;
       if (e.altKey && e.code === "KeyD") id = "demo";
       else if (e.shiftKey) id = SHIFT[e.code];

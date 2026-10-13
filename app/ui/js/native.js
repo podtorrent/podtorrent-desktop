@@ -4,7 +4,9 @@ import { fmt } from "./dom.js";
 
 export const T = window.__TAURI__;
 export const isTauri = !!T?.core;
-if (isTauri) document.documentElement.classList.add("tauri");
+// Only the macOS app has a native menu bar (it owns the shortcuts) and a vibrant, transparent window.
+export const isMacApp = isTauri && /Mac/.test(navigator.platform);
+if (isMacApp) document.documentElement.classList.add("tauri");
 
 export async function invoke(cmd, args) {
   if (!isTauri) throw new Error("Not running inside the PodTorrent app");
@@ -56,7 +58,7 @@ export function initNative() {
     if (s.kind === "joined") notify(`${s.node} joined your swarm`, "It can now serve layers and carry your prompts.");
     if (s.kind === "lost") notify(`${s.node} went offline`, "Its layers have no peer until it reconnects.");
     if (s.kind === "ready") notify("Model fully covered", "Every layer is loaded. The Playground is ready.");
-    if (s.kind === "milestone") notify(`${fmt.compact(s.tokens)} tokens contributed`, "This Mac has processed that many tokens for the swarm.");
+    if (s.kind === "milestone") notify(`${fmt.compact(s.tokens)} tokens contributed`, "This machine has processed that many tokens for the swarm.");
   });
   let hiddenOnce = false;
   listen("window-hidden", () => {

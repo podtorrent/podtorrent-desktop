@@ -1,11 +1,11 @@
 {
   "name": "podtorrent-app",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.7",
   "scripts": {
     "tauri": "tauri",
-    "dev": "sh scripts/bundle-backend.sh && tauri dev",
-    "build": "node scripts/bump-version.js && sh scripts/bundle-backend.sh && tauri build"
+    "dev": "node scripts/bundle-backend.js && tauri dev",
+    "build": "node scripts/bump-version.js && node scripts/bundle-backend.js && tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

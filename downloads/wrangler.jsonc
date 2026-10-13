@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "podtorrent-downloads",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  // Builds live in R2: releases/v<version>/<file>, plus latest.json pointing at the current ones.
+  "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "podtorrent-releases" }],
+  "routes": [{ "pattern": "podtorrent.com/download*", "zone_name": "podtorrent.com" }],
+  "observability": { "enabled": true }
+}

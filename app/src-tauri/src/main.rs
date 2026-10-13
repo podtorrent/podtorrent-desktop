@@ -1,12 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuBuilder, MenuItem, MenuItemBuilder, SubmenuBuilder};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent, Wry};
 use tauri_plugin_notification::NotificationExt;
 
@@ -15,28 +18,44 @@ struct Engine(Mutex<Option<Child>>);
 /// Tray menu's status line, updated from the UI.
 struct TrayStatus(MenuItem<Wry>);
 
+/// Windows: start without a console window (the engine is a console program).
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
+const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+
+/// Stop the engine and everything it started (uv -> python).
 fn kill_group(child: &mut Child) {
-    let pgid = child.id();
-    let _ = Command::new("kill").args(["-TERM", &format!("-{pgid}")]).status();
+    let pid = child.id();
+    #[cfg(unix)]
+    let _ = Command::new("kill").args(["-TERM", &format!("-{pid}")]).status();
+    #[cfg(windows)]
+    let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW).status();
     let _ = child.wait();
 }
 
+/// ~/.podtorrent, the same folder the engine uses (Python's Path.home(): HOME, else USERPROFILE on Windows).
 fn data_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".podtorrent")
+    let home = std::env::var_os("HOME").filter(|h| !h.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE")).unwrap_or_default();
+    PathBuf::from(home).join(".podtorrent")
 }
+
+const UV: &str = if cfg!(windows) { "uv.exe" } else { "uv" };
 
 /// Bundled backend (uv + Python sources) if present, else the repo this app was built from (dev).
 fn backend_dir(app: &AppHandle) -> PathBuf {
     if let Ok(res) = app.path().resource_dir() {
         let b = res.join("resources/backend");
-        if b.join("uv").exists() {
+        if b.join(UV).exists() {
             return b;
         }
     }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Start this Mac's peer (`podtorrent peer`). Output goes to ~/.podtorrent/engine.log.
+/// Start this machine's peer (`podtorrent peer`). Output goes to ~/.podtorrent/engine.log.
 /// `mode` is "peer"; "host" is accepted from older UI builds. There is no address: peers find
 /// each other through the rendezvous. `name` (from onboarding) is what other peers see.
 #[tauri::command]
@@ -53,15 +72,24 @@ fn start_engine(app: AppHandle, state: State<Engine>, mode: String, name: Option
     let data = data_dir();
     std::fs::create_dir_all(&data).map_err(|e| e.to_string())?;
     let log = std::fs::File::create(data.join("engine.log")).map_err(|e| e.to_string())?;
-    let uv = if dir.join("uv").exists() { dir.join("uv") } else { PathBuf::from("uv") };
+    let uv = if dir.join(UV).exists() { dir.join(UV) } else { PathBuf::from(UV) };
     let mut cmd = Command::new(uv);
     cmd.args(["run", "--project"]).arg(&dir).args(["podtorrent"]).args(&args)
         .env("UV_PROJECT_ENVIRONMENT", data.join("venv"))
-        .env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default()))
+        // uv's own native Python: a system one (e.g. an Intel Miniconda under Rosetta) can't load MLX.
+        .env("UV_PYTHON_PREFERENCE", "only-managed")
         .stdin(Stdio::null())
         .stdout(log.try_clone().map_err(|e| e.to_string())?)
-        .stderr(log)
+        .stderr(log);
+    #[cfg(unix)]
+    cmd.env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default()))
         .process_group(0);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    // Off Apple Silicon the first run downloads CUDA PyTorch (~3 GB). A cache of our own lets
+    // setup_progress measure it; macOS keeps uv's shared cache so existing installs don't redownload.
+    #[cfg(not(target_os = "macos"))]
+    cmd.env("UV_CACHE_DIR", data.join("uv-cache"));
     let name: String = name.unwrap_or_default().chars().filter(|c| !c.is_control()).take(40).collect();
     if !name.trim().is_empty() {
         cmd.env("PODTORRENT_NAME", name.trim());
@@ -89,6 +117,20 @@ fn engine_log_tail(name: Option<String>, lines: Option<usize>) -> Result<String,
     let all: Vec<&str> = t.lines().collect();
     let n = lines.unwrap_or(500).min(5000);
     Ok(all[all.len().saturating_sub(n)..].join("\n"))
+}
+
+/// Bytes in the engine's package cache: grows while the first run downloads PyTorch, for the
+/// UI's install progress. Always 0 on macOS (uv's shared cache there, and MLX is small).
+#[tauri::command]
+fn setup_progress() -> u64 {
+    fn size(p: &std::path::Path) -> u64 {
+        std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => size(&e.path()),
+            Ok(t) if t.is_file() => e.metadata().map(|m| m.len()).unwrap_or(0),
+            _ => 0,
+        }).sum()).unwrap_or(0)
+    }
+    size(&data_dir().join("uv-cache"))
 }
 
 #[tauri::command]
@@ -122,6 +164,7 @@ fn stop_children(app: &AppHandle) {
 
 // ---- read-only system telemetry ----
 
+#[cfg(target_os = "macos")]
 fn sh(cmd: &str, args: &[&str]) -> String {
     Command::new(cmd).args(args).output().ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -131,15 +174,26 @@ fn sh(cmd: &str, args: &[&str]) -> String {
 struct Static { chip: String, mem_bytes: u64, os: String }
 fn statics() -> &'static Static {
     static S: OnceLock<Static> = OnceLock::new();
-    S.get_or_init(|| Static {
-        chip: sh("sysctl", &["-n", "machdep.cpu.brand_string"]),
-        mem_bytes: sh("sysctl", &["-n", "hw.memsize"]).parse().unwrap_or(0),
-        os: sh("sw_vers", &["-productVersion"]),
+    S.get_or_init(|| {
+        use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
+        let sys = System::new_with_specifics(RefreshKind::nothing()
+            .with_cpu(CpuRefreshKind::nothing()).with_memory(MemoryRefreshKind::nothing().with_ram()));
+        Static {
+            chip: sys.cpus().first().map(|c| c.brand().trim().to_string()).unwrap_or_default(),
+            mem_bytes: sys.total_memory(),
+            // "macOS 15.5" / "Windows 11 Pro": the UI shows it as is.
+            os: if cfg!(target_os = "macos") {
+                format!("macOS {}", System::os_version().unwrap_or_default())
+            } else {
+                System::long_os_version().unwrap_or_default()
+            },
+        }
     })
 }
 
 /// Chip, memory, power source, thermal state and memory pressure. Used to show health
 /// and to throttle the UI's own animation; never affects the engine.
+#[cfg(target_os = "macos")]
 #[tauri::command]
 fn system_health() -> serde_json::Value {
     use objc2_foundation::{NSProcessInfo, NSProcessInfoThermalState};
@@ -165,13 +219,34 @@ fn system_health() -> serde_json::Value {
     })
 }
 
+/// Elsewhere: chip, memory and memory pressure (from free RAM); thermal and power are unknown.
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn system_health() -> serde_json::Value {
+    use sysinfo::{MemoryRefreshKind, System};
+    let s = statics();
+    let mut sys = System::new();
+    sys.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
+    let avail = sys.available_memory() as f64 / sys.total_memory().max(1) as f64;
+    let pressure = if avail < 0.05 { "critical" } else if avail < 0.15 { "warn" } else { "normal" };
+    serde_json::json!({
+        "chip": s.chip, "mem_total_gb": s.mem_bytes as f64 / (1u64 << 30) as f64, "os": s.os,
+        "thermal": "unknown", "low_power": false,
+        "power": "unknown", "battery_pct": null, "mem_pressure": pressure,
+    })
+}
+
 // ---- tray ----
 
-/// Menu-bar icon: a status dot (filled = contributing) and a throughput sparkline,
-/// rendered as a template image so macOS tints it for light and dark menu bars.
+/// Menu-bar icon: a status dot (filled = contributing) and a throughput sparkline.
+/// On macOS it's a template image (tinted for light and dark menu bars); elsewhere
+/// there's no tinting, so it's drawn white for the usually dark taskbar.
 fn tray_image(samples: &[f32], online: bool) -> Image<'static> {
     let (w, h) = (64u32, 36u32);
     let mut px = vec![0u8; (w * h * 4) as usize];
+    if !cfg!(target_os = "macos") {
+        px.chunks_exact_mut(4).for_each(|p| p[..3].fill(255));
+    }
     let mut plot = |x: u32, y: u32, a: f32| {
         if x < w && y < h {
             let i = ((y * w + x) * 4) as usize;
@@ -220,6 +295,7 @@ fn tray_image(samples: &[f32], online: bool) -> Image<'static> {
 fn tray_update(app: AppHandle, samples: Vec<f32>, online: bool, status: String) -> Result<(), String> {
     if let Some(tray) = app.tray_by_id("main") {
         tray.set_icon(Some(tray_image(&samples, online))).map_err(|e| e.to_string())?;
+        #[cfg(target_os = "macos")]
         let _ = tray.set_icon_as_template(true);
         let _ = tray.set_tooltip(Some(format!("PodTorrent: {status}")));
     }
@@ -242,6 +318,7 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let item = |id: &str, text: &str, acc: Option<&str>| {
         let b = MenuItemBuilder::with_id(id, text);
@@ -298,10 +375,13 @@ fn main() {
         .manage(Engine::default())
         .invoke_handler(tauri::generate_handler![
             engine_log, engine_log_tail, engine_running, start_engine,
-            stop_engine, quit_app, system_health, tray_update, notify
+            stop_engine, quit_app, system_health, tray_update, notify, setup_progress
         ])
         .setup(|app| {
             let handle = app.handle();
+            // Only macOS has an app menu bar; on Windows it would render inside the window,
+            // and the UI handles Ctrl shortcuts itself there.
+            #[cfg(target_os = "macos")]
             app.set_menu(build_menu(handle)?)?;
             let status = MenuItemBuilder::with_id("tray:status", "Not running").enabled(false).build(handle)?;
             let tray_menu = MenuBuilder::new(handle)
@@ -317,7 +397,13 @@ fn main() {
                 .icon_as_template(true)
                 .tooltip("PodTorrent")
                 .menu(&tray_menu)
-                .show_menu_on_left_click(true)
+                // macOS opens tray menus on click; on Windows left-click opens the window, right-click the menu.
+                .show_menu_on_left_click(cfg!(target_os = "macos"))
+                .on_tray_icon_event(|tray, e| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
+                        if !cfg!(target_os = "macos") { show_main(tray.app_handle()); }
+                    }
+                })
                 .build(handle)?;
             app.manage(TrayStatus(status));
             Ok(())
@@ -337,7 +423,7 @@ fn main() {
             }
         })
         .on_window_event(|w, e| {
-            // Closing the window keeps the node contributing in the menu bar; ⌘Q quits.
+            // Closing the window keeps the node contributing from the menu bar / tray; Quit is in the tray menu.
             if let WindowEvent::CloseRequested { api, .. } = e {
                 api.prevent_close();
                 let _ = w.hide();
@@ -348,6 +434,7 @@ fn main() {
         .expect("error building app")
         .run(|app, event| match event {
             RunEvent::Exit => stop_children(app),
+            #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => show_main(app),
             _ => {}
         });

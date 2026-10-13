@@ -19,7 +19,7 @@ export function openServe(pre = {}) {
   const last = h("input.input.num", { type: "number", min: "0", step: "1", "aria-label": "Last layer" });
   const peers = state.swarm.peers.filter(p => p.peer_id !== state.swarm.selfId && p.link?.state === "direct");
   const where = h("select.input", { "aria-label": "Serve on" },
-    h("option", { value: "" }, `This Mac${state.memFree != null ? ` · ${fmt.gb(state.memFree)} free for models` : ""}`),
+    h("option", { value: "" }, `This machine${state.memFree != null ? ` · ${fmt.gb(state.memFree)} free for models` : ""}`),
     ...peers.map(p => {
       const free = p.link?.info?.mem_free_gb ?? p.mem_free_gb;
       return h("option", { value: p.name || p.peer_id }, `${p.name || p.peer_id.slice(0, 8)}${free != null ? ` · ${fmt.gb(free)} free` : ""}`);

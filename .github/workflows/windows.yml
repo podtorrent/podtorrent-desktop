@@ -1,0 +1,62 @@
+# Build the Windows installer (PodTorrent_<version>_x64-setup.exe) on a Windows runner.
+# Unsigned for now: first run on a new PC shows SmartScreen's "More info -> Run anyway".
+name: Windows build
+
+on:
+  push:
+    branches: [main, windows-app]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      # uv.exe is bundled into the installer; it installs Python and CUDA PyTorch on first launch.
+      - uses: astral-sh/setup-uv@v6
+
+      - run: npm ci
+
+      # Not `npm run build`: that bumps the version in tauri.conf.json, which CI shouldn't do.
+      - run: node scripts/bundle-backend.js
+
+      - run: npx tauri build --bundles nsis
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: podtorrent-windows-setup
+          path: app/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+      # On a v* tag, upload the installer to R2 and make it the latest at podtorrent.com/download/windows.
+      - if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: downloads
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm ci
+          node scripts/publish.js windows ../app/src-tauri/target/release/bundle/nsis/*-setup.exe

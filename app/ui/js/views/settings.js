@@ -5,7 +5,7 @@ import { segmented, toggle, button, kbd } from "../ui.js";
 import { setDemo, setDemoPreset } from "../actions.js";
 import { presets } from "../demo.js";
 import { perf } from "../perf.js";
-import { isTauri } from "../native.js";
+import { isTauri, T } from "../native.js";
 
 const row = (title, desc, control) => h("div.list-row", h("div.grow", h("div.t", title), desc ? h("div.d", desc) : null), control);
 
@@ -20,11 +20,13 @@ export default {
     const preset = segmented(Object.entries(presets).map(([k, p]) => ({ value: k, label: p.label, tip: p.hint })), settings.demoPreset, v => setDemoPreset(v), "Demo preset");
     const presetHint = h("div.d");
     const perfLine = h("div.d");
+    const version = h("span", "PodTorrent");
+    T?.app?.getVersion().then(v => text(version, `PodTorrent ${v}`)).catch(() => {});
     root.append(h("div.page.settings",
       h("h1", "Settings"),
       h("section.card", h("div.card-h", h("h2", "Appearance")),
         row("Theme", "Dark-first; light is equally supported.", theme),
-        row("Reduce visual effects", "Static graph, no glow or glass blur. Also follows macOS Reduce Motion.", reduce),
+        row("Reduce visual effects", "Static graph, no glow or glass blur. Also follows the system's reduce-motion setting.", reduce),
         h("div.list-row", h("div.grow", h("div.t", "Animation budget"), perfLine))),
       h("section.card", h("div.card-h", h("h2", "Notifications")),
         row("Swarm notifications", "Peer joined or left, model fully covered, contribution milestones. Only when PodTorrent isn't in front.", notif)),
@@ -36,7 +38,7 @@ export default {
         row("Keyboard shortcuts", "Every primary action has one.", button("Show", { icon: "keyboard", onclick: () => emit("shortcuts") })),
         row("Welcome tour", "The three-step introduction from first launch.", button("Replay", { onclick: () => emit("onboarding") }))),
       h("section.card", h("div.card-h", h("h2", "About")),
-        h("div.card-b.small.muted", "PodTorrent 0.1.0 · ", isTauri ? "Desktop app" : "Browser preview", " · Engine output in ~/.podtorrent/engine.log. Peers connect directly over encrypted QUIC; the local API on 127.0.0.1:8000 is reachable from this Mac only."))));
+        h("div.card-b.small.muted", version, " · ", isTauri ? "Desktop app" : "Browser preview", " · Engine output in ~/.podtorrent/engine.log. Peers connect directly over encrypted QUIC; the local API on 127.0.0.1:8000 is reachable from this machine only."))));
     return {
       update(s) {
         theme.set(settings.theme); reduce.set(settings.reduceEffects); notif.set(settings.notifications);

@@ -129,7 +129,7 @@ Each phase ends in a runnable state and its own commit or PR.
 
 1. **Rendezvous and discovery** (in progress)
    - [x] Write the Worker and Durable Object (`rendezvous/`).
-   - [x] Deploy it to `wss://podtorrent-rendezvous.logesh-063.workers.dev`.
+   - [x] Deploy it to `wss://rendezvous.podtorrent.com`.
    - [x] Write `podtorrent/net/rendezvous.py` (a WebSocket client), the identity keys (`identity.py`) and a STUN client (`stun.py`).
    - [x] The host and worker processes register themselves. Add the `podtorrent swarm [--watch]` CLI.
    - [x] Add the "Online in the swarm" card to the Peers view.
