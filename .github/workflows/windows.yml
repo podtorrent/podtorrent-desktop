@@ -5,6 +5,7 @@ name: Windows build
 on:
   push:
     branches: [main, windows-app]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -48,3 +49,14 @@ jobs:
           name: podtorrent-windows-setup
           path: app/src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
+
+      # On a v* tag, upload the installer to R2 and make it the latest at podtorrent.com/download/windows.
+      - if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: downloads
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm ci
+          node scripts/publish.js windows ../app/src-tauri/target/release/bundle/nsis/*-setup.exe

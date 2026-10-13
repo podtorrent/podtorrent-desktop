@@ -11,3 +11,7 @@ wheels/
 
 # Local model slices, logs and scratch work
 scratch/
+
+# Node / wrangler
+node_modules/
+.wrangler/
