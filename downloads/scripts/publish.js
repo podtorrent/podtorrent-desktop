@@ -22,12 +22,13 @@ const notes = flag("--notes");
 const noLatest = args.includes("--no-latest") && args.splice(args.indexOf("--no-latest"), 1);
 const [cmd, arg] = args;
 
+// Run wrangler's JS entry with node: `npx` is a .cmd shim on Windows that execFileSync can't spawn,
+// and going through a shell instead would split arguments with spaces (e.g. --notes).
+const wranglerBin = path.join(here, "../node_modules/wrangler/bin/wrangler.js");
 const wrangler = (...a) =>
-  // npx is npx.cmd on Windows, which execFileSync can only launch through a shell.
-  execFileSync("npx", ["wrangler", "r2", "object", ...a, "--remote"], {
+  execFileSync(process.execPath, [wranglerBin, "r2", "object", ...a, "--remote"], {
     cwd: path.join(here, ".."),
     stdio: ["ignore", "pipe", "inherit"],
-    shell: process.platform === "win32",
   });
 const getJson = (key) => {
   try {
