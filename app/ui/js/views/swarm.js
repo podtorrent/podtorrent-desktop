@@ -2,6 +2,7 @@
 import { h, text, fmt, reconcile, cls } from "../dom.js";
 import { state, settings, setSetting, swarmStats, models, nodeList, nodeState, nodeStateLabel, on } from "../store.js";
 import { stat, segmented, empty, button, sparkline, skeleton } from "../ui.js";
+import { icon } from "../icons.js";
 import { swarmGraph, PLAYBACK } from "../viz/graph.js";
 import { modelStrip } from "../viz/strip.js";
 import { go, actions, setDemo } from "../actions.js";
@@ -38,6 +39,12 @@ export default {
       h("div.grid-stats", Object.values(S)),
       h("div.card.net-card", h("div.card-h", h("h2", "Network"), h("span.spacer"), layout), stage, h("div.card-f", legend, note)),
       covCard);
+    const ctaBody = h("p");
+    const cta = h("div.card.join-cta",
+      h("div.join-cta-art", icon("swarm")),
+      h("div.col.join-cta-text", h("h2", "You're watching, not in the swarm yet"), ctaBody),
+      button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost }));
+    body.append(cta);
     const emptyBox = h("div.page");
     root.append(body, emptyBox);
     root.addEventListener("peer", e => peerSheet(e.detail));
@@ -99,7 +106,12 @@ export default {
         if (has) emptyKey = "";
         if (!has) { graph.setVisible(false); return renderEmpty(s); }
         const st = swarmStats(s);
-        S.peers.set(st.online, st.total > st.online ? `${st.total - st.online} offline` : st.online === 1 ? "just this machine" : "all reachable");
+        const preview = s.engine.phase === "stopped" && s.source === "live";
+        cta.hidden = !preview;
+        if (preview) text(ctaBody, s.engine.error
+          ? `The engine stopped: ${s.engine.error.split("\n").pop().slice(0, 160)}`
+          : `${st.online} machine${st.online === 1 ? " is" : "s are"} online right now. Start your node to join them: it connects to each peer directly, serves a slice of the model and lets you chat with the whole swarm.`);
+        S.peers.set(st.online, preview ? "online now" : st.total > st.online ? `${st.total - st.online} offline` : st.online === 1 ? "just this machine" : "all reachable");
         S.mem.set(st.pooled || null, st.online ? `across ${st.online} machine${st.online > 1 ? "s" : ""}` : "");
         S.tps.set(st.tps, s.chat.busy || st.tps ? "live, 5 s average" : "idle", s.tps.slice(-40));
         S.ttft.setUnit(st.ttft >= 1000 ? "s" : "ms");

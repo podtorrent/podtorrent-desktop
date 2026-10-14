@@ -226,14 +226,42 @@ export async function logTail(name = "engine.log", lines = 800) {
 const get = (path, ms) => json(HOST + path, {}, ms);
 const live = () => state.source === "live" && state.engine.phase === "running";
 
+// Node stopped: browse Hugging Face straight from the UI (mirrors podtorrent/catalog.py), so
+// models can be found and sized before starting. Downloading still goes through the node.
+const HF = "https://huggingface.co";
+async function hfSearch(q) {
+  const p = new URLSearchParams({ search: q, filter: "mlx", pipeline_tag: "text-generation", sort: "downloads", direction: "-1", limit: "24" });
+  try {
+    const r = await json(`${HF}/api/models?${p}`, {}, 15000);
+    if (!r.ok) return { error: `Hugging Face search failed: HTTP ${r.status}` };
+    return { results: r.body.map(m => ({ repo: m.id, downloads: m.downloads || 0, likes: m.likes || 0, updated: m.lastModified })) };
+  } catch (e) { return { error: `Hugging Face search failed: ${e}` }; }
+}
+async function hfInfo(repo) {
+  if (!repo.includes("/")) return { error: "expected owner/name" };
+  const file = f => json(`${HF}/${repo}/resolve/main/${f}`, {}, 20000);
+  try {
+    const c = await file("config.json");
+    if (!c.ok) return { error: `couldn't read ${repo}: HTTP ${c.status}` };
+    const cfg = "num_hidden_layers" in c.body ? c.body : (c.body.text_config || c.body);
+    const n = cfg.num_hidden_layers;
+    if (!n) return { error: `${repo} has no num_hidden_layers in config.json` };
+    const idx = await file("model.safetensors.index.json").catch(() => null);
+    const total = (idx?.ok && idx.body?.metadata?.total_size) || 0;   // single-file model: size unknown up front
+    return { offline: true, repo, n_layers: n, size_bytes: total, layer_bytes: total ? Math.floor(total / n) : 0,
+      model_type: cfg.model_type || "", mem_total_gb: state.health?.mem_total_gb || 0 };
+  } catch (e) { return { error: `couldn't read ${repo}: ${e}` }; }
+}
+
 /** MLX models on Hugging Face matching `q` (empty: most downloaded). */
 export async function catalogSearch(q) {
-  if (!live()) return { error: "Start your node to search Hugging Face" };
+  if (!live()) return hfSearch(q);
   try { const r = await get(`/api/catalog/search?q=${encodeURIComponent(q)}`, 15000); return r.ok ? r.body : { error: r.body?.error || `HTTP ${r.status}` }; }
   catch (e) { return { error: String(e) }; }
 }
 /** Layers, size and a suggested slice for this Mac. */
 export async function catalogInfo(repo) {
+  if (!live()) return hfInfo(repo);
   try { const r = await get(`/api/catalog/info?repo=${encodeURIComponent(repo)}`, 20000); return r.ok ? r.body : { error: r.body?.error || `HTTP ${r.status}` }; }
   catch (e) { return { error: String(e) }; }
 }

@@ -10,6 +10,7 @@ import { handleMenu } from "./actions.js";
 import { attachExisting } from "./engine.js";
 import { startDemo } from "./demo.js";
 import { loadValuation } from "./valuation.js";
+import { initLobby } from "./lobby.js";
 
 initTheme();
 mountOverlays();
@@ -18,6 +19,7 @@ initShortcuts();
 initNative();
 loadValuation();
 listen("menu", handleMenu);
+initLobby();
 
 setInterval(sample, 1000);
 document.addEventListener("visibilitychange", commit);

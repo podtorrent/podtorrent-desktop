@@ -3,6 +3,9 @@
 // gaps). Each result says whether it's on this Mac and whether the swarm already serves it.
 import { h, text, fmt } from "./dom.js";
 import { state, models, shortModel } from "./store.js";
+import { actions } from "./actions.js";
+
+const GB = 2 ** 30;
 import { button, badge, armedButton, sheet } from "./ui.js";
 import { icon } from "./icons.js";
 import { serveSlice, catalogSearch, catalogInfo, catalogLocal, catalogDelete } from "./engine.js";
@@ -41,6 +44,23 @@ function statusBadges(repo) {
   return out;
 }
 
+/** Node stopped: size and whether it fits this machine's memory; downloading needs the node. */
+function offlineInfo(inf, body, go, s) {
+  const N = inf.n_layers, mem = inf.mem_total_gb, lb = inf.layer_bytes;
+  const fit = lb && mem ? Math.min(N, Math.floor(mem * GB * 0.9 / lb)) : null;
+  const fits = fit == null ? (inf.size_bytes ? "" : "Size unknown until download (single-file model).")
+    : fit >= N ? `All ${N} layers fit in this machine's ${fmt.gb(mem)} memory.`
+    : fit > 0 ? `About ${fit} of ${N} layers fit in this machine's ${fmt.gb(mem)} memory; the swarm serves the rest.`
+    : `Not even one layer fits in this machine's ${fmt.gb(mem)} memory.`;
+  body.replaceChildren(h("div.col", { style: { gap: "4px" } },
+    h("div.small", `${N} layers${inf.size_bytes ? ` · ${fmt.bytes(inf.size_bytes)} in all` : ""}${lb ? ` · about ${fmt.bytes(lb)} per layer` : ""}`),
+    fits ? h("div.small", fits) : null,
+    h("div.small.muted", "Estimated from total memory. Start your node to see free memory, what the swarm already serves, and to download.")));
+  text(go.querySelector("span"), "Start my node");
+  go.disabled = false;
+  go.onclick = () => { s.close(); actions.startHost(); };
+}
+
 /** Sheet: size, what's already here and in the swarm, and an editable suggested slice. */
 export async function openGet(repo) {
   const body = h("div.col", { style: { gap: "14px" } }, h("div.small.muted", "Reading model info from Hugging Face…"));
@@ -48,6 +68,7 @@ export async function openGet(repo) {
   const s = sheet({ title: shortModel(repo), body, footer: [button("Cancel", { onclick: () => s.close() }), go] });
   const inf = await catalogInfo(repo);
   if (inf.error) { body.replaceChildren(h("div.small", { style: { color: "var(--c-gap)" } }, inf.error)); return; }
+  if (inf.offline) return offlineInfo(inf, body, go, s);
 
   const N = inf.n_layers, sug = inf.suggest, l = localOf(repo), m = inf.swarm;
   const lo = h("input.input.num", { type: "number", min: "0", max: String(N - 1), step: "1", value: sug.lo, "aria-label": "First layer" });
@@ -138,8 +159,8 @@ export function catalogSection() {
     finder, mine,
     update(s) {
       const running = s.source === "live" && s.engine.phase === "running";
-      finder.hidden = !running; if (!running) { mine.hidden = true; return; }
-      if (!searched) { searched = true; run(); }
+      if (!searched) { searched = true; run(); }   // browsing works with the node stopped (straight to Hugging Face)
+      if (!running) { mine.hidden = true; return; }
       const k = JSON.stringify(s.slices);   // served slices changed: re-scan the disk
       if (k !== slicesKey) { slicesKey = k; refreshLocal(); }
       const sk = models(s).map(m => m.model + m.state + m.gaps).join("|");

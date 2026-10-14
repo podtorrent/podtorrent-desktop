@@ -39,6 +39,8 @@ export class Swarm extends DurableObject<Env> {
     this.ctx.acceptWebSocket(server, [peerId]);
     const att: Attachment = { peer_id: peerId, observed_ip: req.headers.get("CF-Connecting-IP") ?? "", record: null };
     server.serializeAttachment(att);
+    // Snapshot for the newcomer: lets a not-yet-started app show who's online without registering.
+    server.send(JSON.stringify({ type: "peers", peers: this.records(), ts: Date.now() }));
     await this.ensureSweep();
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -99,9 +101,14 @@ export class Swarm extends DurableObject<Env> {
     if ((await this.ctx.storage.getAlarm()) == null) await this.ctx.storage.setAlarm(Date.now() + SWEEP_MS);
   }
 
+  private records(exclude?: WebSocket): Record<string, unknown>[] {
+    return this.ctx.getWebSockets().filter(ws => ws !== exclude && ws.readyState === WebSocket.OPEN)
+      .map(ws => (ws.deserializeAttachment() as Attachment).record).filter((r): r is Record<string, unknown> => !!r);
+  }
+
   private broadcast(exclude?: WebSocket): void {
     const socks = this.ctx.getWebSockets().filter(ws => ws !== exclude && ws.readyState === WebSocket.OPEN);
-    const peers = socks.map(ws => (ws.deserializeAttachment() as Attachment).record).filter(Boolean);
+    const peers = this.records(exclude);
     const msg = JSON.stringify({ type: "peers", peers, ts: Date.now() });
     for (const ws of socks) { try { ws.send(msg); } catch { /* closing */ } }
   }
