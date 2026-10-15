@@ -267,7 +267,7 @@ export async function catalogInfo(repo) {
 }
 /** Model folders on this Mac, with the layers each one holds. */
 export async function catalogLocal() {
-  if (!live()) return [];
+  if (!live()) return isTauri ? invoke("local_models").catch(() => []) : [];
   try { const r = await get("/api/catalog/local", 15000); return r.ok ? r.body.models : []; }
   catch { return []; }
 }

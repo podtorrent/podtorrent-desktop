@@ -133,6 +133,47 @@ fn setup_progress() -> u64 {
     size(&data_dir().join("uv-cache"))
 }
 
+/// Model folders on this machine without the engine (mirrors podtorrent/catalog.py `local`):
+/// layers held (from safetensors headers), layer count, and disk size.
+#[tauri::command]
+fn local_models() -> Vec<serde_json::Value> {
+    use std::io::Read;
+    fn size(p: &std::path::Path) -> u64 {
+        std::fs::read_dir(p).map(|rd| rd.flatten().map(|e| match e.metadata() {
+            Ok(m) if m.is_dir() => size(&e.path()),
+            Ok(m) => m.len(),
+            _ => 0,
+        }).sum()).unwrap_or(0)
+    }
+    let home = std::env::var_os("PODTORRENT_HOME").map(PathBuf::from).unwrap_or_else(data_dir).join("models");
+    let mut dirs: Vec<_> = std::fs::read_dir(&home).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect()).unwrap_or_default();
+    dirs.sort();
+    dirs.iter().map(|d| {
+        let name = d.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let repo = std::fs::read_to_string(d.join(".repo")).map(|s| s.trim().to_string()).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| name.clone());
+        let n = std::fs::read_to_string(d.join("config.json")).ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|c| c.get("num_hidden_layers").and_then(|v| v.as_u64()));
+        let mut layers = std::collections::BTreeSet::new();
+        for f in std::fs::read_dir(d).into_iter().flatten().flatten().map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "safetensors")) {
+            let Ok(mut fh) = std::fs::File::open(&f) else { continue };
+            let mut len = [0u8; 8];
+            if fh.read_exact(&mut len).is_err() { continue }
+            let mut buf = vec![0u8; u64::from_le_bytes(len).min(1 << 28) as usize];
+            if fh.read_exact(&mut buf).is_err() { continue }
+            let Ok(serde_json::Value::Object(m)) = serde_json::from_slice(&buf) else { continue };
+            layers.extend(m.keys().filter_map(|k| k.strip_prefix("model.layers.")?.split('.').next()?.parse::<u64>().ok()));
+        }
+        let mut runs: Vec<[u64; 2]> = vec![];
+        for x in &layers {
+            match runs.last_mut() { Some(r) if r[1] == *x => r[1] += 1, _ => runs.push([*x, x + 1]) }
+        }
+        serde_json::json!({ "repo": repo, "dir": name, "n_layers": n, "layers": runs,
+            "complete": n.is_some_and(|n| n > 0 && layers.len() as u64 == n), "disk_bytes": size(d), "serving": [] })
+    }).collect()
+}
+
 #[tauri::command]
 fn engine_running(state: State<Engine>) -> bool {
     let mut slot = state.0.lock().unwrap();
@@ -375,7 +416,7 @@ fn main() {
         .manage(Engine::default())
         .invoke_handler(tauri::generate_handler![
             engine_log, engine_log_tail, engine_running, start_engine,
-            stop_engine, quit_app, system_health, tray_update, notify, setup_progress
+            stop_engine, quit_app, system_health, tray_update, notify, setup_progress, local_models
         ])
         .setup(|app| {
             let handle = app.handle();

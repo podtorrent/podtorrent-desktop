@@ -35,16 +35,16 @@ export default {
     const covTitle = h("b"), covVerdict = h("span.badge"), covReason = h("span.small.muted");
     const covCard = h("button.card.cov-card", { type: "button", onclick: () => go("models") },
       h("div.row", h("span.caps", "Model coverage"), covTitle, h("span.spacer"), covVerdict), strip, covReason);
-    const body = h("div.page",
-      h("div.grid-stats", Object.values(S)),
-      h("div.card.net-card", h("div.card-h", h("h2", "Network"), h("span.spacer"), layout), stage, h("div.card-f", legend, note)),
-      covCard);
     const ctaBody = h("p");
-    const cta = h("div.card.join-cta",
+    const cta = h("div.join-cta",
       h("div.join-cta-art", icon("swarm")),
       h("div.col.join-cta-text", h("h2", "You're watching, not in the swarm yet"), ctaBody),
-      button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost }));
-    body.append(cta);
+      button("Start My Node", { variant: "primary", size: "xl", icon: "play", onclick: actions.startHost }));
+    const offBadge = h("span.badge.dot.neutral", "This machine is offline");
+    const body = h("div.page",
+      h("div.grid-stats", Object.values(S)),
+      h("div.card.net-card", h("div.card-h", h("h2", "Network"), offBadge, h("span.spacer"), layout), cta, stage, h("div.card-f", legend, note)),
+      covCard);
     const emptyBox = h("div.page");
     root.append(body, emptyBox);
     root.addEventListener("peer", e => peerSheet(e.detail));
@@ -107,7 +107,7 @@ export default {
         if (!has) { graph.setVisible(false); return renderEmpty(s); }
         const st = swarmStats(s);
         const preview = s.engine.phase === "stopped" && s.source === "live";
-        cta.hidden = !preview;
+        cta.hidden = !preview; offBadge.hidden = !preview;
         if (preview) text(ctaBody, s.engine.error
           ? `The engine stopped: ${s.engine.error.split("\n").pop().slice(0, 160)}`
           : `${st.online} machine${st.online === 1 ? " is" : "s are"} online right now. Start your node to join them: it connects to each peer directly, serves a slice of the model and lets you chat with the whole swarm.`);

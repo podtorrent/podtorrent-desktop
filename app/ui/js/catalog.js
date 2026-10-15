@@ -140,7 +140,7 @@ export function catalogSection() {
   function renderResults() {
     results.replaceChildren(...items.map(it => row(it.repo, `${fmt.compact(it.downloads)} downloads · ${fmt.compact(it.likes)} likes`,
       statusBadges(it.repo),
-      [button(localOf(it.repo)?.complete ? "Serve…" : "Get…", { size: "sm", icon: "download", onclick: () => openGet(it.repo) })])));
+      [button(localOf(it.repo)?.complete ? "Serve…" : "Get…", { icon: "download", size: "cat-get", onclick: () => openGet(it.repo) })])));
   }
   function renderLocal() {
     text(mine.querySelector(".disk"), local.length ? `${fmt.bytes(local.reduce((a, m) => a + m.disk_bytes, 0))} on disk` : "");
@@ -149,18 +149,21 @@ export function catalogSection() {
       `${m.complete ? "Every layer" : m.layers.length ? "Layers " + rangesText(m.layers) : "No layers yet"}${m.n_layers ? ` of ${m.n_layers}` : ""} · ${fmt.bytes(m.disk_bytes)}`,
       [m.serving.length ? badge(`Serving ${rangesText(m.serving)}`, "serving", { dot: true }) : badge("Not serving", "neutral")],
       [m.serving.length || !m.repo.includes("/") ? null : button("Serve…", { size: "sm", icon: "play", onclick: () => openGet(m.repo) }),
-        armedButton("Delete", "Delete files?", async () => { if (await catalogDelete(m)) refreshLocal(); }, { size: "sm" })].filter(Boolean),
+        running && armedButton("Delete", "Delete files?", async () => { if (await catalogDelete(m)) refreshLocal(); }, { size: "sm" })].filter(Boolean),
       layerBar(m.n_layers, m.layers, m.serving))));
   }
   onLocal = () => { renderLocal(); renderResults(); };
 
-  let slicesKey = null, swarmKey = null;
+  let slicesKey = null, swarmKey = null, running = null;
   return {
     finder, mine,
     update(s) {
-      const running = s.source === "live" && s.engine.phase === "running";
+      const was = running;
+      running = s.source === "live" && s.engine.phase === "running";
       if (!searched) { searched = true; run(); }   // browsing works with the node stopped (straight to Hugging Face)
-      if (!running) { mine.hidden = true; return; }
+      if (s.source !== "live") { mine.hidden = true; return; }
+      if (running !== was) { slicesKey = null; if (!running) refreshLocal(); }   // stopped: read the disk natively
+      if (!running) return;
       const k = JSON.stringify(s.slices);   // served slices changed: re-scan the disk
       if (k !== slicesKey) { slicesKey = k; refreshLocal(); }
       const sk = models(s).map(m => m.model + m.state + m.gaps).join("|");
