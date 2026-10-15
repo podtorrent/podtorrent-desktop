@@ -36,7 +36,7 @@
   --fg-2: #a3a6af;
   --fg-3: #737680;
   --fg-4: #50535c;
-  --fg-on-accent: #fff;
+  --fg-on-accent: #04252b;
 
   --line-1: rgba(255, 255, 255, 0.07);
   --line-2: rgba(255, 255, 255, 0.12);
@@ -51,7 +51,7 @@
   --c-you: #b18cff;
   --c-net: #8d97ad;
 
-  --accent: #0a84ff;
+  --accent: #3fe8ff;
 
   /* type */
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
@@ -99,9 +99,6 @@
   }
 }
 
-@supports (color: -apple-system-control-accent) {
-  :root { --accent: -apple-system-control-accent; }
-}
 
 /* light: js/theme.js resolves System/Light/Dark into data-resolved-theme */
 :root[data-resolved-theme="light"] {

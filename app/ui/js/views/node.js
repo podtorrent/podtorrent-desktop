@@ -31,9 +31,18 @@ export default {
   mount(root) {
     // ---- setup (no engine) ----
     const startBtn = button("Start My Node", { variant: "primary", size: "lg", icon: "play", onclick: () => startHost() });
+    // ---- stopped: the full dashboard below, led by a Start band ----
+    const offBtn = button("Start My Node", { variant: "primary", size: "xl", icon: "play", onclick: () => startHost() });
+    const offErr = h("div.next.err");
+    const offline = h("div.col", offErr,
+      h("section.card.join-cta",
+        h("div.join-cta-art", icon("node")),
+        h("div.col.join-cta-text", h("h2", "This machine isn't contributing yet"),
+          h("p", "Your node is stopped. Start it to join the global swarm and serve layers. Everything below comes from this machine and your past sessions.")),
+        offBtn));
     const startCard = h("section.card.role-card",
       h("div.row", h("div.role-ic", icon("node")), h("div.grow", h("h2", "This machine as a peer"), h("div.small.muted", "Joins the global swarm, connects directly to the other machines, and serves whichever layers you choose, of any model. Only those layers are downloaded."))),
-      h("div.col", { style: { gap: "8px", marginTop: "14px" } }, startBtn));
+      h("div.row", { style: { marginTop: "14px" } }, startBtn));
     const machine = h("div.small.muted");
     const errBox = h("div.next.err");
     const setup = h("div.page",
@@ -57,9 +66,10 @@ export default {
     const hv = { layers: h("b.num"), today: h("b.num"), all: h("b.num"), req: h("b.num"), up: h("b.num") };
     const sliceList = h("div.col.slice-list");
     const freeNote = h("span.small.faint");
+    const serveBtn = button("Serve layers…", { icon: "download", size: "sm", onclick: () => openServe() });
     const slicesCard = h("section.card",
       h("div.card-h", h("h2", "Slices this machine serves"), h("span.spacer"), freeNote,
-        button("Serve layers…", { icon: "download", size: "sm", onclick: () => openServe() })),
+        serveBtn),
       h("div.card-b", sliceList));
     const tk = { today: ticker(hv.today, v => fmt.compact(v)), all: ticker(hv.all, v => fmt.compact(v)), req: ticker(hv.req, v => fmt.int(v)) };
     const hero = h("section.card.hero",
@@ -90,7 +100,7 @@ export default {
     const tpsChart = areaChart({ color: "you", labels: ["2 min ago", "now"] });
     const dayChart = barChart({ color: "you" });
     const dayNote = h("span.small.faint");
-    const running = h("div.page", hero, slicesCard,
+    const running = h("div.page", offline, hero, slicesCard,
       h("div.tiles", Object.values(tiles)),
       h("div.two.contrib-row", contrib, payback),
       h("div.two",
@@ -103,9 +113,13 @@ export default {
     const PH = { checking: ["Checking", "degraded"], downloading: ["Downloading", "degraded"], loading: ["Loading", "degraded"], ready: ["Serving", "serving"], error: ["Failed", "gap"] };
     function paintSlices(s) {
       text(freeNote, s.memFree != null ? `${fmt.gb(s.memFree)} free for models` : "");
-      const k = JSON.stringify(s.slices.map(x => [x.model, x.lo, x.hi, x.loaded, x.phase, Math.round(100 * (x.done || 0) / (x.total || 1))]));
+      const k = (sliceList.dataset.off || "") + JSON.stringify(s.slices.map(x => [x.model, x.lo, x.hi, x.loaded, x.phase, Math.round(100 * (x.done || 0) / (x.total || 1))]));
       if (sliceList.dataset.k === k) return;
       sliceList.dataset.k = k;
+      if (!s.slices.length && sliceList.dataset.off) {
+        sliceList.replaceChildren(h("div.small.muted", "Nothing is served while your node is stopped. Start it to serve layers; models you downloaded stay on disk (see Models)."));
+        return;
+      }
       if (!s.slices.length) {
         sliceList.replaceChildren(h("div.small.muted", "This machine serves nothing yet. It can still chat with any model the swarm covers. Serve some layers to contribute: open Models to see which layers are missing."));
         return;
@@ -126,9 +140,17 @@ export default {
     return {
       update(s) {
         const phase = s.engine.phase;
-        const show = s.source === "demo" || phase === "running" || phase === "unreachable" ? "run" : phase === "starting" ? "start" : "setup";
+        const off = s.source === "live" && !["running", "unreachable", "starting"].includes(phase);
+        const show = phase === "starting" && s.source !== "demo" ? "start" : "run";
         setup.hidden = show !== "setup"; starting.hidden = show !== "start"; running.hidden = show !== "run";
         const hl = s.health;
+        offline.hidden = !off;
+        offBtn.disabled = !isTauri;
+        offErr.hidden = !(off && s.engine.error);
+        if (off && s.engine.error) offErr.replaceChildren(icon("alert"), h("div.grow", h("b", "The engine stopped"), h("div.mono.small", s.engine.error.split("\n").slice(-3).join("\n"))));
+        running.querySelector(".hero-r").hidden = off;
+        serveBtn.disabled = off;
+        if (off) sliceList.dataset.off = "1"; else delete sliceList.dataset.off;
         if (show === "setup") {
           startBtn.disabled = !isTauri;
           text(machine, hl ? `This machine: ${hl.chip || "Unknown chip"} · ${fmt.gb(hl.mem_total_gb)} memory · ${hl.os}. Half of Qwen3-30B-A3B (4-bit) needs about 8 GB plus KV cache; serve fewer layers on a smaller machine.` : "");
@@ -149,10 +171,10 @@ export default {
         text(gv, m ? fmt.gb(m.active_gb) : "–");
         text(gs, m ? `of ${fmt.gb(m.total_gb)} in use` : "");
         text(chipEl, me?.chip || hl?.chip || "This machine");
-        text(running.querySelector(".hero-sub"), [me?.name, s.source === "demo" ? "Demo Mode" : "Peer in the global swarm"].filter(Boolean).join(" · "));
+        text(running.querySelector(".hero-sub"), [me?.name, s.source === "demo" ? "Demo Mode" : off ? "Not in the swarm" : "Peer in the global swarm"].filter(Boolean).join(" · "));
         setBadge(roleB, "Peer", "you");
         const st = me ? nodeState(me, s) : "idle";
-        setBadge(stateB, phase === "unreachable" ? "Not responding" : me ? nodeStateLabel(me, s) : "Starting", phase === "unreachable" ? "gap" : st === "idle" ? "neutral" : st, { dot: true, pulse: st === "active" });
+        if (off) setBadge(stateB, "Offline", "neutral", { dot: true }); else setBadge(stateB, phase === "unreachable" ? "Not responding" : me ? nodeStateLabel(me, s) : "Starting", phase === "unreachable" ? "gap" : st === "idle" ? "neutral" : st, { dot: true, pulse: st === "active" });
         const loaded = s.slices.filter(x => x.loaded);
         text(hv.layers, loaded.length ? String(loaded.reduce((a, x) => a + x.hi - x.lo, 0)) : "None yet");
         paintSlices(s);
@@ -161,7 +183,7 @@ export default {
         tk.today.set(days[day] || 0);
         tk.all.set(Object.values(days).reduce((a, b) => a + b, 0));
         tk.req.set(me?.stats?.requests ?? 0);
-        text(hv.up, fmt.dur(me?.uptime_s ?? Date.now() / 1000 - (me?.firstSeen || Date.now() / 1000)));
+        text(hv.up, off ? "–" : fmt.dur(me?.uptime_s ?? Date.now() / 1000 - (me?.firstSeen || Date.now() / 1000)));
         // health
         if (hl) {
           const p = PRESS[hl.mem_pressure] || PRESS.unknown, t = THERM[hl.thermal] || THERM.unknown;

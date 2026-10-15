@@ -112,7 +112,7 @@ export default {
             emptyKey = k;
             emptyBox.replaceChildren(s.engine.phase === "running"
               ? empty({ icon: "models", title: "No models in the swarm yet", body: "Nobody online serves a model yet. Serve some layers on this machine to start one.", actions: [button("Serve layers…", { variant: "primary", icon: "download", onclick: () => openServe() })] })
-              : empty({ icon: "models", title: "No models yet", body: "Start your node to see the models the swarm serves, and to serve layers yourself.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
+              : empty({ icon: "models", title: "Node is stopped", body: "You can still search Hugging Face below and check what fits this machine. Start your node to see what the swarm serves and to download or serve layers.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
           }
           return;
         }

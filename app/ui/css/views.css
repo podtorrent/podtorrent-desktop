@@ -172,7 +172,7 @@ canvas.graph { position: absolute; inset: 0; width: 100%; height: 100%; display:
 .composer.disabled { opacity: .5; pointer-events: none; }
 .composer-input { flex: 1; border: 0; background: none; resize: none; font-size: 14px; line-height: 1.45; padding: 5px 0; max-height: 200px; outline: none; }
 .composer-input::placeholder { color: var(--fg-3); }
-.send-btn { width: 30px; height: 30px; flex: none; border: 0; border-radius: 9px; display: grid; place-items: center; color: #fff; background: var(--accent); transition: transform var(--d-fast) var(--spring-snappy), opacity var(--d-fast); }
+.send-btn { width: 30px; height: 30px; flex: none; border: 0; border-radius: 9px; display: grid; place-items: center; color: var(--fg-on-accent); background: var(--accent); transition: transform var(--d-fast) var(--spring-snappy), opacity var(--d-fast); }
 .send-btn:active { transform: scale(.92); }
 .send-btn:disabled { opacity: .35; }
 .send-btn.stop { background: var(--n-6); }
@@ -310,13 +310,16 @@ canvas.chart { width: 100%; height: 180px; display: block; }
 .c-value > b.c-val { color: var(--c-you); font-size: var(--t-5); }
 .c-basis { margin-top: var(--s-4); }
 .c-foot { margin-top: var(--s-3); }
-.payback .pb-body { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--s-5); align-items: start; }
+.payback { display: flex; flex-direction: column; }
+.payback .pb-body { flex: 1; display: flex; flex-direction: column; align-items: stretch; gap: var(--s-5); }
+.payback .gauge-wrap { width: 184px; height: 184px; margin: auto; flex-shrink: 0; }
+.payback .gauge-c b { font-size: 28px; }
+.pb-r { display: flex; flex-direction: column; }
 .payback-ring .g-fill { stroke: var(--c-serving); }
 .pb-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); margin-bottom: var(--s-3); }
 .pb-lines { display: flex; flex-direction: column; gap: 6px; }
 .pb-done { color: var(--c-serving); font-weight: 600; }
 @media (max-width: 720px) {
-  .payback .pb-body { grid-template-columns: 1fr; justify-items: center; }
   .pb-inputs { grid-template-columns: 1fr; }
 }
 .chat-inuse { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 6px var(--s-5); color: var(--fg-2); }
@@ -377,3 +380,23 @@ canvas.chart { width: 100%; height: 180px; display: block; }
 .sw-det i.srv { background: var(--c-serving); } .sw-det i.load { background: var(--c-degraded); }
 .sw-det i.plan { background: color-mix(in srgb, var(--fg-1) 30%, transparent); } .sw-det i.gap { background: var(--c-gap); }
 .cat-card > .lbar-key { padding-top: var(--s-2); border-top: 1px solid var(--line-1); }
+
+/* Swarm lobby: watching the registry before this machine's node runs */
+.join-cta { display: flex; align-items: center; gap: var(--s-4); padding: var(--s-5) var(--s-6);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  background: linear-gradient(120deg, color-mix(in srgb, var(--accent) 18%, var(--bg-elev-1, transparent)), color-mix(in srgb, var(--accent) 6%, var(--bg-elev-1, transparent)));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent), var(--elev-card);
+  animation: ctaglow 3.2s ease-in-out infinite; }
+.join-cta-art { flex: none; width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; color: var(--fg-on-accent); background: var(--accent); }
+.join-cta-art svg { width: 24px; height: 24px; }
+.join-cta-text { flex: 1; min-width: 0; gap: 4px; }
+.join-cta-text h2 { color: var(--fg-1); }
+.join-cta-text p { color: var(--fg-2); font-size: var(--t-3); max-width: 640px; }
+.join-cta .btn { flex: none; }
+/* inside the Network card: a highlighted band between the header and the graph */
+.net-card .join-cta { margin: 0 var(--s-4) var(--s-3); border-radius: var(--r-md); }
+.join-cta .btn.xl { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, transparent), 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+@keyframes ctaglow { 50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 16%, transparent), var(--elev-card); } }
+@media (max-width: 640px) { .join-cta { flex-direction: column; align-items: flex-start; } }
+@media (prefers-reduced-motion: reduce) { .join-cta { animation: none; } }
+.btn.cat-get { height: 32px; padding: 0 14px; min-width: 84px; }

@@ -58,7 +58,10 @@ export function swarmGraph() {
     const a = state.layerMap?.assignments;
     if (!a || list.length < 2) {
       const host = list.find(n => n.role === "host");
-      return host ? list.filter(n => n !== host).map(n => [host.name, n.name, true]) : [];
+      if (host) return list.filter(n => n !== host).map(n => [host.name, n.name, true]);
+      // Lobby preview: link peers whose slices of a model meet end to start (the pipeline they'd form).
+      const sl = list.flatMap(n => (n.slices || []).map(x => ({ ...x, node: n.name })));
+      return sl.flatMap(x => sl.filter(y => y.model === x.model && y.lo === x.hi && y.node !== x.node).map(y => [x.node, y.node]));
     }
     const out = [], seen = new Set();
     const sorted = [...a].sort((x, y) => x.lo - y.lo || x.hi - y.hi);
