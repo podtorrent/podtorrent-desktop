@@ -15,7 +15,7 @@ Version 1 is **text to video**. **Image to video** comes later. Version 1 is sha
 | Split | **Split by component, not by layer.** The video transformer stays whole on one machine. The two cost rows below explain why. |
 | Mac role | The **prompt encoder** (Qwen3-VL-32B, 4-bit, about 18 GB) runs as a layer chain across the Macs, the way the Qwen3 chain works today. Later phases add video decoding and post-processing on the Macs. |
 | Windows role | The **video transformer** (about 20B weights once the precomputable part is removed), FP8 or 4-bit, with some layers offloaded to system RAM. It also holds the video and audio decoders. |
-| Network cost of a layer split | Splitting the video transformer by layer sends about 300 MB per split point per step, and about 30 GB per clip. That's hours over home upload speeds, so it's rejected. |
+| Network cost of a layer split | Splitting the video transformer by layer sends about 300 MB per split point per step, and about 15 GB per clip (one pass per step, 50 steps). That's still hours over home upload speeds, so it's rejected. |
 | Network cost of the component split | The encoder output (a few MB) goes once per prompt to the Windows PC. The finished MP4 goes back to whoever asked for it. |
 | Code location | **Same repo and app, not a fork.** The P2P stack, rendezvous, catalog, Tauri shell and Swarm UI are reused. The new code goes in `podtorrent/video/`. |
 | Shared inference | Every machine still takes part. A video job always runs on the Mac encoder chain and then on the Windows video machine. |
@@ -32,7 +32,7 @@ Version 1 is **text to video**. **Image to video** comes later. Version 1 is sha
 - **Encoder:** the model that turns the prompt (and later images) into embeddings, the numbers the video model reads.
 - **Video transformer:** the 33B model in H3 that generates the video. It runs 30–50 steps per clip, starting from noise.
 - **VAE:** the decoder that turns the video transformer's compressed output into real frames (H3-VisualVAE) and audio (H3-AudioVAE). Its encoder half turns an image into a starting frame.
-- **Two-pass steps:** most setups run each step twice, once with the prompt and once without, and blend the results. This makes the prompt matter more.
+- **Two-pass steps:** many video models run each step twice, once with the prompt and once without. H3's released checkpoints are *CFG-distilled*, so they run each step once.
 
 ## Architecture
 
@@ -72,9 +72,9 @@ Each phase ends in something we can demonstrate. Don't start a phase until the p
 Prove the Windows PC can render H3 at all, and settle the unknowns.
 
 - [ ] Accept the licence on Hugging Face and set an `HF_TOKEN` on all machines.
-- [ ] On Windows, standalone diffusers script: text to video at 480p, 4 s. Pick the best community quantized version that fits (FP8 first, then 4-bit), with `enable_model_cpu_offload` and the AdaLN cache.
+- [ ] On Windows, run `spikes/h3_phase0/run_matrix.bat` (standalone diffusers script: text to video at 480p, 4 s. Pick the best community quantized version that fits (FP8 first, then 4-bit), with `enable_model_cpu_offload` and the AdaLN cache). It writes `report.json` per run.
 - [ ] Measure peak GPU memory, peak system RAM, seconds per step and total time. Repeat at 720p.
-- [ ] Find out whether **text-to-video and image-to-video (FL2VA) use the same transformer checkpoint**. If they don't, plan for swapping weights or keeping two copies on disk.
+- [x] ~~Find out whether text-to-video and image-to-video share a checkpoint.~~ **They do:** the model card says text-to-video and first/last-frame-to-video both run through `FL2VA/`. Only reference-image video (`Ref2VA/`) is a separate checkpoint.
 - [ ] Record H3's internal width, its token counts at each resolution and the encoder output shape. Use these to replace the estimates in this doc.
 - [ ] Confirm the encoder output can be computed separately and passed in (`prompt_embeds`, or the equivalent argument).
 
@@ -132,14 +132,14 @@ Prove the Windows PC can render H3 at all, and settle the unknowns.
 - [ ] Port Qwen3-VL's vision tower and its image preprocessing to the encoder (MLX and PyTorch), with a parity test.
 - [ ] Image parts in `VideoJob.inputs`, sent by blob transfer.
 - [ ] The VAE encoder half on the video machine turns the image into the starting frame (FL2VA).
-- [ ] Load the image-to-video checkpoint, or swap to it, depending on what phase 0 found.
+- [ ] No checkpoint swap needed for first-frame video (same `FL2VA/` weights). Reference-image video (`Ref2VA/`) would need a second checkpoint; out of scope for now.
 - [ ] UI: drop an image onto the prompt box.
 
 **Exit:** an image plus a prompt produces a clip that starts from that image.
 
-### Phase 7 (optional): Splitting the two passes per step
+### Phase 7: dropped
 
-Only once a peer has enough memory for a second copy of the video model. That peer runs the without-prompt pass and swaps a few MB per step with the main video machine. Not useful with 16 GB Macs.
+The two-pass split was the one way to share the video model's steps between machines. H3 runs one pass per step (CFG-distilled), so there's nothing to split.
 
 ## Risks and open items
 
