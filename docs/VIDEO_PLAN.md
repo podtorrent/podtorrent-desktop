@@ -1,6 +1,6 @@
 # PodTorrent video: MiniMax-H3 implementation plan
 
-Status: agreed, starting phase 0 · branch `video-gen-h3` · updated 2026-10-15
+Status: building release 1 (Windows video, local only) · branch `video-gen-h3` · updated 2026-10-15
 
 ## Goal
 
@@ -14,7 +14,7 @@ Version 1 is **text to video**. **Image to video** comes later. Version 1 is sha
 |---|---|
 | Split | **Split by component, not by layer.** The video transformer stays whole on one machine. The two cost rows below explain why. |
 | Mac role | The **prompt encoder** (Qwen3-VL-32B, 4-bit, about 18 GB) runs as a layer chain across the Macs, the way the Qwen3 chain works today. Later phases add video decoding and post-processing on the Macs. |
-| Windows role | The **video transformer** (about 20B weights once the precomputable part is removed), FP8 or 4-bit, with some layers offloaded to system RAM. It also holds the video and audio decoders. |
+| Windows role | The **video transformer** (about 20B weights once the precomputable part is removed), 8-bit, with ComfyUI offloading to system RAM. It also holds the video and audio decoders. |
 | Network cost of a layer split | Splitting the video transformer by layer sends about 300 MB per split point per step, and about 15 GB per clip (one pass per step, 50 steps). That's still hours over home upload speeds, so it's rejected. |
 | Network cost of the component split | The encoder output (a few MB) goes once per prompt to the Windows PC. The finished MP4 goes back to whoever asked for it. |
 | Code location | **Same repo and app, not a fork.** The P2P stack, rendezvous, catalog, Tauri shell and Swarm UI are reused. The new code goes in `podtorrent/video/`. |
@@ -26,6 +26,23 @@ Version 1 is **text to video**. **Image to video** comes later. Version 1 is sha
 | Weights | Community quantized versions are acceptable. We don't quantize ourselves unless phase 0 finds them unusable. |
 | Licence | Our users are outside the US, EU, UK and Korea, so no access application is needed. Users still accept the licence on Hugging Face. |
 | Video machine | Any peer that passes the capability check can take the video role (at least 12 GB of GPU memory and enough system RAM). It isn't tied to one PC. |
+
+## Revision (2026-10-16): community results change the order
+
+Community reports show H3 already runs on 12 GB NVIDIA cards (see [performance guide](https://github.com/wildminder/awesome-minimax-H3/blob/main/guides/minimax-h3-performance.md)): an RTX 3060 12 GB with 64 GB RAM makes a 5 s 480p clip in 3–5 minutes with a Turbo LoRA, and a 4070 12 GB peaks at about 10.6 GB of GPU memory. So:
+
+- **Phase 0 is folded into release 1.** The standalone spike in `spikes/h3_phase0/` stays as a fallback. Release 1 is the real feature in the Windows app, and each job writes the same measurements (`report.json`) that phase 0 wanted.
+- **Runtime: headless ComfyUI, not plain diffusers.** Every proven 12 GB setup uses ComfyUI's built-in H3 nodes (`comfy_extras/nodes_minimax_h3.py`). The engine installs a pinned ComfyUI (v0.41.0) in its own venv under `~/.podtorrent/video/`, starts it on `127.0.0.1:8188`, and sends it the official *Image to Video (MiniMax H3)* blueprint graph in text-to-video mode.
+- **Weights (from `Comfy-Org/MiniMax-H3`, public, about 44 GB):** `minimax_h3_fl2va_pruned_int8_convrot` (21.0 GB), text encoder `qwen3vl_32b_minimax_h3_nvfp4_awq` (15.7 GB), `minimax_h3_fl2v_turbo_8step_v1.0` LoRA (2.0 GB), video VAE fp16 (5.2 GB), audio VAE fp32 (0.6 GB). No Hugging Face account or token needed.
+- **Macs can render whole clips too.** MLX and Metal engines ([h3.c](https://github.com/antirez/h3.c), [minimax-h3-mac](https://github.com/Argus-AiTeam/minimax-h3-mac)) stream the video model from the SSD, cutting its memory to about 2 GB. A 16 GB M5 Air reportedly makes a 3.75 s clip in about 15 minutes; an M1 will be much slower (estimate: an hour or more). This becomes a throughput mode in phase 5: each Mac renders its own clips in the background. It doesn't change the decision against layer splitting.
+
+### Release order
+
+| Release | Contents |
+|---|---|
+| 1 | Video view + headless ComfyUI worker on any NVIDIA machine (≥ 12 GB GPU memory). Local only. Diagnostics per job. |
+| 2 | Phases 1–2: encoder chain on the Macs, job protocol, blob transfer. |
+| 3 | Phase 4: roles, routing, Swarm view. Then phase 5 (Mac whole-clip mode, decoding on Macs) and phase 6 (images). |
 
 ## Glossary
 
@@ -67,7 +84,7 @@ Version 1 is **text to video**. **Image to video** comes later. Version 1 is sha
 
 Each phase ends in something we can demonstrate. Don't start a phase until the previous one's exit check passes.
 
-### Phase 0: Feasibility spike (no PodTorrent code)
+### Phase 0: Feasibility spike (folded into release 1; see Revision)
 
 Prove the Windows PC can render H3 at all, and settle the unknowns.
 

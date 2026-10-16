@@ -11,7 +11,7 @@ import { peerSheet } from "./views/peers.js";
 function commands() {
   const live = state.source === "live", running = state.engine.phase !== "stopped";
   const c = [
-    ...[["swarm", "Swarm", "⌘1"], ["models", "Models", "⌘2"], ["playground", "Playground", "⌘3"], ["node", "My Node", "⌘4"], ["peers", "Peers", "⌘5"], ["activity", "Activity", "⌘6"], ["settings", "Settings", "⌘,"]]
+    ...[["swarm", "Swarm", "⌘1"], ["models", "Models", "⌘2"], ["playground", "Playground", "⌘3"], ["node", "My Node", "⌘4"], ["peers", "Peers", "⌘5"], ["activity", "Activity", "⌘6"], ["video", "Video", "⌘7"], ["settings", "Settings", "⌘,"]]
       .map(([id, t, k]) => ({ group: "Go to", title: t, icon: id === "node" ? "node" : id, kbd: k, run: () => go(id) })),
     { group: "Node", title: "Start My Node", icon: "play", kbd: "⇧⌘H", run: actions.startHost, hide: !live || running },
     { group: "Node", title: "Load model", icon: "download", kbd: "⇧⌘L", run: actions.load, hide: state.ready || (live && !running) },

@@ -33,6 +33,8 @@ from .net.rendezvous import SwarmClient
 from .route import Hop, Offer, coverage, plan
 from .backend import Shard
 from .slicer import download_slice, estimate_slice_bytes, fetch_meta
+from .video import api as video_api
+from .video.service import VideoService
 
 STATIC = Path(__file__).parent / "static"
 MLX = threading.Lock()   # one computation at a time in this process (MLX or PyTorch)
@@ -989,6 +991,7 @@ class PeerApp:
             "served": s.served, "tokens": s.tokens, "active_requests": len(s.caches)})
 
     async def shutdown(self, _):
+        self.video.stop()  # os._exit would orphan ComfyUI
         asyncio.get_running_loop().call_later(0.3, os._exit, 0)
         return web.json_response({"ok": True})
 
@@ -1006,6 +1009,7 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
              open_browser: bool = False):
     """`serve`: slices to load at start as (model or None for `repo`, lo, hi); default: the saved config."""
     app_state = PeerApp(repo, Path(model_dir), n_layers)
+    app_state.video = VideoService(app_state.emit, NAME)
     if serve:
         serve = [(m or repo, lo, hi) for m, lo, hi in serve]
     else:
@@ -1021,6 +1025,8 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
                     web.post("/api/unserve", app_state.unserve),
                     web.post("/api/chat", app_state.chat), web.post("/api/complete", app_state.complete),
                     web.post("/api/shutdown", app_state.shutdown)])
+    app.add_routes(video_api.routes(app_state.video))
+    app.on_cleanup.append(lambda _: asyncio.to_thread(app_state.video.stop))
 
     def load_all():  # one at a time: each slice's memory check sees the ones before it
         for m, lo, hi in serve:

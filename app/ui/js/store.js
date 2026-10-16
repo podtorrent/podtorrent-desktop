@@ -43,6 +43,7 @@ function blank() {
     feed: [],
     health: null,
     swarm: { status: "offline", selfId: "", peers: [] }, // global registry: every PodTorrent Mac online
+    video: { status: null, setup: null, jobs: {} }, // MiniMax-H3 on this machine: capability, setup, jobs by id
     booted: false,
   };
 }
@@ -163,6 +164,24 @@ export function applyEvent(ev) {
       if (!state.ready) { feed("covered", "Model fully covered", "Every layer has a peer. The Playground is unlocked.", "success", ts); emit("signal", { kind: "ready" }); }
       state.ready = true; state.loadRequested = false; state.lastError = "";
       break;
+    case "video_setup": {
+      const was = state.video.setup?.phase;
+      state.video.setup = ev;
+      if (state.video.status) Object.assign(state.video.status, { installed: ev.installed, models_ready: ev.models_ready });
+      if (ev.phase === "ready" && was && was !== "ready") feed("download", "Video is ready on this machine", "", "success", ts);
+      if (ev.phase === "error" && was !== "error") feed("error", "Video setup stopped", ev.message, "error", ts);
+      break;
+    }
+    case "video_job": {
+      const was = state.video.jobs[ev.id]?.state;
+      const { type, ts: _t, ...job } = ev;
+      state.video.jobs[ev.id] = job;
+      if (was && was !== job.state) {
+        if (job.state === "done") { feed("generate", "Video finished", job.prompt.slice(0, 80), "success", ts); emit("signal", { kind: "video", id: job.id }); }
+        if (job.state === "failed") feed("error", "Video failed", job.error, "error", ts);
+      }
+      break;
+    }
     case "chat_session":
       state.chat.session = ev.busy ? { started: ev.started } : null;
       break;

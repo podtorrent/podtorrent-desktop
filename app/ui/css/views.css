@@ -400,3 +400,14 @@ canvas.chart { width: 100%; height: 180px; display: block; }
 @media (max-width: 640px) { .join-cta { flex-direction: column; align-items: flex-start; } }
 @media (prefers-reduced-motion: reduce) { .join-cta { animation: none; } }
 .btn.cat-get { height: 32px; padding: 0 14px; min-width: 84px; }
+
+/* ---- Video ---- */
+.video { max-width: 920px; }
+.video-prompt { min-height: 96px; resize: vertical; line-height: 1.45; padding: 10px 12px; }
+.video .suggest { grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: none; margin-top: 0; }
+.video-title { font-weight: 500; min-width: 0; }
+.video-media video { display: block; width: 100%; max-height: 520px; border-radius: var(--r-md); background: #000; }
+.video-setup p { color: var(--fg-2); max-width: 640px; }
+.gap-text { color: var(--c-gap); }
+.gap-text:empty { display: none; }
+@media (max-width: 760px) { .video .suggest { grid-template-columns: 1fr; } }

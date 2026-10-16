@@ -9,15 +9,17 @@ import { presets } from "./demo.js";
 import swarm from "./views/swarm.js";
 import modelsView from "./views/models.js";
 import playground from "./views/playground.js";
+import video from "./views/video.js";
 import node from "./views/node.js";
 import peers from "./views/peers.js";
 import activity, { unseen } from "./views/activity.js";
 import settingsView from "./views/settings.js";
 
-const VIEWS = { swarm, models: modelsView, playground, node, peers, activity, settings: settingsView };
+const VIEWS = { swarm, models: modelsView, playground, video, node, peers, activity, settings: settingsView };
 const NAV = [
   ["swarm", "Swarm", "swarm", "⌘1"], ["models", "Models", "models", "⌘2"], ["playground", "Playground", "playground", "⌘3"],
   ["node", "My Node", "node", "⌘4"], ["peers", "Peers", "peers", "⌘5"], ["activity", "Activity", "activity", "⌘6"],
+  ["video", "Video", "video", "⌘7"],
 ];
 
 export function mountShell() {
@@ -83,6 +85,8 @@ export function mountShell() {
     setNb("models", m ? dot(m.runnable ? "serving" : m.verdict.level === "gap" ? "gap" : m.verdict.level === "degraded" ? "degraded" : "off") : "");
     setNb("playground", s.chat.busy ? dot("active") : "");
     setNb("node", s.engine.phase === "starting" ? dot("active") : me ? dot(meSt === "idle" ? "off" : meSt) : s.engine.error ? dot("gap") : "");
+    const vj = Object.values(s.video.jobs);
+    setNb("video", vj.some(j => !["done", "failed", "cancelled"].includes(j.state)) || ["install", "models"].includes(s.video.setup?.phase) ? dot("active") : "");
     setNb("peers", st.total ? String(st.total) : "");
     const fresh = curId === "activity" ? 0 : s.feed.length - unseen.at;
     setNb("activity", fresh > 0 ? String(Math.min(99, fresh)) : "");

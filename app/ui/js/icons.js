@@ -9,6 +9,7 @@ const P = {
   settings: '<circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/>',
   search: '<circle cx="8.8" cy="8.8" r="5"/><path d="m12.5 12.5 4 4"/>',
   sidebar: '<rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M7.5 4v12"/>',
+  video: '<rect x="2.5" y="5" width="11" height="10" rx="1.6"/><path d="m13.5 9 4-2.5v7l-4-2.5"/>',
   play: '<path d="M6.5 4.5v11l9-5.5z"/>',
   stop: '<rect x="5" y="5" width="10" height="10" rx="1.5"/>',
   power: '<path d="M10 3v6"/><path d="M6 5.6a6 6 0 1 0 8 0"/>',

@@ -280,3 +280,37 @@ export async function catalogDelete(m) {
     return true;
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
 }
+
+// ---------- video (MiniMax-H3 on this machine's NVIDIA GPU) ----------
+export const videoUrl = (id, kind = "file") => `${HOST}/api/video/${kind}/${id}`;
+/** Capability, setup state and job history; also seeds state.video. */
+export async function videoStatus() {
+  if (!live()) return null;
+  try {
+    const r = await get("/api/video/status", 8000);
+    if (!r.ok) return null;
+    state.video.status = r.body;
+    state.video.setup = r.body.setup;
+    for (const j of r.body.jobs || []) state.video.jobs[j.id] = j;
+    commit();
+    return r.body;
+  } catch { return null; }
+}
+async function videoPost(path, body, what) {
+  try {
+    const r = await post(path, body, 15000);
+    if (!r.ok) { toast(what, "gap", r.body?.error || `HTTP ${r.status}`); return null; }
+    return r.body;
+  } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); return null; }
+}
+export const videoSetup = () => videoPost("/api/video/setup", {}, "Couldn't set up video");
+export async function videoSubmit(prompt, preset, seconds, seed) {
+  const j = await videoPost("/api/video/jobs", { prompt, preset, seconds, seed }, "Couldn't start the video");
+  if (j) { state.video.jobs[j.id] = j; commit(); }
+  return j;
+}
+export const videoCancel = id => videoPost(`/api/video/jobs/${id}/cancel`, {}, "Couldn't cancel");
+export async function videoReport(id) {
+  try { const r = await get(`/api/video/report/${id}`, 8000); return r.ok ? r.body : null; }
+  catch { return null; }
+}

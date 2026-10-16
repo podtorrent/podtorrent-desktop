@@ -5,7 +5,7 @@ import * as engine from "./engine.js";
 import { startDemo, stopDemo, presets } from "./demo.js";
 import { toast } from "./ui.js";
 
-export const VIEWS = ["swarm", "models", "playground", "node", "peers", "activity", "settings"];
+export const VIEWS = ["swarm", "models", "playground", "video", "node", "peers", "activity", "settings"];
 let route = "swarm";
 export const currentRoute = () => route;
 export function go(v) {
