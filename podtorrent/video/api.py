@@ -22,8 +22,8 @@ def routes(svc: VideoService) -> list:
         b = await request.json()
         try:
             seed = b.get("seed")
-            job = svc.submit(str(b.get("prompt") or ""), str(b.get("preset") or "draft"), float(b.get("seconds") or 4),
-                             int(seed) if seed not in (None, "") else None)
+            job = svc.submit(str(b.get("prompt") or ""), str(b.get("preset") or "draft"), float(b.get("seconds") or 5),
+                             int(seed) if seed not in (None, "") else None, str(b.get("mode") or "best"))
         except (ValueError, RuntimeError) as e:
             return err(e)
         return web.json_response(job)

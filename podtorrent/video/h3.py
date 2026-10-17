@@ -26,7 +26,10 @@ PRESETS = {
     "square": {"label": "Square", "width": 640, "height": 640},
 }
 FPS = 24
-STEPS = 8
+# "best" is ComfyUI's default (20 steps, no LoRA); "fast" adds the 8-step Turbo LoRA.
+MODES = {"best": {"label": "Best", "steps": 20, "lora": False}, "fast": {"label": "Fast", "steps": 8, "lora": True}}
+# Trained range is ~124-362 frames (about 5-15 s); shorter clips fall apart.
+MIN_SECONDS, MAX_SECONDS = 5.0, 15.0
 
 
 def frames_for(seconds: float) -> int:
@@ -35,10 +38,12 @@ def frames_for(seconds: float) -> int:
     return n + (5 - n % 17) % 17
 
 
-def graph(prompt: str, width: int, height: int, seconds: float, seed: int, prefix: str) -> dict:
+def graph(prompt: str, width: int, height: int, seconds: float, seed: int, prefix: str, mode: str = "best") -> dict:
     """ComfyUI /prompt payload ("API format"). Node ids are strings; links are [node_id, output]."""
     unet, clip, lora, vae, avae = (f[1] for f in FILES)
-    return {
+    m = MODES[mode]
+    model = ["lora", 0] if m["lora"] else ["unet", 0]
+    g = {
         "unet": {"class_type": "UNETLoader", "inputs": {"unet_name": unet, "weight_dtype": "default"}},
         "lora": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["unet", 0], "lora_name": lora, "strength_model": 1.0}},
         "clip": {"class_type": "CLIPLoader", "inputs": {"clip_name": clip, "type": "minimax", "device": "default"}},
@@ -47,9 +52,9 @@ def graph(prompt: str, width: int, height: int, seconds: float, seed: int, prefi
         "cond": {"class_type": "MiniMaxH3ImageToVideo", "inputs": {
             "clip": ["clip", 0], "vae": ["vae", 0], "prompt": prompt,
             "width": width, "height": height, "length": frames_for(seconds)}},
-        "guider": {"class_type": "BasicGuider", "inputs": {"model": ["lora", 0], "conditioning": ["cond", 0]}},
+        "guider": {"class_type": "BasicGuider", "inputs": {"model": model, "conditioning": ["cond", 0]}},
         "sampler": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "res_multistep"}},
-        "sched": {"class_type": "BasicScheduler", "inputs": {"model": ["lora", 0], "scheduler": "simple", "steps": STEPS, "denoise": 1.0}},
+        "sched": {"class_type": "BasicScheduler", "inputs": {"model": model, "scheduler": "simple", "steps": m["steps"], "denoise": 1.0}},
         "noise": {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}},
         "sample": {"class_type": "SamplerCustomAdvanced", "inputs": {
             "noise": ["noise", 0], "guider": ["guider", 0], "sampler": ["sampler", 0],
@@ -61,6 +66,9 @@ def graph(prompt: str, width: int, height: int, seconds: float, seed: int, prefi
                                                      # DynamicCombo: nested choices are "<parent>.<child>" keys.
                                                      "format": "mp4", "format.codec": "auto"}},
     }
+    if not m["lora"]:
+        del g["lora"]
+    return g
 
 
 # Which stage the user sees while ComfyUI runs each node.

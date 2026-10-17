@@ -6,7 +6,7 @@ import { button, segmented, empty, badge, setBadge } from "../ui.js";
 import { startHost, videoStatus, videoSetup, videoSubmit, videoCancel, videoReport, videoUrl } from "../engine.js";
 import { copyText } from "../actions.js";
 
-const LENGTHS = [4, 6, 8, 10];
+const LENGTHS = [5, 8, 10, 15]; // the model is trained on ~5-15 s clips
 const STAGES = { queued: "Waiting", starting: "Starting", loading: "Loading model", encoding: "Reading prompt", generating: "Generating",
   decoding: "Decoding", saving: "Saving", done: "Done", failed: "Failed", cancelled: "Cancelled" };
 const TONE = { done: "serving", failed: "gap", cancelled: "neutral", queued: "neutral" };
@@ -17,7 +17,7 @@ const IDEAS = [
   "A street drummer in a busy market, handheld camera, crowd chatter and steady beat.",
 ];
 
-let pick = { preset: "draft", seconds: 4 }, draft = "";
+let pick = { preset: "draft", seconds: 5, mode: "best" }, draft = "";
 const elapsed = (a, b) => { const s = Math.max(0, Math.round((b || Date.now() / 1000) - a)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`; };
 
 export default {
@@ -33,11 +33,13 @@ export default {
     // ---- setup ----
     const setupMsg = h("div.small.muted"), setupBar = h("div.progress", h("i")), setupErr = h("div.small.gap-text");
     const setupBtn = button("Set up video", { variant: "primary", icon: "download", onclick: () => videoSetup() });
-    const setupSize = h("b");
+    const setupSize = h("b"), setupTitle = h("h2");
+    const setupFirst = h("p", "PodTorrent downloads the MiniMax-H3 video model (", setupSize, ") and a video engine the first time. It runs here, on your GPU. This takes a while; you can leave the app open and do other things.");
+    const setupUpdate = h("p", "The video engine has an update that makes videos faster and fixes noisy output. It downloads about 3 GB; the video model you already have is kept.");
     const setupCard = h("section.card.video-setup",
-      h("div.card-h", h("h2", "Set up video on this machine")),
+      h("div.card-h", setupTitle),
       h("div.card-b.col", { style: { gap: "10px" } },
-        h("p", "PodTorrent downloads the MiniMax-H3 video model (", setupSize, ") and a video engine the first time. It runs here, on your GPU. This takes a while; you can leave the app open and do other things."),
+        setupFirst, setupUpdate,
         h("p.small.muted", "By setting up, you accept the MiniMax H3 Community License."),
         setupBar, setupMsg, setupErr),
       h("div.card-f", setupBtn));
@@ -47,23 +49,33 @@ export default {
     prompt.value = draft;
     prompt.addEventListener("input", () => { draft = prompt.value; paintGo(); });
     prompt.addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go(); } });
-    const presetSeg = h("span"), lenSeg = segmented(LENGTHS.map(s => ({ value: s, label: `${s}s` })), pick.seconds, v => { pick.seconds = v; }, "Length");
+    const presetSeg = h("span"), modeSeg = h("span"), lenSeg = segmented(LENGTHS.map(s => ({ value: s, label: `${s}s` })), pick.seconds, v => { pick.seconds = v; }, "Length");
     const goBtn = button("Generate", { variant: "primary", icon: "video", onclick: () => go() });
+    const cmpBtn = button("Compare Fast and Best", { size: "sm", tip: "Renders this prompt twice with the same seed, once in each mode, so you can see the difference.", onclick: () => compare() });
     const ideas = h("div.suggest", IDEAS.map(t => h("button.suggest-btn", { type: "button", onclick: () => { prompt.value = draft = t; paintGo(); prompt.focus(); } }, t)));
     const warn = h("div.small.muted");
     const composer = h("section.card",
       h("div.card-h", h("h2", "New video"), h("span.spacer"), h("span.small.faint", "Ctrl+Enter to generate")),
       h("div.card-b.col", { style: { gap: "12px" } }, prompt, ideas,
-        h("div.row.wrap", { style: { gap: "12px" } }, h("span.small.muted", "Shape"), presetSeg, h("span.small.muted", "Length"), lenSeg, h("span.spacer"), goBtn),
+        h("div.row.wrap", { style: { gap: "12px" } }, h("span.small.muted", "Shape"), presetSeg, h("span.small.muted", "Length"), lenSeg),
+        h("div.row.wrap", { style: { gap: "12px" } }, h("span.small.muted", "Quality"), modeSeg, h("span.spacer"), cmpBtn, goBtn),
         warn));
     async function go() {
       if (!draft.trim()) return prompt.focus();
       goBtn.disabled = true;
-      const j = await videoSubmit(draft.trim(), pick.preset, pick.seconds, null);
+      const j = await videoSubmit(draft.trim(), pick.preset, pick.seconds, null, pick.mode);
       goBtn.disabled = false;
       if (j) { prompt.value = draft = ""; paintGo(); }
     }
-    const paintGo = () => { goBtn.disabled = !draft.trim(); };
+    async function compare() {
+      if (!draft.trim()) return prompt.focus();
+      const seed = Math.floor(Math.random() * 2 ** 40);
+      cmpBtn.disabled = true;
+      const a = await videoSubmit(draft.trim(), pick.preset, pick.seconds, seed, "fast");
+      if (a) await videoSubmit(draft.trim(), pick.preset, pick.seconds, seed, "best");
+      cmpBtn.disabled = false;
+    }
+    const paintGo = () => { goBtn.disabled = cmpBtn.disabled = !draft.trim(); };
     paintGo();
 
     // ---- jobs ----
@@ -77,7 +89,7 @@ export default {
         onclick: async () => { const r = await videoReport(j.id); r ? copyText(JSON.stringify(r, null, 2), "Report copied") : copyText(JSON.stringify(state.video.jobs[j.id], null, 2), "Job details copied"); } });
       const el = h("section.card.video-job",
         h("div.card-h", b, h("span.ellipsis.grow.video-title", { title: j.prompt }, j.prompt), time),
-        h("div.card-b.col", { style: { gap: "8px" } }, media, bar, h("div.row", detail, h("span.spacer"), h("span.small.faint", `${j.width}×${j.height} · ${j.seconds}s`)), err),
+        h("div.card-b.col", { style: { gap: "8px" } }, media, bar, h("div.row", detail, h("span.spacer"), h("span.small.faint", `${j.width}×${j.height} · ${j.seconds}s · ${j.mode === "fast" ? "Fast" : "Best"} · seed ${j.seed}`)), err),
         h("div.card-f", cancel, report));
       const o = { el, paint(j) {
         setBadge(b, STAGES[j.state] || j.state, TONE[j.state] || "active");
@@ -128,17 +140,20 @@ export default {
           const su = s.video.setup || st.setup || {};
           const busy = ["install", "models"].includes(su.phase);
           text(setupSize, `about ${st.missing_gb || st.models_gb} GB`);
+          text(setupTitle, st.update ? "Update the video engine" : "Set up video on this machine");
+          setupFirst.hidden = !!st.update; setupUpdate.hidden = !st.update;
           setupBar.hidden = !busy;
           cls(setupBar, "indeterminate", su.phase === "install" || !su.total);
           setupBar.firstChild.style.width = su.phase === "models" && su.total ? `${Math.round(100 * su.done / su.total)}%` : "";
           text(setupMsg, busy ? (su.phase === "models" && su.total ? `${su.message} · ${fmt.bytes(su.done)} of ${fmt.bytes(su.total)}` : su.message) : "");
           text(setupErr, su.phase === "error" ? `${su.message}. Press Set up video to continue where it stopped.` : "");
           setupBtn.disabled = busy;
-          setupBtn.lastChild.textContent = su.phase === "error" ? "Try again" : busy ? "Setting up…" : "Set up video";
+          setupBtn.lastChild.textContent = su.phase === "error" ? "Try again" : busy ? (st.update ? "Updating…" : "Setting up…") : st.update ? "Update" : "Set up video";
           return show("setup", setupCard);
         }
         if (!presetSeg.firstChild) presetSeg.append(segmented(Object.entries(st.presets).map(([k, p]) => ({ value: k, label: p.label, tip: `${p.width}×${p.height}` })), pick.preset, v => { pick.preset = v; }, "Shape"));
-        text(warn, [cap.warn, "Draft is fastest. Expect a few minutes per clip; HD and longer clips take longer."].filter(Boolean).join(" "));
+        if (!modeSeg.firstChild) modeSeg.append(segmented(Object.entries(st.modes || { best: { label: "Best" } }).map(([k, m]) => ({ value: k, label: m.label, tip: `${m.steps} steps` })), pick.mode, v => { pick.mode = v; }, "Quality"));
+        text(warn, [cap.warn, "Draft is fastest (minutes). HD on a 12 GB GPU can take an hour or more. Best is sharper; Fast takes about half the time."].filter(Boolean).join(" "));
         show("ready", composer, jobsBox);
         paintJobs(s);
       },

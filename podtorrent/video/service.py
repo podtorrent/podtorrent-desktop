@@ -34,7 +34,10 @@ from . import h3
 COMFY_PORT = 8188
 COMFY = f"http://127.0.0.1:{COMFY_PORT}"
 COMFY_ZIP = f"https://github.com/comfyanonymous/ComfyUI/archive/refs/tags/{h3.COMFY_VERSION}.zip"
-TORCH_INDEX = "https://download.pytorch.org/whl/cu128"
+# ComfyUI's fast CUDA kernels (comfy-kitchen) need CUDA 13 PyTorch, which needs NVIDIA driver 580+.
+# Older drivers fall back to CUDA 12.8 and the slow reference kernels.
+TORCH_INDEX = "https://download.pytorch.org/whl/{cuda}"
+MIN_DRIVER_CU130 = 580
 MIN_VRAM_GB = 11.0      # a "12 GB" card reports ~11.9
 MIN_RAM_GB = 31.0       # ComfyUI parks the 21 GB video model and 16 GB encoder in RAM
 DISK_SPARE_GB = 15.0    # ComfyUI + venv + outputs
@@ -54,15 +57,32 @@ def _ssl():
         return ssl.create_default_context()
 
 
+def driver_major() -> int | None:
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return None
+    try:
+        out = subprocess.run([smi, "--query-gpu=driver_version", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=10).stdout.strip().splitlines()
+        return int(out[0].split(".")[0]) if out else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def cuda_build() -> str:
+    d = driver_major()
+    return "cu130" if FAKE or d is None or d >= MIN_DRIVER_CU130 else "cu128"
+
+
 def gpu_info() -> dict:
-    """{name, vram_gb} for the first CUDA GPU, or {error}. Uses the engine's PyTorch when present."""
+    """{name, vram_gb, driver} for the first CUDA GPU, or {error}. Uses the engine's PyTorch when present."""
     if FAKE:
-        return {"name": "Simulated RTX 5070", "vram_gb": 11.9}
+        return {"name": "Simulated RTX 5070", "vram_gb": 11.9, "driver": 581}
     try:
         import torch
         if torch.cuda.is_available():
             p = torch.cuda.get_device_properties(0)
-            return {"name": p.name, "vram_gb": _gb(p.total_memory)}
+            return {"name": p.name, "vram_gb": _gb(p.total_memory), "driver": driver_major()}
     except Exception:  # noqa: BLE001 - no torch (Apple Silicon) or a broken driver
         pass
     smi = shutil.which("nvidia-smi")
@@ -72,7 +92,7 @@ def gpu_info() -> dict:
                                  capture_output=True, text=True, timeout=10).stdout.strip().splitlines()
             if out:
                 name, mib = [x.strip() for x in out[0].split(",")]
-                return {"name": name, "vram_gb": round(float(mib) / 1024, 1)}
+                return {"name": name, "vram_gb": round(float(mib) / 1024, 1), "driver": driver_major()}
         except Exception:  # noqa: BLE001
             pass
     return {"error": "No NVIDIA GPU found"}
@@ -88,6 +108,14 @@ def ram_gb() -> float:
         return 0.0
 
 
+def keep_awake(on: bool):
+    """Stop Windows sleeping mid-render (a sleeping PC stalled one step for 50 minutes)."""
+    if WIN:
+        import ctypes
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0))
+
+
 class VideoService:
     def __init__(self, emit: Callable, node: str):
         self.emit, self.node = emit, node
@@ -97,6 +125,8 @@ class VideoService:
         self.models = self.root / "models"
         self.outputs = self.root / "outputs"
         self.gpu = gpu_info()
+        self.cuda = cuda_build()
+        self.install_id = f"{h3.COMFY_VERSION}+{self.cuda}"
         self.ram = ram_gb()
         self.setup_state = {"phase": "idle", "done": 0, "total": 0, "message": ""}
         self.setup_task: asyncio.Task | None = None
@@ -139,7 +169,7 @@ class VideoService:
     def installed(self) -> bool:
         if FAKE:
             return self.setup_state["phase"] == "ready"
-        return ((self.root / ".installed").read_text().strip() == h3.COMFY_VERSION
+        return ((self.root / ".installed").read_text().strip() == self.install_id
                 if (self.root / ".installed").exists() else False)
 
     def models_ready(self) -> bool:
@@ -161,7 +191,9 @@ class VideoService:
         need = 0 if FAKE else self._missing_bytes() + (0 if self.installed() else DISK_SPARE_GB * 1024**3)
         if need > free:
             return {"ok": False, "reason": f"Not enough disk space: needs {_gb(need)} GB more, {_gb(free)} GB free on {self.root.anchor or '/'}."}
-        warn = "With less than 48 GB of RAM, clips take longer." if self.ram and self.ram < 47 else ""
+        warn = " ".join(w for w in (
+            "With less than 48 GB of RAM, clips take longer." if self.ram and self.ram < 47 else "",
+            f"Update your NVIDIA driver (580 or newer) for much faster video." if self.cuda != "cu130" else "") if w)
         return {"ok": True, "reason": "", "warn": warn}
 
     def status(self) -> dict:
@@ -169,7 +201,8 @@ class VideoService:
                 "installed": self.installed(), "models_ready": self.models_ready(),
                 "models_gb": _gb(h3.MODELS_BYTES), "missing_gb": 0 if FAKE else _gb(self._missing_bytes()),
                 "setup": self.setup_state, "fake": FAKE, "folder": str(self.root),
-                "presets": h3.PRESETS, "jobs": sorted(self.jobs.values(), key=lambda j: -j["created"])}
+                "update": self.models_ready() and not self.installed() and (self.root / ".installed").exists(),
+                "presets": h3.PRESETS, "modes": h3.MODES, "min_seconds": h3.MIN_SECONDS, "max_seconds": h3.MAX_SECONDS, "jobs": sorted(self.jobs.values(), key=lambda j: -j["created"])}
 
     def _setup_event(self, phase: str, done: float = 0, total: float = 0, message: str = ""):
         self.setup_state = {"phase": phase, "done": done, "total": total, "message": message}
@@ -225,7 +258,10 @@ class VideoService:
             # Torch first from the CUDA index (the engine already cached it); then ComfyUI's own
             # requirements, which see torch as satisfied instead of pulling the CPU build from PyPI.
             ("Installing PyTorch for your GPU", [uv, "pip", "install", "--python", str(self._python()),
-                                                  "torch", "torchvision", "torchaudio", "--index-url", TORCH_INDEX]),
+                                                  "torch", "torchvision", "torchaudio", "--index-url", TORCH_INDEX.format(cuda=self.cuda),
+                                                  # replace an older CUDA build left by a previous install
+                                                  "--reinstall-package", "torch", "--reinstall-package", "torchvision",
+                                                  "--reinstall-package", "torchaudio"]),
             ("Installing ComfyUI", [uv, "pip", "install", "--python", str(self._python()),
                                     "-r", str(self.comfy_dir / "requirements.txt")]),
         ]
@@ -242,7 +278,7 @@ class VideoService:
             "podtorrent:\n"
             f"  base_path: {self.models.as_posix()}\n"
             + "".join(f"  {d}: {d}\n" for d in sorted({f[0] for f in h3.FILES})))
-        (self.root / ".installed").write_text(h3.COMFY_VERSION)
+        (self.root / ".installed").write_text(self.install_id)
 
     def _download_models(self):
         total = h3.MODELS_BYTES
@@ -332,20 +368,22 @@ class VideoService:
                 self.proc.kill()
 
     # ---------- jobs ----------
-    def submit(self, prompt: str, preset: str, seconds: float, seed: int | None) -> dict:
+    def submit(self, prompt: str, preset: str, seconds: float, seed: int | None, mode: str = "best") -> dict:
         prompt = (prompt or "").strip()
         if not prompt:
             raise ValueError("Write a prompt first")
         if preset not in h3.PRESETS:
             raise ValueError(f"unknown preset {preset!r}")
+        if mode not in h3.MODES:
+            raise ValueError(f"unknown mode {mode!r}")
         if not (self.installed() and self.models_ready()):
             raise RuntimeError("Set up video on this machine first")
-        seconds = min(15.0, max(2.0, float(seconds)))
+        seconds = min(h3.MAX_SECONDS, max(h3.MIN_SECONDS, float(seconds)))
         p = h3.PRESETS[preset]
         job = {"id": uuid.uuid4().hex[:10], "node": self.node, "prompt": prompt[:4000], "preset": preset,
-               "width": p["width"], "height": p["height"], "seconds": seconds, "frames": h3.frames_for(seconds),
+               "width": p["width"], "height": p["height"], "seconds": seconds, "frames": h3.frames_for(seconds), "mode": mode,
                "seed": seed if seed is not None else int.from_bytes(os.urandom(6), "big"),
-               "state": "queued", "detail": "Waiting", "step": 0, "steps": h3.STEPS,
+               "state": "queued", "detail": "Waiting", "step": 0, "steps": h3.MODES[mode]["steps"],
                "created": time.time(), "started": None, "finished": None, "error": "", "video": None, "fake": FAKE}
         self.jobs[job["id"]] = job
         self._job_event(job)
@@ -372,6 +410,13 @@ class VideoService:
         return job
 
     async def _work(self):
+        keep_awake(True)
+        try:
+            await self._drain()
+        finally:
+            keep_awake(False)
+
+    async def _drain(self):
         while not self.queue.empty():
             jid = await self.queue.get()
             job = self.jobs.get(jid)
@@ -396,7 +441,7 @@ class VideoService:
             finally:
                 self.running = None
                 diag.update(state=job["state"], error=job["error"], total_s=round(time.time() - t0, 1),
-                            settings={k: job[k] for k in ("preset", "width", "height", "seconds", "frames", "seed", "steps")},
+                            settings={k: job.get(k) for k in ("preset", "mode", "width", "height", "seconds", "frames", "seed", "steps")},
                             prompt_chars=len(job["prompt"]))
                 st = diag["step_seconds"]
                 if st:
@@ -406,16 +451,17 @@ class VideoService:
 
     def _machine(self) -> dict:
         return {"os": platform.platform(), "gpu": self.gpu, "ram_gb": self.ram, "cpu_cores": os.cpu_count(),
-                "comfyui": h3.COMFY_VERSION, "weights": [f[1] for f in h3.FILES], "fake": FAKE}
+                "comfyui": h3.COMFY_VERSION, "torch_cuda": self.cuda, "weights": [f[1] for f in h3.FILES], "fake": FAKE}
 
     async def _run_fake(self, job: dict, diag: dict):
         for stage, secs in (("loading", 1.5), ("encoding", 1.5)):
             self._job_event(job, state=stage, detail=stage.capitalize())
             await asyncio.sleep(secs)
-        for i in range(1, h3.STEPS + 1):
+        n = job["steps"]
+        for i in range(1, n + 1):
             if job["id"] in self.cancelled:
                 return
-            self._job_event(job, state="generating", detail=f"Step {i} of {h3.STEPS}", step=i)
+            self._job_event(job, state="generating", detail=f"Step {i} of {n}", step=i)
             await asyncio.sleep(0.8)
             diag["step_seconds"].append(0.8)
         self._job_event(job, state="decoding", detail="Decoding frames and audio")
@@ -424,7 +470,7 @@ class VideoService:
     async def _run_comfy(self, job: dict, diag: dict):
         cid = uuid.uuid4().hex
         prefix = f"podtorrent/{job['id']}"
-        g = h3.graph(job["prompt"], job["width"], job["height"], job["seconds"], job["seed"], prefix)
+        g = h3.graph(job["prompt"], job["width"], job["height"], job["seconds"], job["seed"], prefix, job.get("mode", "best"))
         peak = {"vram_used_gb": 0.0, "ram_rss_gb": 0.0}
         stage_t = {"name": None, "t": time.time()}
         last_step = [time.time()]
@@ -449,8 +495,9 @@ class VideoService:
                         async with s.get(COMFY + "/system_stats") as r:
                             d = (await r.json())["devices"][0]
                             peak["vram_used_gb"] = max(peak["vram_used_gb"], _gb(d["vram_total"] - d["vram_free"]))
-                        if proc:
-                            peak["ram_rss_gb"] = max(peak["ram_rss_gb"], _gb(proc.memory_info().rss))
+                        if proc:  # on Windows the venv's python.exe is a launcher; the real one is its child
+                            rss = sum(p.memory_info().rss for p in [proc, *proc.children(recursive=True)])
+                            peak["ram_rss_gb"] = max(peak["ram_rss_gb"], _gb(rss))
                     except Exception:  # noqa: BLE001 - best effort
                         pass
                     await asyncio.sleep(2)

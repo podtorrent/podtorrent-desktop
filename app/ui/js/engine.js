@@ -304,8 +304,8 @@ async function videoPost(path, body, what) {
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); return null; }
 }
 export const videoSetup = () => videoPost("/api/video/setup", {}, "Couldn't set up video");
-export async function videoSubmit(prompt, preset, seconds, seed) {
-  const j = await videoPost("/api/video/jobs", { prompt, preset, seconds, seed }, "Couldn't start the video");
+export async function videoSubmit(prompt, preset, seconds, seed, mode = "best") {
+  const j = await videoPost("/api/video/jobs", { prompt, preset, seconds, seed, mode }, "Couldn't start the video");
   if (j) { state.video.jobs[j.id] = j; commit(); }
   return j;
 }
