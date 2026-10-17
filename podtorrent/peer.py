@@ -1008,6 +1008,13 @@ class PeerApp:
 def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[tuple[str | None, int, int]] | None,
              open_browser: bool = False):
     """`serve`: slices to load at start as (model or None for `repo`, lo, hi); default: the saved config."""
+    import socket
+    with socket.socket() as probe:  # fail fast, before loading any model
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            raise SystemExit(f"port {port} is already in use by another program; "
+                             f"pick a free one with --port or PODTORRENT_PORT")
     app_state = PeerApp(repo, Path(model_dir), n_layers)
     app_state.video = VideoService(app_state.emit, NAME)
     if serve:

@@ -6,6 +6,10 @@ from pathlib import Path
 DEFAULT_REPO = "mlx-community/Qwen3-30B-A3B-4bit"
 
 
+# Deliberately uncommon so we never fight dev tools (8000, 3000, ...) for the port.
+DEFAULT_PORT = int(os.environ.get("PODTORRENT_PORT", "27183"))
+
+
 def default_dir(repo):
     return Path(os.environ.get("PODTORRENT_HOME", Path.home() / ".podtorrent")) / "models" / repo.split("/")[-1]
 
@@ -63,7 +67,8 @@ def main():
         p.add_argument("--model", default=DEFAULT_REPO)
         p.add_argument("--model-dir")
         p.add_argument("--layers", type=int, help="total layers (default: from the model's config)")
-        p.add_argument("--port", type=int, default=8000, help="local API port (127.0.0.1 only)")
+        p.add_argument("--port", type=int, default=DEFAULT_PORT,
+                       help=f"local API port, 127.0.0.1 only (default {DEFAULT_PORT}; env PODTORRENT_PORT)")
         p.add_argument("--serve", action="append", type=parse_slice, metavar="[MODEL:]LO:HI",
                        help="a slice to serve, e.g. 0:24 or mlx-community/X:0:24; repeatable "
                             "(default: the slices saved from last time)")
@@ -84,9 +89,9 @@ def main():
                        metavar="[MODEL:]LO:HI" if cmd == "serve" else "[MODEL:]LO:HI | MODEL")
         if cmd == "serve":
             c.add_argument("--peer", help="have this connected peer (name or id) serve it instead")
-        c.add_argument("--port", type=int, default=8000)
+        c.add_argument("--port", type=int, default=DEFAULT_PORT)
     m = sub.add_parser("models", help="coverage of every model the swarm serves, as this peer sees it")
-    m.add_argument("--port", type=int, default=8000)
+    m.add_argument("--port", type=int, default=DEFAULT_PORT)
 
     sw = sub.add_parser("swarm", help="list every PodTorrent peer online right now")
     sw.add_argument("--name", default=platform.node().split(".")[0])

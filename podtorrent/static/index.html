@@ -210,7 +210,7 @@ function drawReady(){
   let next,ok=false;
   if(ready){next='Ready: type a prompt in the chat box.';ok=true}
   else if(lastErr)next='Error: '+lastErr;
-  else if(!w){const a=hostInfo&&hostInfo.addresses.length?hostInfo.addresses[0]+':'+hostInfo.port:'<this Mac\'s IP>:8000';
+  else if(!w){const a=hostInfo&&hostInfo.addresses.length?hostInfo.addresses[0]+':'+hostInfo.port:'<this Mac\'s IP>:27183';
     next=`Waiting for a worker. On Mac 2 open PodTorrent, choose Join Host and enter ${a}`+(hostInfo&&hostInfo.addresses.length>1?` (other addresses: ${hostInfo.addresses.slice(1).join(', ')})`:'')}
   else if(wlost)next='Worker is unreachable: check Tailscale and that PodTorrent is open on Mac 2.';
   else if(!started)next='Worker joined. Click "Load model" (top right) to download and load each Mac\'s layers.';

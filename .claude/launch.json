@@ -1,6 +1,6 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "ui", "runtimeExecutable": "python3", "runtimeArgs": ["app/scripts/serve-ui.py", "5174"], "port": 5174 }
+    { "name": "ui", "runtimeExecutable": "python3", "runtimeArgs": ["app/scripts/serve-ui.py", "27184"], "port": 27184 }
   ]
 }

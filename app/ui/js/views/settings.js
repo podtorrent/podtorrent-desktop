@@ -38,7 +38,7 @@ export default {
         row("Keyboard shortcuts", "Every primary action has one.", button("Show", { icon: "keyboard", onclick: () => emit("shortcuts") })),
         row("Welcome tour", "The three-step introduction from first launch.", button("Replay", { onclick: () => emit("onboarding") }))),
       h("section.card", h("div.card-h", h("h2", "About")),
-        h("div.card-b.small.muted", version, " · ", isTauri ? "Desktop app" : "Browser preview", " · Engine output in ~/.podtorrent/engine.log. Peers connect directly over encrypted QUIC; the local API on 127.0.0.1:8000 is reachable from this machine only."))));
+        h("div.card-b.small.muted", version, " · ", isTauri ? "Desktop app" : "Browser preview", " · Engine output in ~/.podtorrent/engine.log. Peers connect directly over encrypted QUIC; the local API on 127.0.0.1:27183 is reachable from this machine only."))));
     return {
       update(s) {
         theme.set(settings.theme); reduce.set(settings.reduceEffects); notif.set(settings.notifications);

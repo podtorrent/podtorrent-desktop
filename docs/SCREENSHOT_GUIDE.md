@@ -4,7 +4,7 @@ Demo Mode drives every view from a simulated swarm, using the same event shapes 
 
 **Turn it on:** press `⌥⌘D`, or go to Settings → Developer → Demo Mode, or use ⌘K → "Demo preset: …".
 
-**Browser preview (no app):** run `python3 app/scripts/serve-ui.py` and open http://localhost:5173. Health tiles and raw logs show "available in the app".
+**Browser preview (no app):** run `python3 app/scripts/serve-ui.py` and open http://localhost:27184. Health tiles and raw logs show "available in the app".
 
 ## Presets
 

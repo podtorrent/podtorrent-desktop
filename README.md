@@ -30,7 +30,7 @@ sudo sysctl iogpu.wired_limit_mb=13000   # resets on reboot; note the value you 
 On every Mac:
 
 ```bash
-uv run podtorrent peer                  # serve nothing yet; local API + dashboard on http://127.0.0.1:8000
+uv run podtorrent peer                  # serve nothing yet; local API + dashboard on http://127.0.0.1:27183
 uv run podtorrent peer --serve 24:48    # or serve a layer range right away (remembered in ~/.podtorrent/config.json)
 ```
 
@@ -59,7 +59,7 @@ The local API binds to 127.0.0.1 only; other Macs talk to this one over QUIC on 
 | `peer` | `--model-dir` | `~/.podtorrent/models/<model>` |
 | `peer` | `--layers` | from the model's config (48) |
 | `peer` | `--serve [MODEL:]LO:HI` (repeatable) | the slices served last time, else nothing |
-| `peer` | `--port`, `--open` | 8000, don't open a browser |
+| `peer` | `--port`, `--open` | 27183 (or `PODTORRENT_PORT`), don't open a browser |
 
 ## Tests
 

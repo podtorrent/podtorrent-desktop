@@ -4,7 +4,7 @@ import { state, settings, setSetting, chatKey, applyEvent, resetState, commit, e
 import { invoke, isTauri } from "./native.js";
 import { uid, fmt } from "./dom.js";
 
-export const HOST_PORT = 8000;
+export const HOST_PORT = 27183;
 const HOST = `http://localhost:${HOST_PORT}`;
 /** Approximate size of the first-run install off Apple Silicon (CUDA PyTorch, unpacked). */
 const SETUP_BYTES = 4.5e9;
