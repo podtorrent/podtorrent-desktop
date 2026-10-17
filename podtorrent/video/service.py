@@ -42,6 +42,10 @@ MIN_VRAM_GB = 11.0      # a "12 GB" card reports ~11.9
 MIN_RAM_GB = 31.0       # ComfyUI parks the 21 GB video model and 16 GB encoder in RAM
 DISK_SPARE_GB = 15.0    # ComfyUI + venv + outputs
 FAKE = os.environ.get("PODTORRENT_VIDEO_FAKE") == "1"
+# ComfyUI v0.41's new model compiler (CUDA graphs over DynamicVRAM) is the prime suspect for the
+# patchwork/blocky H3 output on RTX 50-series under Windows, so it's off by default. Override with
+# PODTORRENT_COMFY_ARGS (e.g. "" to restore defaults, or "--disable-comfy-compiler --disable-dynamic-vram").
+COMFY_EXTRA_ARGS = os.environ.get("PODTORRENT_COMFY_ARGS", "--disable-comfy-compiler").split()
 WIN = sys.platform == "win32"
 
 
@@ -340,7 +344,7 @@ class VideoService:
         out.mkdir(parents=True, exist_ok=True)
         cmd = [str(self._python()), "main.py", "--listen", "127.0.0.1", "--port", str(COMFY_PORT),
                "--disable-auto-launch", "--output-directory", str(out),
-               "--extra-model-paths-config", str(self.root / "extra_model_paths.yaml")]
+               "--extra-model-paths-config", str(self.root / "extra_model_paths.yaml"), *COMFY_EXTRA_ARGS]
         log = open(self.root / "comfyui.log", "w", encoding="utf-8")
         self.proc = subprocess.Popen(cmd, cwd=self.comfy_dir, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                      creationflags=subprocess.CREATE_NO_WINDOW if WIN else 0)
@@ -451,7 +455,7 @@ class VideoService:
 
     def _machine(self) -> dict:
         return {"os": platform.platform(), "gpu": self.gpu, "ram_gb": self.ram, "cpu_cores": os.cpu_count(),
-                "comfyui": h3.COMFY_VERSION, "torch_cuda": self.cuda, "weights": [f[1] for f in h3.FILES], "fake": FAKE}
+                "comfyui": h3.COMFY_VERSION, "torch_cuda": self.cuda, "comfy_args": COMFY_EXTRA_ARGS, "weights": [f[1] for f in h3.FILES], "fake": FAKE}
 
     async def _run_fake(self, job: dict, diag: dict):
         for stage, secs in (("loading", 1.5), ("encoding", 1.5)):
