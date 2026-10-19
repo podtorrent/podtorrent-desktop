@@ -45,7 +45,7 @@ FAKE = os.environ.get("PODTORRENT_VIDEO_FAKE") == "1"
 # ComfyUI v0.41's new model compiler (CUDA graphs over DynamicVRAM) is the prime suspect for the
 # patchwork/blocky H3 output on RTX 50-series under Windows, so it's off by default. Override with
 # PODTORRENT_COMFY_ARGS (e.g. "" to restore defaults, or "--disable-comfy-compiler --disable-dynamic-vram").
-COMFY_EXTRA_ARGS = os.environ.get("PODTORRENT_COMFY_ARGS", "--disable-comfy-compiler").split()
+COMFY_EXTRA_ARGS = os.environ.get("PODTORRENT_COMFY_ARGS", "--disable-comfy-compiler --fp32-vae").split()
 # Workarounds patched into ComfyUI at startup (comma list): "int8" runs the int8 layers at full
 # precision instead of int8 matmuls (the blocky/noise output persisted with the compiler off, and
 # int8 compute was the one path shared by the cu128 and cu130 runs); "kitchen" also turns off
