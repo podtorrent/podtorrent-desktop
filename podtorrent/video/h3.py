@@ -61,7 +61,9 @@ def graph(prompt: str, width: int, height: int, seconds: float, seed: int, prefi
             "sigmas": ["sched", 0], "latent_image": ["cond", 1]}},
         "decode": {"class_type": "VAEDecode", "inputs": {"samples": ["sample", 0], "vae": ["vae", 0]}},
         # Raw sampler output, kept for diagnosing bad renders (a few MB per clip).
-        "savelat": {"class_type": "SaveLatent", "inputs": {"samples": ["sample", 0], "filename_prefix": "latents/" + prefix}},
+        # The sampler's output bundles video and audio (NestedTensor), which SaveLatent can't write.
+        "split": {"class_type": "LTXVSeparateAVLatent", "inputs": {"av_latent": ["sample", 0]}},
+        "savelat": {"class_type": "SaveLatent", "inputs": {"samples": ["split", 0], "filename_prefix": "latents/" + prefix}},
         "adecode": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["sample", 0], "vae": ["avae", 0]}},
         "video": {"class_type": "CreateVideo", "inputs": {"images": ["decode", 0], "audio": ["adecode", 0], "fps": float(FPS)}},
         "save": {"class_type": "SaveVideo", "inputs": {"video": ["video", 0], "filename_prefix": prefix,
@@ -75,4 +77,4 @@ def graph(prompt: str, width: int, height: int, seconds: float, seed: int, prefi
 
 # Which stage the user sees while ComfyUI runs each node.
 STAGE = {"unet": "loading", "lora": "loading", "clip": "encoding", "cond": "encoding", "vae": "loading", "avae": "loading",
-         "sample": "generating", "savelat": "decoding", "decode": "decoding", "adecode": "decoding", "video": "saving", "save": "saving"}
+         "sample": "generating", "split": "decoding", "savelat": "decoding", "decode": "decoding", "adecode": "decoding", "video": "saving", "save": "saving"}
