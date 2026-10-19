@@ -46,6 +46,26 @@ FAKE = os.environ.get("PODTORRENT_VIDEO_FAKE") == "1"
 # patchwork/blocky H3 output on RTX 50-series under Windows, so it's off by default. Override with
 # PODTORRENT_COMFY_ARGS (e.g. "" to restore defaults, or "--disable-comfy-compiler --disable-dynamic-vram").
 COMFY_EXTRA_ARGS = os.environ.get("PODTORRENT_COMFY_ARGS", "--disable-comfy-compiler").split()
+# Workarounds patched into ComfyUI at startup (comma list): "int8" runs the int8 layers at full
+# precision instead of int8 matmuls (the blocky/noise output persisted with the compiler off, and
+# int8 compute was the one path shared by the cu128 and cu130 runs); "kitchen" also turns off
+# comfy_kitchen's CUDA kernels. "none" turns both off.
+COMFY_SAFE = [w for w in os.environ.get("PODTORRENT_COMFY_SAFE", "int8").replace(" ", "").split(",") if w in ("int8", "kitchen")]
+SAFE_NODE = """# Written by PodTorrent at startup; see COMFY_SAFE in podtorrent/video/service.py.
+import logging
+import os
+
+_safe = os.environ.get("PODTORRENT_COMFY_SAFE_ACTIVE", "").split(",")
+if "int8" in _safe:
+    import comfy.model_management
+    comfy.model_management.supports_int8_compute = lambda device=None: False
+    logging.info("PodTorrent: int8 layers run at full precision")
+if "kitchen" in _safe:
+    import comfy_kitchen
+    comfy_kitchen.registry.disable("cuda")
+    logging.info("PodTorrent: comfy_kitchen CUDA backend disabled")
+NODE_CLASS_MAPPINGS = {}
+"""
 WIN = sys.platform == "win32"
 
 
@@ -345,8 +365,10 @@ class VideoService:
         cmd = [str(self._python()), "main.py", "--listen", "127.0.0.1", "--port", str(COMFY_PORT),
                "--disable-auto-launch", "--output-directory", str(out),
                "--extra-model-paths-config", str(self.root / "extra_model_paths.yaml"), *COMFY_EXTRA_ARGS]
+        (self.comfy_dir / "custom_nodes" / "podtorrent_safe.py").write_text(SAFE_NODE, encoding="utf-8")
+        env = {**os.environ, "PODTORRENT_COMFY_SAFE_ACTIVE": ",".join(COMFY_SAFE)}
         log = open(self.root / "comfyui.log", "w", encoding="utf-8")
-        self.proc = subprocess.Popen(cmd, cwd=self.comfy_dir, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        self.proc = subprocess.Popen(cmd, cwd=self.comfy_dir, env=env, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                      creationflags=subprocess.CREATE_NO_WINDOW if WIN else 0)
         for _ in range(600):  # first start compiles/caches kernels; be patient
             if self.proc.poll() is not None:
@@ -455,7 +477,7 @@ class VideoService:
 
     def _machine(self) -> dict:
         return {"os": platform.platform(), "gpu": self.gpu, "ram_gb": self.ram, "cpu_cores": os.cpu_count(),
-                "comfyui": h3.COMFY_VERSION, "torch_cuda": self.cuda, "comfy_args": COMFY_EXTRA_ARGS, "weights": [f[1] for f in h3.FILES], "fake": FAKE}
+                "comfyui": h3.COMFY_VERSION, "torch_cuda": self.cuda, "comfy_args": COMFY_EXTRA_ARGS, "comfy_safe": COMFY_SAFE, "weights": [f[1] for f in h3.FILES], "fake": FAKE}
 
     async def _run_fake(self, job: dict, diag: dict):
         for stage, secs in (("loading", 1.5), ("encoding", 1.5)):
