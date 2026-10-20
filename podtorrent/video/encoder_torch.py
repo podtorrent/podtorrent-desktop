@@ -10,7 +10,7 @@ from safetensors import safe_open
 
 from podtorrent.shard_torch import DTYPE, Layer, default_device, linear
 
-from .encoder_mlx import _local_key, text_config
+from .encoder_common import _local_key, text_config
 
 
 class TorchEncoderShard:

@@ -34,7 +34,7 @@ from ..net.identity import home
 from ..net.quic import M_BLOB, M_VIDEO, PeerNet, _frame, _read_frame
 from .. import route
 from . import h3
-from .encoder_mlx import H3_LAYERS
+from .encoder_common import H3_LAYERS
 
 HIDDEN = 5120   # Qwen3-VL-32B's hidden size
 PLACEHOLDER = Path(__file__).with_name("placeholder.mp4")
@@ -191,7 +191,7 @@ class VideoSwarm:
 
     def _encode_real(self, prompt: str, h, role: str):
         from .. import backend
-        from .encoder_mlx import tokenize
+        from .encoder_common import tokenize
         lo, hi = parse_encoder(role)
         self.enc.check_load(lo, hi)
         shard = self.enc._shard(lo, hi)

@@ -17,7 +17,7 @@ from typing import Callable
 
 from .. import backend
 from ..net.identity import home
-from .encoder_mlx import H3_ENCODER_REPO, H3_LAYERS
+from .encoder_common import H3_ENCODER_REPO, H3_LAYERS
 
 # Exact sizes from the 4-bit repo's headers: every layer is the same size.
 LAYER_BYTES = 6_860_000_000 // 25
@@ -137,7 +137,7 @@ class EncoderNode:
         return self.status()
 
     async def _fetch(self, lo: int, hi: int):
-        from .encoder_mlx import download_slice
+        from .encoder_common import download_slice
         loop = asyncio.get_running_loop()
         last = [0.0]
 
@@ -216,7 +216,7 @@ class EncoderNode:
         (what the previous machine would send), so its speed and memory are still real."""
         import numpy as np
 
-        from .encoder_mlx import text_config, tokenize
+        from .encoder_common import text_config, tokenize
         ids = tokenize(self.dir, prompt)
         hidden = text_config(self.dir)["hidden_size"]
         mlx = backend.NAME == "mlx"
