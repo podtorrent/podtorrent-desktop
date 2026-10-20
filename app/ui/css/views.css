@@ -422,3 +422,16 @@ canvas.chart { width: 100%; height: 180px; display: block; }
 .vroles { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 2fr) minmax(0, 1.3fr) auto; gap: 6px 14px; align-items: center; }
 .vroles .lbar { max-width: 260px; }
 @media (max-width: 640px) { .vroles { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+
+/* workload tags + shared memory bar (My Node "What this machine contributes") */
+.wl-tag { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 5px; font-size: 11px; font-weight: 600; letter-spacing: .02em; margin-right: 8px; }
+.wl-tag.text { color: var(--c-wl-text); background: color-mix(in srgb, var(--c-wl-text) 16%, transparent); }
+.wl-tag.video { color: var(--c-wl-video); background: color-mix(in srgb, var(--c-wl-video) 16%, transparent); }
+.mem-bar { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: color-mix(in srgb, var(--fg-1) 8%, transparent); }
+.mem-bar i { height: 100%; }
+.mem-bar i.text, .mem-key i.text { background: var(--c-wl-text); }
+.mem-bar i.video, .mem-key i.video { background: var(--c-wl-video); }
+.mem-key { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--fg-2, inherit); }
+.mem-key span { display: inline-flex; align-items: center; gap: 6px; }
+.mem-key i { width: 9px; height: 9px; border-radius: 2px; background: color-mix(in srgb, var(--fg-1) 12%, transparent); }
+.policy { border-top: 1px solid var(--line-1); padding-top: 12px; margin: 0; }

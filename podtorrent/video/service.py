@@ -227,7 +227,7 @@ class VideoService:
 
     def status(self) -> dict:
         return {"gpu": self.gpu, "ram_gb": self.ram, "capability": self.capability(),
-                "installed": self.installed(), "models_ready": self.models_ready(),
+                "installed": self.installed(), "models_ready": self.models_ready(), "render_ready": self.render_ready(),
                 "models_gb": _gb(h3.MODELS_BYTES), "missing_gb": 0 if FAKE else _gb(self._missing_bytes()),
                 "setup": self.setup_state, "fake": FAKE, "folder": str(self.root),
                 # an earlier install that needs a new engine or a new model file

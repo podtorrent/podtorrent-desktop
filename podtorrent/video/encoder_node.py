@@ -42,6 +42,20 @@ class EncoderNode:
         # Set by the peer: does this machine render video? Then its GPU belongs to the video engine,
         # and encoder slices run on the CPU from system RAM (a 12 GB card can't hold both).
         self.renders: Callable[[], bool] = lambda: False
+        self.text_gb: Callable[[], float] = lambda: 0.0  # memory held by text-model slices (set by the peer)
+
+    def shares_budget(self) -> bool:
+        """Do encoder layers use the same memory as text-model slices? Not when they run on the CPU."""
+        return self.device() != "cpu"
+
+    def held_gb(self) -> float:
+        return sum(slice_bytes(s["lo"], s["hi"]) for s in self.slices()) / backend.GB
+
+    def reserved_gb(self) -> float:
+        """Encoder layers on disk that will load on the next video job: text slices must leave room."""
+        if not self.shares_budget():
+            return 0.0
+        return sum(slice_bytes(s["lo"], s["hi"]) for s in self.slices() if not s["loaded"]) / backend.GB
 
     def device(self) -> str:
         """Where encoder slices run: "mlx", "cuda" or "cpu" (PODTORRENT_ENCODER_DEVICE overrides)."""
@@ -74,7 +88,8 @@ class EncoderNode:
                 "embed_bytes": EMBED_BYTES, "backend": backend.NAME, "slices": self.slices(),
                 "fetching": self.fetching, "testing": self.testing, "last_test": self.last_test,
                 "disk_free": shutil.disk_usage(self.dir).free, "mem_budget_gb": round(self.mem_budget_gb(), 1),
-                "device": self.device()}
+                "device": self.device(), "shares_budget": self.shares_budget(),
+                "text_gb": round(self.text_gb(), 1) if self.shares_budget() else 0.0, "held_gb": round(self.held_gb(), 1)}
 
     def _event(self):
         self.emit("video_encoder", key="video_encoder", **self.status())
@@ -93,9 +108,12 @@ class EncoderNode:
         if need > shutil.disk_usage(self.dir).free - 2 * backend.GB:
             return f"Not enough disk space: needs {need / backend.GB:.1f} GB plus 2 GB to spare."
         have = sum(slice_bytes(s["lo"], s["hi"]) for s in self.slices())
-        if (have + need) / backend.GB > self.mem_budget_gb():
-            return (f"Too big for this machine's memory: these layers need {need / backend.GB:.1f} GB, and "
-                    f"{self.mem_budget_gb():.1f} GB is the budget for them. Pick fewer layers.")
+        text = self.text_gb() if self.shares_budget() else 0.0
+        left = self.mem_budget_gb() - text - have / backend.GB
+        if need / backend.GB > left:
+            return (f"Too big for this machine's memory: these layers need {need / backend.GB:.1f} GB and "
+                    f"{max(left, 0):.1f} GB is left"
+                    + (f" ({text:.1f} GB is used by text-model layers)" if text >= 0.1 else "") + ". Pick fewer layers.")
         return None
 
     def start_fetch(self, lo: int, hi: int) -> dict:

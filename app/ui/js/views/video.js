@@ -47,7 +47,8 @@ function encoderCard() {
       button(`${l} (${a}–${b - 1})`, { size: "sm", variant: "ghost", onclick: () => { lo.value = a; last.value = b - 1; paint(); } })));
   // A Mac runs its layers fastest, so it takes as many as its memory allows (from layer 0) and the
   // video machine takes the rest; 1.5 GB stays free for activations.
-  const mostThatFit = () => Math.max(1, Math.min(n(), Math.floor((enc.mem_budget_gb * 1e9 - enc.embed_bytes - 1.5e9) / enc.layer_bytes)));
+  // Memory already held by text-model layers on the same budget counts against it.
+  const mostThatFit = () => Math.max(1, Math.min(n(), Math.floor(((enc.mem_budget_gb - (enc.shares_budget ? enc.text_gb || 0 : 0)) * 1e9 - enc.embed_bytes - 1.5e9) / enc.layer_bytes)));
   const fitBtn = button("Most that fit", { size: "sm", variant: "ghost", tip: "As many layers from layer 0 as this machine's memory holds. The video machine takes the rest.",
     onclick: () => { lo.value = 0; last.value = mostThatFit() - 1; paint(); } });
   presets.prepend(fitBtn);
@@ -101,7 +102,7 @@ function encoderCard() {
     if (!valid) e = `Pick layers from 0 through ${N - 1}, with the last at or after the first.`;
     else if (enc.slices.some(s => s.lo < b && a < s.hi)) e = "This machine already has some of these layers.";
     text(note, valid ? `Layers ${fmt.layers(a, b)}: ${b - a} layers${a === 0 ? " plus the token embedding" : ""}, about ${fmt.bytes(bytes(a, b))} to download and about the same in memory. `
-      + `${fmt.bytes(enc.disk_free)} free on disk, ${fmt.gb(enc.mem_budget_gb)} memory budget for ${enc.device === "cpu" ? "encoder layers. They run on the CPU from system RAM: the GPU is kept for video" : "models"}.` : "");
+      + `${fmt.bytes(enc.disk_free)} free on disk, ${fmt.gb(enc.mem_budget_gb)} memory budget for ${enc.device === "cpu" ? "encoder layers. They run on the CPU from system RAM: the GPU is kept for video" : `models${enc.text_gb ? `, ${fmt.gb(enc.text_gb)} of it used by text-model layers` : ""}`}.` : "");
     text(err, e || enc.fetching?.error || "");
     dl.disabled = !!e || !!f;
     prog.hidden = progMsg.hidden = !f;

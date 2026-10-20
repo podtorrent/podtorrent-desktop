@@ -50,6 +50,8 @@
   --c-gap: #ff6b81;
   --c-you: #b18cff;
   --c-net: #8d97ad;
+  --c-wl-text: #8aa4ff;   /* workload: text models */
+  --c-wl-video: #ff7ac6;  /* workload: video */
 
   --accent: #3fe8ff;
 
@@ -142,6 +144,8 @@
   --c-gap: #e5374f;
   --c-you: #7b4dff;
   --c-net: #6b7489;
+  --c-wl-text: #3f63d6;
+  --c-wl-video: #c42f84;
 
   --elev-float: 0 0 0 1px var(--line-2), 0 12px 32px rgba(15, 20, 30, 0.16), 0 2px 6px rgba(15, 20, 30, 0.08), var(--highlight);
 }

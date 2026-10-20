@@ -54,7 +54,7 @@ export function openServe(pre = {}) {
     },
   });
   const s = sheet({
-    title: "Serve layers",
+    title: "Serve text-model layers",
     body: h("div.col", { style: { gap: "14px" } },
       h("div.field", h("label", "Model"), model),
       h("div.row", { style: { gap: "12px" } },

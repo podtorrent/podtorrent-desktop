@@ -15,7 +15,7 @@ function commands() {
       .map(([id, t, k]) => ({ group: "Go to", title: t, icon: id === "node" ? "node" : id, kbd: k, run: () => go(id) })),
     { group: "Node", title: "Start My Node", icon: "play", kbd: "⇧⌘H", run: actions.startHost, hide: !live || running },
     { group: "Node", title: "Load model", icon: "download", kbd: "⇧⌘L", run: actions.load, hide: state.ready || (live && !running) },
-    { group: "Node", title: "Serve layers…", icon: "download", run: () => openServe(), hide: live && !running, keywords: "slice model add" },
+    { group: "Node", title: "Serve text-model layers…", icon: "download", run: () => openServe(), hide: live && !running, keywords: "slice model add text" },
     { group: "Node", title: "Stop node", icon: "stop", kbd: "⇧⌘.", run: actions.stop, hide: !live || !running },
     { group: "Node", title: "Copy peer ID", icon: "copy", run: copyNodeId, hide: !running && live, keywords: "id share" },
     { group: "Node", title: "Open raw logs", icon: "logs", run: () => { go("activity"); }, keywords: "engine.log debug" },

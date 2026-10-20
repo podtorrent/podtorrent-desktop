@@ -55,7 +55,7 @@ function details(m, s) {
 export default {
   title: "Models",
   subtitle: s => { const ms = models(s); return ms.length ? `${ms.filter(m => m.runnable).length} of ${ms.length} available` : ""; },
-  toolbar() { return [button("Serve layers…", { icon: "download", size: "sm", onclick: () => openServe() })]; },
+  toolbar() { return [button("Serve text layers…", { icon: "download", size: "sm", onclick: () => openServe() })]; },
   mount(root) {
     const rows = h("div.cat-list.sw-list");
     const intro = h("div.page-h", h("div", h("h1", "Models"),
@@ -68,13 +68,13 @@ export default {
     };
     const stats = h("div.grid-stats.four", Object.values(S));
     const cat = catalogSection();
-    const swarmH = secHead("peers", "In the swarm");
+    const swarmH = secHead("peers", "Text models in the swarm");
     const emptyBox = h("div");
     const swarmCard = h("section.card.cat-card", swarmH, rows,
       h("div.lbar-key.small.faint", ...[["srv", "Served"], ["load", "Loading"], ["plan", "Not reachable from here"], ["gap", "Waiting for a peer"]].map(([c, l]) => h("span", h(`i.${c}`), l))));
     // Video roles: this machine's share of the H3 prompt encoder, and whether it renders.
     const vText = h("div.small.muted"), vRoute = h("div.small.faint");
-    const videoCard = h("section.card.cat-card", secHead("video", "Video (MiniMax-H3)"),
+    const videoCard = h("section.card.cat-card", secHead("video", "Video (MiniMax-H3)", h("span.wl-tag.video", "Video")),
       h("div.row.wrap", { style: { gap: "12px", padding: "0 16px 14px" } }, h("div.grow.col", { style: { gap: "4px" } }, vText, vRoute),
         button("Manage in Video", { size: "sm", icon: "video", onclick: () => go("video") })));
     let vAsk = 0;
@@ -127,7 +127,7 @@ export default {
           if (k !== emptyKey) {
             emptyKey = k;
             emptyBox.replaceChildren(s.engine.phase === "running"
-              ? empty({ icon: "models", title: "No models in the swarm yet", body: "Nobody online serves a model yet. Serve some layers on this machine to start one.", actions: [button("Serve layers…", { variant: "primary", icon: "download", onclick: () => openServe() })] })
+              ? empty({ icon: "models", title: "No text models in the swarm yet", body: "Nobody online serves a text model yet. Serve some layers on this machine to start one.", actions: [button("Serve layers…", { variant: "primary", icon: "download", onclick: () => openServe() })] })
               : empty({ icon: "models", title: "Node is stopped", body: "You can still search Hugging Face below and check what fits this machine. Start your node to see what the swarm serves and to download or serve layers.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
           }
           return;

@@ -14,7 +14,7 @@ import { videoFlow, activeStage } from "../viz/videoflow.js";
 function videoCard() {
   const flow = h("div"), roles = h("div.vroles"), reason = h("div.small.muted"), jobs = h("div.small.muted");
   const el = h("button.card.cov-card", { type: "button", onclick: () => go("video") },
-    h("div.row", h("span.caps", "Video"), h("b", "MiniMax-H3"), h("span.spacer"), h("span.small.faint", "Prompt encoder on the swarm, video on a GPU machine")),
+    h("div.row", h("span.wl-tag.video", "Video"), h("b", "MiniMax-H3"), h("span.spacer"), h("span.small.faint", "Prompt encoder on the swarm, video on a GPU machine")),
     roles, flow, reason, jobs);
   let key = "";
   function paint(v) {
@@ -66,7 +66,7 @@ export default {
     let vAsk = 0;
     const covTitle = h("b"), covVerdict = h("span.badge"), covReason = h("span.small.muted");
     const covCard = h("button.card.cov-card", { type: "button", onclick: () => go("models") },
-      h("div.row", h("span.caps", "Model coverage"), covTitle, h("span.spacer"), covVerdict), strip, covReason);
+      h("div.row", h("span.wl-tag.text", "Text"), h("span.caps", "Model coverage"), covTitle, h("span.spacer"), covVerdict), strip, covReason);
     const ctaBody = h("p");
     const cta = h("div.join-cta",
       h("div.join-cta-art", icon("swarm")),
