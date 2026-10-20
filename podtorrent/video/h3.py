@@ -10,7 +10,9 @@ COMFY_VERSION = "v0.41.0"
 
 # (ComfyUI models folder, file name, size in bytes) — sizes from the Hub, for progress and disk checks.
 FILES = [
-    ("diffusion_models", "minimax_h3_fl2va_pruned_int8_convrot.safetensors", 20_970_000_000),
+    # fp8, not int8_convrot: the int8 file leaves ~half the starting noise in every render on
+    # RTX 50-series cards (ComfyUI issue #17098), which decodes to a blocky mosaic.
+    ("diffusion_models", "minimax_h3_fl2va_pruned_fp8_scaled.safetensors", 20_958_205_608),
     ("text_encoders", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", 15_690_000_000),
     ("loras", "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors", 1_960_000_000),
     ("vae", "minimax_h3_video_vae_fp16.safetensors", 5_210_000_000),

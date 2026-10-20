@@ -35,7 +35,8 @@ export default {
     const setupBtn = button("Set up video", { variant: "primary", icon: "download", onclick: () => videoSetup() });
     const setupSize = h("b"), setupTitle = h("h2");
     const setupFirst = h("p", "PodTorrent downloads the MiniMax-H3 video model (", setupSize, ") and a video engine the first time. It runs here, on your GPU. This takes a while; you can leave the app open and do other things.");
-    const setupUpdate = h("p", "The video engine has an update that makes videos faster and fixes noisy output. It downloads about 3 GB; the video model you already have is kept.");
+    const updateSize = h("span");
+    const setupUpdate = h("p", "The video engine has an update that fixes blocky, noisy video. It downloads about ", updateSize, ".");
     const setupCard = h("section.card.video-setup",
       h("div.card-h", setupTitle),
       h("div.card-b.col", { style: { gap: "10px" } },
@@ -140,6 +141,7 @@ export default {
           const su = s.video.setup || st.setup || {};
           const busy = ["install", "models"].includes(su.phase);
           text(setupSize, `about ${st.missing_gb || st.models_gb} GB`);
+          text(updateSize, `${st.missing_gb || 3} GB`);  // 3 GB: engine-only update
           text(setupTitle, st.update ? "Update the video engine" : "Set up video on this machine");
           setupFirst.hidden = !!st.update; setupUpdate.hidden = !st.update;
           setupBar.hidden = !busy;
