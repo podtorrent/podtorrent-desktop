@@ -112,12 +112,14 @@ H3 reads Qwen3-VL-32B truncated to **50 of 64 layers**: raw prompt tokens (no ch
 
 ### Phase 2: Job protocol and blob transfer
 
-- [ ] `pipeline.proto`: messages `VideoJob`, `JobEvent`, `BlobChunk`, `BlobAck`. Regenerate `pipeline_pb2.py`.
-- [ ] `net/blob.py`: chunked transfer, back-pressure, resume after a dropped connection, and a SHA-256 check at the end.
-- [ ] Job state machine and events on the local API (`/v1/video/jobs`, WebSocket `video.*` events).
-- [ ] A fake video worker that returns a placeholder MP4, for end-to-end tests without a GPU.
+- [x] `pipeline.proto`: `VideoJob`, `JobEvent`, `BlobRef`, `InputPart`, `BlobChunk`, `BlobAck`, RPCs `VideoStage` (M_VIDEO) and `Blob` (M_BLOB), and `NodeInfo.roles` (`h3-encoder:LO:HI`, `h3-video`).
+- [x] `net/blob.py`: blobs named by SHA-256, pulled in 1 MB chunks with an 8 MB ack window, resumed from the `.part` file after a drop, SHA-256 checked before use (`tests/test_blob.py`).
+- [x] `video/swarm.py`: the requester plans encoder hops plus a video peer from the peers' roles and runs each stage with `VideoStage`; hidden states (float32, so no fp16 overflow) move peer to peer, the MP4 comes back to the requester. Jobs share the local job list and `video_job` WebSocket events; API `GET /api/video/swarm`, `POST /api/video/swarm/jobs`, cancel through the existing `/api/video/jobs/{id}/cancel`.
+- [x] Fake roles (`PODTORRENT_VIDEO_FAKE_ROLES=h3-encoder:0:25,h3-video`): random hidden states and a placeholder MP4, for tests without weights or a GPU. A real encoder slice on disk runs for real.
+- [ ] Not yet in the UI: the Video view still submits local jobs only (phase 4).
 
 **Exit:** a request on Mac A goes through a fake encoder and fake video worker on other machines, and an MP4 comes back across networks.
+`tests/video_swarm.py` passes with three peers on one Mac through the public rendezvous (A requests, B encodes 0–24, C encodes 25–49 and renders; cancel mid-render works). Still to run across real networks on separate machines.
 
 ### Phase 3: Video worker on Windows
 

@@ -3,7 +3,7 @@
 Backs the Encoder card in the Video view. Each slice is ~/.podtorrent/video/encoder/enc-LO-HI.safetensors,
 fetched by range requests so a machine only downloads its own layers. "Test" encodes a prompt
 with the layers this machine holds and reports time, memory and the output, so a Mac can try its
-share live. Passing the hidden state on to the next machine is phase 2 (job protocol).
+share live. Swarm jobs run these slices through video/swarm.py.
 """
 from __future__ import annotations
 

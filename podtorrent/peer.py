@@ -36,6 +36,7 @@ from .slicer import download_slice, estimate_slice_bytes, fetch_meta
 from .video import api as video_api
 from .video.encoder_node import EncoderNode
 from .video.service import VideoService
+from .video.swarm import VideoSwarm
 
 STATIC = Path(__file__).parent / "static"
 MLX = threading.Lock()   # one computation at a time in this process (MLX or PyTorch)
@@ -1033,7 +1034,15 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
                     web.post("/api/unserve", app_state.unserve),
                     web.post("/api/chat", app_state.chat), web.post("/api/complete", app_state.complete),
                     web.post("/api/shutdown", app_state.shutdown)])
-    app.add_routes(video_api.routes(app_state.video, EncoderNode(app_state.emit)))
+    enc = EncoderNode(app_state.emit)
+    app_state.video_swarm = VideoSwarm(app_state.net, app_state.video, enc, app_state.me)
+
+    def node_info():
+        ni = app_state.slices.info()
+        ni.roles.extend(app_state.video_swarm.roles())
+        return ni
+    app_state.net.info = node_info
+    app.add_routes(video_api.routes(app_state.video, enc, app_state.video_swarm))
     app.on_cleanup.append(lambda _: asyncio.to_thread(app_state.video.stop))
 
     def load_all():  # one at a time: each slice's memory check sees the ones before it

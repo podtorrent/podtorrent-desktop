@@ -9,6 +9,10 @@ service Pipeline {
   rpc Info(InfoRequest) returns (NodeInfo);
   // Fetch + load a layer range; streams progress until phase == ready|error.
   rpc Load(LoadRequest) returns (stream LoadProgress);
+  // Run one stage of a video job (encode layers, or render); streams JobEvents until done|failed.
+  rpc VideoStage(VideoJob) returns (stream JobEvent);
+  // Pull a blob from offset: the holder streams BlobChunks, the puller acks to keep a window open.
+  rpc Blob(stream BlobAck) returns (stream BlobChunk);
 }
 
 message ForwardRequest {
@@ -46,6 +50,7 @@ message NodeInfo {
   bool busy = 11;              // a forward pass is running right now
   repeated Slice slices = 12;
   float mem_free_gb = 13;      // room left for more slices (Metal working-set budget minus active)
+  repeated string roles = 14;  // video roles: h3-encoder:LO:HI, h3-video
 }
 
 message Slice {
@@ -67,4 +72,64 @@ message LoadProgress {
   int64 done = 2;
   int64 total = 3;
   string message = 4;
+}
+
+// ---- video (docs/VIDEO_PLAN.md, phase 2) ----
+
+// A blob another peer holds: pull it with the Blob RPC.
+message BlobRef {
+  string sha256 = 1;         // hex; also the blob's id
+  int64 size = 2;
+  string holder = 3;         // peer_id that has it
+  string kind = 4;           // hidden | mp4 | image
+  repeated int32 shape = 5;  // for hidden states: float32 [1, T, H]
+}
+
+// One input part. v1: text only; images arrive as a blob (phase 6).
+message InputPart {
+  string type = 1;           // text | image
+  string text = 2;
+  BlobRef blob = 3;
+}
+
+// One stage of a job, sent by the requester to the peer that runs it.
+message VideoJob {
+  string job_id = 1;
+  string stage = 2;          // encode | render
+  repeated InputPart inputs = 3;
+  int32 width = 4;
+  int32 height = 5;
+  float seconds = 6;
+  int32 frames = 7;
+  int64 seed = 8;
+  int32 steps = 9;
+  string mode = 10;
+  int32 layer_lo = 11;       // encode: run encoder layers [layer_lo, layer_hi)
+  int32 layer_hi = 12;
+  BlobRef input = 13;        // encode with layer_lo > 0: previous hidden state; render: final hidden state
+  bool cancel = 14;          // sent on the open stream to stop the stage
+}
+
+message JobEvent {
+  string job_id = 1;
+  string state = 2;          // encoding | generating | decoding | done | failed | cancelled
+  string detail = 3;
+  int32 step = 4;
+  int32 steps = 5;
+  string error = 6;
+  BlobRef output = 7;        // set with state == done
+  float seconds = 8;         // stage compute time
+}
+
+message BlobAck {
+  string sha256 = 1;
+  int64 offset = 2;          // first: where to start (resume); then: bytes received so far
+}
+
+message BlobChunk {
+  string sha256 = 1;
+  int64 offset = 2;
+  bytes data = 3;
+  int64 size = 4;            // total size
+  string error = 5;          // set when the holder doesn't have the blob
 }

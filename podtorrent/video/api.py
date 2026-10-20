@@ -4,9 +4,10 @@ from aiohttp import web
 
 from .encoder_node import EncoderNode
 from .service import VideoService
+from .swarm import VideoSwarm
 
 
-def routes(svc: VideoService, enc: EncoderNode) -> list:
+def routes(svc: VideoService, enc: EncoderNode, swarm: VideoSwarm) -> list:
     def err(e: Exception, status=400):
         return web.json_response({"error": str(e)}, status=status)
 
@@ -29,9 +30,23 @@ def routes(svc: VideoService, enc: EncoderNode) -> list:
             return err(e)
         return web.json_response(job)
 
-    async def cancel(request):
+    async def swarm_status(_):
+        return web.json_response(swarm.status())
+
+    async def swarm_submit(request):
+        b = await request.json()
         try:
-            return web.json_response(await svc.cancel(request.match_info["id"]))
+            seed = b.get("seed")
+            job = swarm.submit(str(b.get("prompt") or ""), str(b.get("preset") or "draft"), float(b.get("seconds") or 5),
+                               int(seed) if seed not in (None, "") else None, str(b.get("mode") or "best"))
+        except (ValueError, RuntimeError) as e:
+            return err(e)
+        return web.json_response(job)
+
+    async def cancel(request):
+        jid = request.match_info["id"]
+        try:
+            return web.json_response(await (swarm.cancel(jid) if swarm.owns(jid) else svc.cancel(jid)))
         except KeyError:
             return err(KeyError("no such job"), 404)
 
@@ -77,5 +92,6 @@ def routes(svc: VideoService, enc: EncoderNode) -> list:
     return [web.get("/api/video/encoder", enc_status), web.post("/api/video/encoder/fetch", enc_fetch),
             web.post("/api/video/encoder/remove", enc_remove), web.post("/api/video/encoder/test", enc_test),
             web.get("/api/video/status", status), web.post("/api/video/setup", setup),
-            web.post("/api/video/jobs", submit), web.post("/api/video/jobs/{id}/cancel", cancel),
+            web.post("/api/video/jobs", submit), web.get("/api/video/swarm", swarm_status),
+            web.post("/api/video/swarm/jobs", swarm_submit), web.post("/api/video/jobs/{id}/cancel", cancel),
             web.get("/api/video/file/{id}", video), web.get("/api/video/report/{id}", report)]
