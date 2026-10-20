@@ -35,6 +35,7 @@ from .backend import Shard
 from .slicer import download_slice, estimate_slice_bytes, fetch_meta
 from .video import api as video_api
 from .video.encoder_node import EncoderNode
+from .video.service import MIN_VRAM_GB
 from .video.service import VideoService
 from .video.swarm import VideoSwarm
 
@@ -1035,6 +1036,7 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
                     web.post("/api/chat", app_state.chat), web.post("/api/complete", app_state.complete),
                     web.post("/api/shutdown", app_state.shutdown)])
     enc = EncoderNode(app_state.emit)
+    enc.renders = lambda: app_state.video.gpu.get("vram_gb", 0) >= MIN_VRAM_GB  # a video machine, set up or not
     app_state.video_swarm = VideoSwarm(app_state.net, app_state.video, enc, app_state.me)
 
     def node_info():

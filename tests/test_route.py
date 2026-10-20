@@ -137,3 +137,10 @@ def test_video_exclude_and_parse():
     assert spans(plan_video(50, offers, "me", exclude={"c"})[0]) == [("b", 0, 50)]
     assert parse_role("h3-encoder:5:3") is None and parse_role("h3-video:x:y") is None
     assert parse_role("h3-video") == ("video", None, None)
+
+
+def test_video_demo_one_mac_small_share():
+    # the demo: the Mac keeps layers 0-3, the Windows PC the rest and renders
+    offers = [V("mac", "h3-encoder:0:4"), V("win", "h3-encoder:4:50", "h3-video:11.9:64", rtt=80)]
+    hops, video = plan_video(50, offers, "mac")
+    assert spans(hops) == [("mac", 0, 4), ("win", 4, 50)] and video == "win"

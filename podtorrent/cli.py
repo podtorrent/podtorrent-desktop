@@ -30,8 +30,8 @@ def parse_serve(spec: str):
     """A layer slice ([MODEL:]LO:HI) or a video role (h3-encoder:LO:HI, h3-video)."""
     if spec.startswith("h3-"):
         from .route import parse_role
-        if spec != "h3-video" and not (parse_role(spec) or ("",))[0] == "encoder":
-            raise argparse.ArgumentTypeError(f"expected h3-encoder:LO:HI or h3-video, got {spec!r}")
+        if spec not in ("h3-video", "h3-encoder:missing") and not (parse_role(spec) or ("",))[0] == "encoder":
+            raise argparse.ArgumentTypeError(f"expected h3-encoder:LO:HI, h3-encoder:missing or h3-video, got {spec!r}")
         return spec
     return parse_slice(spec)
 
@@ -59,6 +59,14 @@ def serve_video_role(role: str, port: int, remove: bool = False):
                 last = line
             time.sleep(2)
     else:
+        if role == "h3-encoder:missing":
+            from .route import Offer, gaps
+            sw = local_api("/api/video/swarm", None, port)
+            g = gaps(50, [Offer(m["name"], m["name"], lo, hi) for m in sw.get("machines", []) for lo, hi in m["encoder"]])
+            if not g:
+                raise SystemExit("Every encoder layer already has a machine or peer.")
+            role = f"h3-encoder:{g[0][0]}:{g[0][1]}"
+            print(f"taking the missing encoder layers {g[0][0]}–{g[0][1] - 1}", flush=True)
         lo, hi = (int(x) for x in role.split(":")[1:])
         r = local_api("/api/video/encoder/" + ("remove" if remove else "fetch"), {"lo": lo, "hi": hi}, port)
         if "error" in r:
@@ -151,7 +159,7 @@ def main():
                       ("unserve", "ask the running peer to stop serving a slice, or a whole model")):
         c = sub.add_parser(cmd, help=desc)
         c.add_argument("slice", type=parse_serve if cmd == "serve" else str,
-                       metavar="[MODEL:]LO:HI | h3-encoder:LO:HI | h3-video" if cmd == "serve"
+                       metavar="[MODEL:]LO:HI | h3-encoder:LO:HI | h3-encoder:missing | h3-video" if cmd == "serve"
                        else "[MODEL:]LO:HI | MODEL | h3-encoder:LO:HI")
         if cmd == "serve":
             c.add_argument("--peer", help="have this connected peer (name or id) serve it instead")

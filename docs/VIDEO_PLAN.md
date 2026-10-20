@@ -146,6 +146,14 @@ Checked with three local peers (fake encoder roles, simulated render queue): the
 
 **Exit:** a non-technical user can start the nodes, type a prompt in the app and watch the clip play. Still to run with real weights on the real machines.
 
+### Demo setup: one Mac + the Windows PC (2026-10-20)
+
+Goal for the demo: a Mac and the Windows PC make a video together, with the Windows PC doing the heavy work. The Mac keeps the most encoder layers it can run fast. The Windows PC takes the rest and renders.
+
+- [x] On a machine that can render (a 12 GB+ NVIDIA GPU), encoder slices run on the CPU from system RAM, so the GPU stays with the video engine. Their budget is 75% of RAM minus 24 GB for the engine. `PODTORRENT_ENCODER_DEVICE` overrides the device.
+- [x] Encoder card: "Most that fit" picks layers 0..k from this machine's memory budget (0–34 on a 16 GB Mac). "Take layers X–Y" downloads the run of layers no machine or peer holds, so the Windows PC completes the chain in one click. CLI: `podtorrent serve h3-encoder:missing`.
+- [ ] On the real machines: Mac `Most that fit`, Windows `Take layers 35–49` and set up video, then one prompt from the Mac. Time the Windows CPU encode (estimate: tens of seconds per prompt).
+
 ### Phase 5: Better use of the Macs and throughput
 
 - [ ] **Decoding on the Macs:** send the compressed video output (a few MB) to a Mac for the frame and audio decoding. Needs the VAEs in MLX or PyTorch on Apple's GPU. This frees the Windows GPU for the next job.

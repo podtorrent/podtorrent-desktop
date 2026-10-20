@@ -20,6 +20,20 @@ const IDEAS = [
   "A street drummer in a busy market, handheld camera, crowd chatter and steady beat.",
 ];
 
+/** First run of encoder layers nobody in the swarm holds, as [lo, hi), or null. Only once some machine
+ *  holds layers (an empty swarm has nothing to complete). */
+function missingLayers(sw, n) {
+  if (!sw?.machines) return null;
+  const have = new Array(n).fill(false);
+  let any = false;
+  for (const m of sw.machines) for (const [a, b] of m.encoder) { any = true; for (let i = a; i < Math.min(b, n); i++) have[i] = true; }
+  const lo = have.indexOf(false);
+  if (!any || lo < 0) return null;
+  let hi = lo;
+  while (hi < n && !have[hi]) hi++;
+  return [lo, hi];
+}
+
 /** Prompt encoder card: this machine's share of H3's 50 Qwen3-VL layers. Shown on every machine. */
 function encoderCard() {
   let enc = null, busyTest = false, testPrompt = "";
@@ -31,6 +45,18 @@ function encoderCard() {
   const presets = h("div.row.wrap", { style: { gap: "6px" } },
     ...[["First half", 0, 25], ["Second half", 25, 50], ["All 50", 0, 50]].map(([l, a, b]) =>
       button(`${l} (${a}–${b - 1})`, { size: "sm", variant: "ghost", onclick: () => { lo.value = a; last.value = b - 1; paint(); } })));
+  // A Mac runs its layers fastest, so it takes as many as its memory allows (from layer 0) and the
+  // video machine takes the rest; 1.5 GB stays free for activations.
+  const mostThatFit = () => Math.max(1, Math.min(n(), Math.floor((enc.mem_budget_gb * 1e9 - enc.embed_bytes - 1.5e9) / enc.layer_bytes)));
+  const fitBtn = button("Most that fit", { size: "sm", variant: "ghost", tip: "As many layers from layer 0 as this machine's memory holds. The video machine takes the rest.",
+    onclick: () => { lo.value = 0; last.value = mostThatFit() - 1; paint(); } });
+  presets.prepend(fitBtn);
+  // The layers no machine or peer holds yet: one click on the video machine completes the chain.
+  const fillNote = h("span.small.muted");
+  let gap = null;
+  const fillBtn = button("Take the missing layers", { variant: "primary", icon: "download",
+    onclick: async () => { if (gap) { fillBtn.disabled = true; await encoderFetch(gap[0], gap[1]); paint(); } } });
+  const fillRow = h("div.row.wrap", { style: { gap: "10px", alignItems: "center" } }, fillNote, h("span.spacer"), fillBtn);
   const note = h("div.small.muted"), err = h("div.small.gap-text");
   const dl = button("Download these layers", { variant: "primary", icon: "download", onclick: async () => {
     dl.disabled = true; await encoderFetch(+lo.value, +last.value + 1); paint(); } });
@@ -48,7 +74,7 @@ function encoderCard() {
     h("div.card-b.col", { style: { gap: "12px" } },
       h("p.small.muted", "H3 reads your prompt with Qwen3-VL's first 50 layers before the video machine draws it. Machines split these layers, so each one downloads only its share. Pick the layers this machine keeps."),
       h("div.lbar-wrap", bar, h("div.lbar-key.small.faint", ...[["srv", "In memory"], ["disk", "Downloaded"], ["load", "Downloading"], ["pick", "Your pick"]].map(([c, l]) => h("span", h(`i.${c}`), l)))),
-      mine,
+      mine, fillRow,
       h("div.row.wrap", { style: { gap: "12px", alignItems: "flex-end" } },
         h("div.field", h("label", "From layer"), lo), h("div.field", h("label", "Through layer"), last), presets),
       note, err, prog, progMsg, h("div.row", h("span.spacer"), dl),
@@ -75,11 +101,20 @@ function encoderCard() {
     if (!valid) e = `Pick layers from 0 through ${N - 1}, with the last at or after the first.`;
     else if (enc.slices.some(s => s.lo < b && a < s.hi)) e = "This machine already has some of these layers.";
     text(note, valid ? `Layers ${fmt.layers(a, b)}: ${b - a} layers${a === 0 ? " plus the token embedding" : ""}, about ${fmt.bytes(bytes(a, b))} to download and about the same in memory. `
-      + `${fmt.bytes(enc.disk_free)} free on disk, ${fmt.gb(enc.mem_budget_gb)} memory budget for models.` : "");
+      + `${fmt.bytes(enc.disk_free)} free on disk, ${fmt.gb(enc.mem_budget_gb)} memory budget for ${enc.device === "cpu" ? "encoder layers. They run on the CPU from system RAM: the GPU is kept for video" : "models"}.` : "");
     text(err, e || enc.fetching?.error || "");
     dl.disabled = !!e || !!f;
     prog.hidden = progMsg.hidden = !f;
     if (f) { prog.firstChild.style.width = `${Math.round(100 * f.done / (f.total || 1))}%`; text(progMsg, `Downloading layers ${fmt.layers(f.lo, f.hi)} · ${fmt.bytes(f.done)} of ${fmt.bytes(f.total)}`); }
+    gap = missingLayers(state.video.swarm, N);
+    fillRow.hidden = !gap;
+    if (gap) {
+      text(fillNote, `No machine or peer holds encoder layers ${fmt.layers(gap[0], gap[1])} yet (about ${fmt.bytes(bytes(gap[0], gap[1]))}).`);
+      fillBtn.lastChild.textContent = `Take layers ${fmt.layers(gap[0], gap[1])}`;
+      fillBtn.disabled = !!f || enc.slices.some(s => s.lo < gap[1] && gap[0] < s.hi);
+    }
+    fitBtn.hidden = enc.device === "cpu";  // the video machine fills in the rest instead
+    fitBtn.lastChild.textContent = `Most that fit (0–${mostThatFit() - 1})`;
     tBtn.disabled = busyTest || enc.testing || !enc.slices.length;
     tBtn.lastChild.textContent = busyTest || enc.testing ? "Testing…" : "Test my layers";
     const t = enc.last_test;
@@ -244,9 +279,10 @@ export default {
         const work = ready || viaSwarm ? [composer] : [];
         const tail = [enc.el, jobsBox];
         if (!cap.ok && !ready) {
-          unsupported.replaceChildren(empty({ icon: "video", title: viaSwarm ? "This machine doesn't render, the swarm does" : "No machine or peer can make videos yet",
-            body: viaSwarm ? "Videos you make here are rendered by a GPU machine in the swarm. This machine helps by keeping prompt encoder layers (below)."
-              : `${cap.reason} ${swarmSt?.reason || ""} This machine can still take part by keeping some prompt encoder layers (below).` }));
+          const renderer = swarmSt?.machines?.some(m => m.video);
+          unsupported.replaceChildren(empty({ icon: "video", title: renderer ? "Almost ready: the prompt encoder needs layers" : "No machine or peer can render videos yet",
+            body: renderer ? `${swarmSt.reason} This machine can keep some of them (below).`
+              : `${cap.reason} Start PodTorrent on a machine that has one. This machine can still take part by keeping prompt encoder layers (below).` }));
           show(`unsupported:${cap.reason}:${viaSwarm}`, ...work, ...(viaSwarm ? [] : [unsupported]), ...tail);
           return paintJobs(s);
         }

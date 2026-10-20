@@ -8,6 +8,7 @@ share live. Swarm jobs run these slices through video/swarm.py.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shutil
 import time
@@ -21,6 +22,8 @@ from .encoder_mlx import H3_ENCODER_REPO, H3_LAYERS
 # Exact sizes from the 4-bit repo's headers: every layer is the same size.
 LAYER_BYTES = 6_860_000_000 // 25
 EMBED_BYTES = 440_000_000
+# RAM the video engine keeps for itself while rendering a swarm job (video model + VAEs, no text encoder).
+VIDEO_RAM_GB = 24.0
 _SLICE = re.compile(r"^enc-(\d+)-(\d+)\.safetensors$")
 
 
@@ -36,6 +39,26 @@ class EncoderNode:
         self.testing = False
         self.last_test: dict | None = None
         self._shards: dict = {}  # (lo, hi) -> loaded shard, kept for the next test
+        # Set by the peer: does this machine render video? Then its GPU belongs to the video engine,
+        # and encoder slices run on the CPU from system RAM (a 12 GB card can't hold both).
+        self.renders: Callable[[], bool] = lambda: False
+
+    def device(self) -> str:
+        """Where encoder slices run: "mlx", "cuda" or "cpu" (PODTORRENT_ENCODER_DEVICE overrides)."""
+        if backend.NAME == "mlx":
+            return "mlx"
+        if forced := os.environ.get("PODTORRENT_ENCODER_DEVICE"):
+            return forced
+        from ..shard_torch import default_device
+        return "cpu" if self.renders() else default_device()
+
+    def mem_budget_gb(self) -> float:
+        """Memory for encoder slices: the model budget, or on a CPU render machine the RAM the video
+        engine leaves free."""
+        if self.device() == "cpu" and self.renders():
+            import psutil
+            return max(psutil.virtual_memory().total / backend.GB * 0.75 - VIDEO_RAM_GB, 0.0)
+        return backend.mem_budget_gb()
 
     def slices(self) -> list[dict]:
         out = []
@@ -50,7 +73,8 @@ class EncoderNode:
         return {"repo": H3_ENCODER_REPO, "n_layers": H3_LAYERS, "layer_bytes": LAYER_BYTES,
                 "embed_bytes": EMBED_BYTES, "backend": backend.NAME, "slices": self.slices(),
                 "fetching": self.fetching, "testing": self.testing, "last_test": self.last_test,
-                "disk_free": shutil.disk_usage(self.dir).free, "mem_budget_gb": backend.mem_budget_gb()}
+                "disk_free": shutil.disk_usage(self.dir).free, "mem_budget_gb": round(self.mem_budget_gb(), 1),
+                "device": self.device()}
 
     def _event(self):
         self.emit("video_encoder", key="video_encoder", **self.status())
@@ -69,9 +93,9 @@ class EncoderNode:
         if need > shutil.disk_usage(self.dir).free - 2 * backend.GB:
             return f"Not enough disk space: needs {need / backend.GB:.1f} GB plus 2 GB to spare."
         have = sum(slice_bytes(s["lo"], s["hi"]) for s in self.slices())
-        if (have + need) / backend.GB > backend.mem_budget_gb():
+        if (have + need) / backend.GB > self.mem_budget_gb():
             return (f"Too big for this machine's memory: these layers need {need / backend.GB:.1f} GB, and "
-                    f"{backend.mem_budget_gb():.1f} GB is the budget for models. Pick fewer layers.")
+                    f"{self.mem_budget_gb():.1f} GB is the budget for them. Pick fewer layers.")
         return None
 
     def start_fetch(self, lo: int, hi: int) -> dict:
@@ -132,7 +156,7 @@ class EncoderNode:
                 self._shards[(lo, hi)] = EncoderShard(self.dir, lo, hi, embed=lo == 0)
             else:
                 from .encoder_torch import TorchEncoderShard
-                self._shards[(lo, hi)] = TorchEncoderShard(self.dir, lo, hi, embed=lo == 0)
+                self._shards[(lo, hi)] = TorchEncoderShard(self.dir, lo, hi, embed=lo == 0, device=self.device())
         return self._shards[(lo, hi)]
 
     def _test(self, prompt: str) -> dict:

@@ -210,8 +210,7 @@ class VideoService:
     def capability(self) -> dict:
         """Can this machine render? {ok, reason, warn}."""
         if "error" in self.gpu:
-            return {"ok": False, "reason": "Video needs a machine with an NVIDIA GPU (12 GB or more). "
-                    "Support for running it on other machines in the swarm is coming."}
+            return {"ok": False, "reason": "Rendering video needs an NVIDIA GPU with 12 GB or more."}
         if self.gpu["vram_gb"] < MIN_VRAM_GB:
             return {"ok": False, "reason": f"{self.gpu['name']} has {self.gpu['vram_gb']} GB of GPU memory; video needs 12 GB or more."}
         if self.ram and self.ram < MIN_RAM_GB:
