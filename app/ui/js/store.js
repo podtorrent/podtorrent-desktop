@@ -43,7 +43,7 @@ function blank() {
     feed: [],
     health: null,
     swarm: { status: "offline", selfId: "", peers: [] }, // global registry: every PodTorrent Mac online
-    video: { status: null, setup: null, jobs: {}, encoder: null }, // MiniMax-H3 on this machine: capability, setup, jobs by id
+    video: { status: null, setup: null, jobs: {}, encoder: null, swarm: null }, // MiniMax-H3 on this machine: capability, setup, jobs by id
     booted: false,
   };
 }

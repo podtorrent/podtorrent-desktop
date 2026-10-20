@@ -7,6 +7,36 @@ import { swarmGraph, PLAYBACK } from "../viz/graph.js";
 import { modelStrip } from "../viz/strip.js";
 import { go, actions, setDemo } from "../actions.js";
 import { peerSheet } from "./peers.js";
+import { videoSwarmStatus } from "../engine.js";
+import { videoFlow, activeStage } from "../viz/videoflow.js";
+
+/** Video roles of every machine (encoder layers, renders or not) and the route a video job takes. */
+function videoCard() {
+  const flow = h("div"), roles = h("div.vroles"), reason = h("div.small.muted"), jobs = h("div.small.muted");
+  const el = h("button.card.cov-card", { type: "button", onclick: () => go("video") },
+    h("div.row", h("span.caps", "Video"), h("b", "MiniMax-H3"), h("span.spacer"), h("span.small.faint", "Prompt encoder on the swarm, video on a GPU machine")),
+    roles, flow, reason, jobs);
+  let key = "";
+  function paint(v) {
+    el.hidden = !v || !v.machines?.some(m => m.encoder.length || m.video);
+    if (el.hidden) return;
+    const job = (v.jobs || []).find(j => !["done", "failed", "cancelled"].includes(j.state));
+    const k = JSON.stringify([v.machines, v.route, v.reason, job]);
+    if (k === key) return;
+    key = k;
+    roles.replaceChildren(...v.machines.filter(m => m.encoder.length || m.video || m.video_why).flatMap(m => [
+      h("b.ellipsis", m.me ? `${m.name} (you)` : m.name),
+      h("div.lbar", { role: "img", "aria-label": `Encoder layers on ${m.name}` }, ...Array.from({ length: 50 }, (_, i) =>
+        h(`i${m.encoder.some(([lo, hi]) => lo <= i && i < hi) ? ".srv" : ""}`))),
+      h("span.small", m.encoder.length ? `Encoder ${m.encoder.map(([lo, hi]) => fmt.layers(lo, hi)).join(", ")}` : h("span.faint", "No encoder layers")),
+      h(`span.small${m.video ? "" : ".faint"}`, { title: m.video_why || "" }, m.video ? "Renders video" : m.video_why ? "Can't render" : "–"),
+    ]));
+    flow.replaceChildren(v.route ? videoFlow(v.route, job ? activeStage(job, v.route) : null) : "");
+    text(reason, v.route ? "" : v.reason);
+    text(jobs, job ? `Your video: ${job.detail || job.state}` : "");
+  }
+  return { el, paint };
+}
 
 export default {
   title: "Swarm",
@@ -32,6 +62,8 @@ export default {
     const stage = h("div.stage", graph.el, grid);
     const note = h("div.stage-note.small");
     const strip = modelStrip({ compact: true });
+    const video = videoCard();
+    let vAsk = 0;
     const covTitle = h("b"), covVerdict = h("span.badge"), covReason = h("span.small.muted");
     const covCard = h("button.card.cov-card", { type: "button", onclick: () => go("models") },
       h("div.row", h("span.caps", "Model coverage"), covTitle, h("span.spacer"), covVerdict), strip, covReason);
@@ -44,7 +76,7 @@ export default {
     const body = h("div.page",
       h("div.grid-stats", Object.values(S)),
       h("div.card.net-card", h("div.card-h", h("h2", "Network"), offBadge, h("span.spacer"), layout), cta, stage, h("div.card-f", legend, note)),
-      covCard);
+      covCard, video.el);
     const emptyBox = h("div.page");
     root.append(body, emptyBox);
     root.addEventListener("peer", e => peerSheet(e.detail));
@@ -123,6 +155,10 @@ export default {
         graph.setVisible(g);
         if (g) graph.update(); else renderGrid(s);
         text(note, "");
+        if (s.source === "live" && s.engine.phase === "running") {
+          if (Date.now() - vAsk > 3000) { vAsk = Date.now(); videoSwarmStatus(); }
+          video.paint(s.video.swarm);
+        } else video.paint(null);
         const m = models(s)[0];
         covCard.hidden = !m;
         if (m) {

@@ -136,13 +136,15 @@ Built on release 1's headless ComfyUI rather than a separate diffusers worker (s
 
 ### Phase 4: Routing, roles and UI
 
-- [ ] `route.py`: role-based video routes, skipping machines that lack the capability (for example, `h3-video` needs at least 12 GB of GPU memory). Unit tests in `tests/test_route.py`.
-- [ ] Peer config: `serve h3-encoder:0:32`, `serve h3-video` from the CLI and the Models view.
-- [ ] Video view: prompt box, resolution and length presets, queue, progress by stage, player, save.
-- [ ] Swarm: show roles and the video job flowing through them.
-- [ ] Copy says "machine" / "peer".
+- [x] `route.py`: `plan_video` picks encoder hops as whole slices chained end to start (each hop costs a fixed hand-off plus its RTT, so fewer and closer hops win; ties go to this machine) and the renderer (this machine if it can, else the closest capable peer). Peers advertise `h3-video:VRAM:RAM`; routing skips any below 12 GB GPU memory or 32 GB RAM and says which one and why. Plain `h3-video` from older peers is trusted. Tests in `tests/test_route.py`.
+- [x] CLI: `podtorrent serve h3-encoder:0:25` downloads that encoder slice, `podtorrent serve h3-video` sets up rendering (both wait and show progress), `podtorrent unserve h3-encoder:0:25` removes one, and `podtorrent video` lists every machine's video roles and the current route. The Models view has a Video card with this machine's roles and a link to the Video view.
+- [x] Video view: on any machine with a route, the prompt box submits to the swarm and shows the route. A machine that can render locally also gets a Swarm / This machine choice. Each swarm job card shows the chain and lights up the stage it's in.
+- [x] Swarm view: a Video card with each machine's encoder layers and whether it renders, the route, and your running job moving through it.
+- [x] Copy says "machine or peer".
 
-**Exit:** a non-technical user can start the nodes, type a prompt in the app and watch the clip play.
+Checked with three local peers (fake encoder roles, simulated render queue): the Mac submits from the Video view, the job moves vtB → vtC → render on vtC, and the MP4 comes back.
+
+**Exit:** a non-technical user can start the nodes, type a prompt in the app and watch the clip play. Still to run with real weights on the real machines.
 
 ### Phase 5: Better use of the Macs and throughput
 

@@ -309,6 +309,21 @@ export async function videoSubmit(prompt, preset, seconds, seed, mode = "best") 
   if (j) { state.video.jobs[j.id] = j; commit(); }
   return j;
 }
+/** Video roles across the swarm and the route a job would take; stored in state.video.swarm. */
+export async function videoSwarmStatus() {
+  if (!live()) return null;
+  try {
+    const r = await get("/api/video/swarm", 8000);
+    if (!r.ok) return null;
+    state.video.swarm = r.body; commit();
+    return r.body;
+  } catch { return null; }
+}
+export async function videoSwarmSubmit(prompt, preset, seconds, seed, mode = "best") {
+  const j = await videoPost("/api/video/swarm/jobs", { prompt, preset, seconds, seed, mode }, "Couldn't start the video");
+  if (j) { state.video.jobs[j.id] = j; commit(); }
+  return j;
+}
 export const videoCancel = id => videoPost(`/api/video/jobs/${id}/cancel`, {}, "Couldn't cancel");
 export async function videoReport(id) {
   try { const r = await get(`/api/video/report/${id}`, 8000); return r.ok ? r.body : null; }

@@ -412,3 +412,13 @@ canvas.chart { width: 100%; height: 180px; display: block; }
 .gap-text { color: var(--c-gap); }
 .gap-text:empty { display: none; }
 @media (max-width: 760px) { .video .suggest { grid-template-columns: 1fr; } }
+
+/* video route chain (viz/videoflow.js) */
+.vflow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; }
+.vflow-node { display: flex; flex-direction: column; gap: 2px; min-width: 0; max-width: 200px; padding: 6px 10px; border-radius: 8px;
+  border: 1px solid var(--line-1); background: color-mix(in srgb, var(--fg-1) 3%, transparent); }
+.vflow-node.on { border-color: var(--c-active); background: color-mix(in srgb, var(--c-active) 14%, transparent); }
+.vflow-arrow { align-self: center; color: var(--fg-3, var(--line-3)); }
+.vroles { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 2fr) minmax(0, 1.3fr) auto; gap: 6px 14px; align-items: center; }
+.vroles .lbar { max-width: 260px; }
+@media (max-width: 640px) { .vroles { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }

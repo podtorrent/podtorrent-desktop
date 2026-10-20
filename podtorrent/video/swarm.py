@@ -32,6 +32,7 @@ from .. import pipeline_pb2 as pb
 from ..net import blob
 from ..net.identity import home
 from ..net.quic import M_BLOB, M_VIDEO, PeerNet, _frame, _read_frame
+from .. import route
 from . import h3
 from .encoder_mlx import H3_LAYERS
 
@@ -42,34 +43,8 @@ FAKE_STEP_S = float(os.environ.get("PODTORRENT_VIDEO_FAKE_STEP_S", "0.3"))
 
 
 def parse_encoder(role: str) -> tuple[int, int] | None:
-    parts = role.split(":")
-    if len(parts) == 3 and parts[0] == "h3-encoder":
-        try:
-            return int(parts[1]), int(parts[2])
-        except ValueError:
-            return None
-    return None
-
-
-def plan_route(offers: dict[str, list[str]], me: str) -> tuple[list[tuple[str, int, int]], str]:
-    """Pick encoder hops covering [0, H3_LAYERS) and a video peer from {peer_id: roles}.
-
-    Hops follow slice boundaries; at each layer the slice reaching furthest wins (fewest hops), and
-    ties go to this machine. Returns (hops, video_peer); raises ValueError naming what's missing."""
-    slices = [(lo, hi, pid) for pid, roles in offers.items() for r in roles if (s := parse_encoder(r)) for lo, hi in [s]]
-    hops, at = [], 0
-    while at < H3_LAYERS:
-        here = [(hi, pid == me, pid) for lo, hi, pid in slices if lo == at and hi > at]
-        if not here:
-            raise ValueError(f"No machine or peer has encoder layers starting at {at}. "
-                             f"Download the missing layers on a machine in the Video view.")
-        hi, _, pid = max(here)
-        hops.append((pid, at, min(hi, H3_LAYERS)))
-        at = hi
-    video = [pid for pid, roles in offers.items() if "h3-video" in roles]
-    if not video:
-        raise ValueError("No machine or peer can render video yet (needs an NVIDIA GPU with 12 GB or more).")
-    return hops, (me if me in video else sorted(video)[0])
+    r = route.parse_role(role)
+    return (r[1], r[2]) if r and r[0] == "encoder" else None
 
 
 class VideoSwarm:
@@ -85,25 +60,39 @@ class VideoSwarm:
     def roles(self) -> list[str]:
         out = [f"h3-encoder:{s['lo']}:{s['hi']}" for s in self.enc.slices()]
         if self.svc.capability().get("ok") and self.svc.render_ready():
-            out.append("h3-video")
+            out.append(route.video_role(self.svc.gpu.get("vram_gb", 0), self.svc.ram or 0))
         return sorted(set(out + FAKE_ROLES))
 
-    def offers(self) -> dict[str, list[str]]:
-        out = {self.me: self.roles()}
+    def offers(self) -> list[route.VideoOffer]:
+        out = [route.VideoOffer(self.me, "this machine", tuple(self.roles()))]
         for pid, l in self.net.links.items():
             if l.state == "direct" and l.conn:
-                out[pid] = list(l.info.get("roles") or [])
+                out.append(route.VideoOffer(pid, self._name(pid), tuple(l.info.get("roles") or []), l.rtt_ms or 0.0))
         return out
+
+    def plan(self) -> tuple[list[tuple[str, int, int]], str]:
+        hops, video = route.plan_video(H3_LAYERS, self.offers(), self.me)
+        return [(h.peer_id, h.lo, h.hi) for h in hops], video
 
     def status(self) -> dict:
         offers = self.offers()
         try:
-            hops, video = plan_route(offers, self.me)
-            route, reason = {"encoder": [[self._name(p), lo, hi] for p, lo, hi in hops], "video": self._name(video)}, ""
+            hops, video = self.plan()
+            plan, reason = {"encoder": [[self._name(p), lo, hi] for p, lo, hi in hops], "video": self._name(video)}, ""
         except ValueError as e:
-            route, reason = None, str(e)
-        return {"roles": self.roles(), "route": route, "reason": reason,
-                "peers": [{"name": self._name(p), "roles": r} for p, r in offers.items() if p != self.me]}
+            plan, reason = None, str(e)
+
+        def describe(o: route.VideoOffer) -> dict:
+            enc = sorted(s for r in o.roles if (s := parse_encoder(r)))
+            why = route.can_render(o)
+            return {"name": o.name, "me": o.peer_id == self.me, "rtt_ms": None if o.peer_id == self.me else o.rtt_ms,
+                    "roles": list(o.roles), "encoder": [list(x) for x in enc], "video": why is None,
+                    "video_why": "" if why in (None, "doesn't render video") else why}
+        active = [{"id": j["id"], "state": j["state"], "detail": j["detail"], "step": j["step"], "steps": j["steps"],
+                   "route": j.get("route")} for jid in self.tasks if (j := self.svc.jobs.get(jid))]
+        return {"roles": self.roles(), "route": plan, "reason": reason, "machines": [describe(o) for o in offers],
+                "peers": [{"name": o.name, "roles": list(o.roles)} for o in offers if o.peer_id != self.me],
+                "jobs": active}
 
     def _name(self, pid: str) -> str:
         return "this machine" if pid == self.me else self.net._name(pid)
@@ -178,7 +167,7 @@ class VideoSwarm:
 
     async def _encode(self, job: pb.VideoJob, ev, cancelled) -> pb.BlobRef:
         lo, hi = job.layer_lo, job.layer_hi
-        role = next((r for r in self.roles() if (s := parse_encoder(r)) and s[0] <= lo and hi <= s[1]), None)
+        role = next((r for r in self.roles() if parse_encoder(r) == (lo, hi)), None)
         if role is None:
             raise RuntimeError(f"This machine doesn't hold encoder layers {lo}–{hi - 1}.")
         prompt = next((p.text for p in job.inputs if p.type == "text"), "")
@@ -215,7 +204,7 @@ class VideoSwarm:
         return shard.run_layers(x).float().cpu().numpy()
 
     async def _render(self, job: pb.VideoJob, ev, cancelled, who: str) -> pb.BlobRef:
-        if "h3-video" not in self.roles():
+        if not any((r := route.parse_role(x)) and r[0] == "video" for x in self.roles()):
             raise RuntimeError("This machine can't render video.")
         ev(state="generating", detail="Receiving the prompt embeddings")
         path = await self.pull(job.input)
@@ -285,7 +274,7 @@ class VideoSwarm:
             raise ValueError("Write a prompt first")
         if preset not in h3.PRESETS or mode not in h3.MODES:
             raise ValueError("unknown preset or mode")
-        hops, video = plan_route(self.offers(), self.me)
+        hops, video = self.plan()
         seconds = min(h3.MAX_SECONDS, max(h3.MIN_SECONDS, float(seconds)))
         p = h3.PRESETS[preset]
         job = {"id": uuid.uuid4().hex[:10], "node": self.svc.node, "prompt": prompt[:4000], "preset": preset,

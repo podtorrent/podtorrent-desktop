@@ -1,10 +1,12 @@
-// Video: text to video with MiniMax-H3 on this machine's NVIDIA GPU (release 1: local only).
+// Video: text to video with MiniMax-H3. A job runs on the swarm (prompt encoder layers on the machines
+// that hold them, then a GPU machine renders) or, on an NVIDIA machine that's set up, all here.
 // Setup downloads a headless ComfyUI and ~44 GB of weights once; each job keeps a diagnostics report.
 import { h, text, cls, fmt } from "../dom.js";
 import { state } from "../store.js";
 import { button, segmented, empty, badge, setBadge } from "../ui.js";
 import { startHost, videoStatus, videoSetup, videoSubmit, videoCancel, videoReport, videoUrl,
-  encoderStatus, encoderFetch, encoderRemove, encoderTest } from "../engine.js";
+  encoderStatus, encoderFetch, encoderRemove, encoderTest, videoSwarmStatus, videoSwarmSubmit } from "../engine.js";
+import { videoFlow, activeStage } from "../viz/videoflow.js";
 import { copyText } from "../actions.js";
 
 const LENGTHS = [5, 8, 10, 15]; // the model is trained on ~5-15 s clips
@@ -51,7 +53,7 @@ function encoderCard() {
         h("div.field", h("label", "From layer"), lo), h("div.field", h("label", "Through layer"), last), presets),
       note, err, prog, progMsg, h("div.row", h("span.spacer"), dl),
       h("div", { style: { borderTop: "1px solid var(--line-1)" } }), h("b.small", "Test"), testRow,
-      h("p.small.faint", "Handing the result to the next machine or peer comes with the video job protocol. For now, each machine tests its own layers.")));
+      h("p.small.faint", "The test runs only this machine's layers. Video jobs chain them with the other machines' layers automatically.")));
 
   function paint() {
     enc = state.video.encoder;
@@ -93,7 +95,7 @@ function encoderCard() {
   return { el, paint };
 }
 
-let pick = { preset: "draft", seconds: 5, mode: "best" }, draft = "";
+let pick = { preset: "draft", seconds: 5, mode: "best", where: "swarm" }, draft = "";
 const elapsed = (a, b) => { const s = Math.max(0, Math.round((b || Date.now() / 1000) - a)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`; };
 
 export default {
@@ -131,16 +133,33 @@ export default {
     const cmpBtn = button("Compare Fast and Best", { size: "sm", tip: "Renders this prompt twice with the same seed, once in each mode, so you can see the difference.", onclick: () => compare() });
     const ideas = h("div.suggest", IDEAS.map(t => h("button.suggest-btn", { type: "button", onclick: () => { prompt.value = draft = t; paintGo(); prompt.focus(); } }, t)));
     const warn = h("div.small.muted");
+    const whereSeg = segmented([{ value: "swarm", label: "Swarm", tip: "Encoder layers on the machines that hold them, then a GPU machine renders" },
+      { value: "local", label: "This machine", tip: "Everything on this machine's GPU" }], pick.where, v => { pick.where = v; paintRoute(); }, "Where");
+    const whereRow = h("div.row.wrap", { style: { gap: "12px" } }, h("span.small.muted", "Where"), whereSeg);
+    const routeBox = h("div.col", { style: { gap: "6px" } });
+    let canLocal = false, swarmSt = null;
+    function paintRoute() {
+      const where = canLocal ? pick.where : "swarm";
+      whereRow.hidden = !canLocal || !swarmSt?.route;
+      if (where === "local") return routeBox.replaceChildren(h("span.small.muted", "Runs entirely on this machine."));
+      const k = JSON.stringify([swarmSt?.route, swarmSt?.reason]);
+      if (routeBox.dataset.k === k) return;
+      routeBox.dataset.k = k;
+      routeBox.replaceChildren(...(swarmSt?.route ? [h("span.small.muted", "Route"), videoFlow(swarmSt.route)]
+        : [h("span.small.gap-text", swarmSt ? swarmSt.reason : "Looking for machines and peers…")]));
+    }
     const composer = h("section.card",
       h("div.card-h", h("h2", "New video"), h("span.spacer"), h("span.small.faint", "Ctrl+Enter to generate")),
       h("div.card-b.col", { style: { gap: "12px" } }, prompt, ideas,
         h("div.row.wrap", { style: { gap: "12px" } }, h("span.small.muted", "Shape"), presetSeg, h("span.small.muted", "Length"), lenSeg),
+        whereRow, routeBox,
         h("div.row.wrap", { style: { gap: "12px" } }, h("span.small.muted", "Quality"), modeSeg, h("span.spacer"), cmpBtn, goBtn),
         warn));
+    const submit = (...a) => (canLocal && pick.where === "local" ? videoSubmit : videoSwarmSubmit)(...a);
     async function go() {
       if (!draft.trim()) return prompt.focus();
       goBtn.disabled = true;
-      const j = await videoSubmit(draft.trim(), pick.preset, pick.seconds, null, pick.mode);
+      const j = await submit(draft.trim(), pick.preset, pick.seconds, null, pick.mode);
       goBtn.disabled = false;
       if (j) { prompt.value = draft = ""; paintGo(); }
     }
@@ -148,8 +167,8 @@ export default {
       if (!draft.trim()) return prompt.focus();
       const seed = Math.floor(Math.random() * 2 ** 40);
       cmpBtn.disabled = true;
-      const a = await videoSubmit(draft.trim(), pick.preset, pick.seconds, seed, "fast");
-      if (a) await videoSubmit(draft.trim(), pick.preset, pick.seconds, seed, "best");
+      const a = await submit(draft.trim(), pick.preset, pick.seconds, seed, "fast");
+      if (a) await submit(draft.trim(), pick.preset, pick.seconds, seed, "best");
       cmpBtn.disabled = false;
     }
     const paintGo = () => { goBtn.disabled = cmpBtn.disabled = !draft.trim(); };
@@ -160,13 +179,13 @@ export default {
     const jobEls = new Map();
     function jobEl(j) {
       const b = badge("", "neutral"), bar = h("div.progress", h("i")), detail = h("span.small.muted"), time = h("span.small.faint");
-      const media = h("div.video-media"), err = h("div.small.gap-text");
+      const media = h("div.video-media"), err = h("div.small.gap-text"), flow = h("div");
       const cancel = button("Cancel", { size: "sm", onclick: () => videoCancel(j.id) });
       const report = button("Copy report", { size: "sm", icon: "copy", tip: "Diagnostics for this video: timings and memory. Paste it to whoever is helping you.",
         onclick: async () => { const r = await videoReport(j.id); r ? copyText(JSON.stringify(r, null, 2), "Report copied") : copyText(JSON.stringify(state.video.jobs[j.id], null, 2), "Job details copied"); } });
       const el = h("section.card.video-job",
         h("div.card-h", b, h("span.ellipsis.grow.video-title", { title: j.prompt }, j.prompt), time),
-        h("div.card-b.col", { style: { gap: "8px" } }, media, bar, h("div.row", detail, h("span.spacer"), h("span.small.faint", `${j.width}×${j.height} · ${j.seconds}s · ${j.mode === "fast" ? "Fast" : "Best"} · seed ${j.seed}`)), err),
+        h("div.card-b.col", { style: { gap: "8px" } }, media, flow, bar, h("div.row", detail, h("span.spacer"), h("span.small.faint", `${j.width}×${j.height} · ${j.seconds}s · ${j.mode === "fast" ? "Fast" : "Best"} · seed ${j.seed}`)), err),
         h("div.card-f", cancel, report));
       const o = { el, paint(j) {
         setBadge(b, STAGES[j.state] || j.state, TONE[j.state] || "active");
@@ -177,6 +196,8 @@ export default {
         text(detail, done ? (j.state === "done" ? `Made in ${elapsed(j.started, j.finished)}` : "") : j.detail || "");
         text(time, j.started ? elapsed(j.started, j.finished) : fmt.ago(Date.now() / 1000 - j.created));
         text(err, j.error || "");
+        const at = j.route && !done ? activeStage(j, j.route) : null;
+        if (j.route && flow.dataset.k !== (at || "")) { flow.dataset.k = at || ""; flow.replaceChildren(videoFlow(j.route, at)); }
         cancel.hidden = done;
         report.hidden = !done;
         if (j.state === "done" && j.video && !media.firstChild) media.append(h("video", { controls: true, preload: "metadata", src: videoUrl(j.id) }));
@@ -200,7 +221,7 @@ export default {
     let encAsked = false;
     const page = h("div.page.video");
     root.append(page);
-    let shown = null, asked = false;
+    let shown = null, asked = false, swarmAsked = 0;
     const show = (key, ...els) => { if (shown !== key) { shown = key; page.replaceChildren(...els); } };
     const tick = setInterval(() => paintJobs(state), 1000);
 
@@ -210,12 +231,24 @@ export default {
         if (s.source !== "live" || s.engine.phase !== "running") { asked = encAsked = false; return show("offline", offline); }
         if (!encAsked) { encAsked = true; encoderStatus(); }
         enc.paint();
+        if (Date.now() - swarmAsked > 3000) { swarmAsked = Date.now(); videoSwarmStatus(); }
         if (!s.video.status) { if (!asked) { asked = true; videoStatus(); } return show("loading", loading); }
         const st = s.video.status, cap = st.capability;
         const ready = st.installed && st.models_ready;
+        swarmSt = s.video.swarm; canLocal = ready;
+        const viaSwarm = !!swarmSt?.route;
+        if (!presetSeg.firstChild) presetSeg.append(segmented(Object.entries(st.presets).map(([k, p]) => ({ value: k, label: p.label, tip: `${p.width}×${p.height}` })), pick.preset, v => { pick.preset = v; }, "Shape"));
+        if (!modeSeg.firstChild) modeSeg.append(segmented(Object.entries(st.modes || { best: { label: "Best" } }).map(([k, m]) => ({ value: k, label: m.label, tip: `${m.steps} steps` })), pick.mode, v => { pick.mode = v; }, "Quality"));
+        paintRoute();
+        text(warn, [ready ? cap.warn : "", "Draft is fastest (minutes). HD on a 12 GB GPU can take an hour or more. Best is sharper; Fast takes about half the time."].filter(Boolean).join(" "));
+        const work = ready || viaSwarm ? [composer] : [];
+        const tail = [enc.el, jobsBox];
         if (!cap.ok && !ready) {
-          unsupported.replaceChildren(empty({ icon: "video", title: "This machine can't render videos", body: `${cap.reason} It can still take part by keeping some prompt encoder layers (above).` }));
-          return show(`unsupported:${cap.reason}`, enc.el, unsupported);
+          unsupported.replaceChildren(empty({ icon: "video", title: viaSwarm ? "This machine doesn't render, the swarm does" : "No machine or peer can make videos yet",
+            body: viaSwarm ? "Videos you make here are rendered by a GPU machine in the swarm. This machine helps by keeping prompt encoder layers (below)."
+              : `${cap.reason} ${swarmSt?.reason || ""} This machine can still take part by keeping some prompt encoder layers (below).` }));
+          show(`unsupported:${cap.reason}:${viaSwarm}`, ...work, ...(viaSwarm ? [] : [unsupported]), ...tail);
+          return paintJobs(s);
         }
         if (!ready) {
           const su = s.video.setup || st.setup || {};
@@ -231,12 +264,10 @@ export default {
           text(setupErr, su.phase === "error" ? `${su.message}. Press Set up video to continue where it stopped.` : "");
           setupBtn.disabled = busy;
           setupBtn.lastChild.textContent = su.phase === "error" ? "Try again" : busy ? (st.update ? "Updating…" : "Setting up…") : st.update ? "Update" : "Set up video";
-          return show("setup", setupCard, enc.el);
+          show(`setup:${viaSwarm}`, ...work, setupCard, ...tail);
+          return paintJobs(s);
         }
-        if (!presetSeg.firstChild) presetSeg.append(segmented(Object.entries(st.presets).map(([k, p]) => ({ value: k, label: p.label, tip: `${p.width}×${p.height}` })), pick.preset, v => { pick.preset = v; }, "Shape"));
-        if (!modeSeg.firstChild) modeSeg.append(segmented(Object.entries(st.modes || { best: { label: "Best" } }).map(([k, m]) => ({ value: k, label: m.label, tip: `${m.steps} steps` })), pick.mode, v => { pick.mode = v; }, "Quality"));
-        text(warn, [cap.warn, "Draft is fastest (minutes). HD on a 12 GB GPU can take an hour or more. Best is sharper; Fast takes about half the time."].filter(Boolean).join(" "));
-        show("ready", composer, enc.el, jobsBox);
+        show("ready", composer, ...tail);
         paintJobs(s);
       },
       focus() { prompt.focus(); },

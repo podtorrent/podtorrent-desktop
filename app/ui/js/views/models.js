@@ -6,6 +6,7 @@ import { empty, button, stat } from "../ui.js";
 import { actions, go } from "../actions.js";
 import { openServe } from "../serve.js";
 import { catalogSection, secHead, localModels, openGet } from "../catalog.js";
+import { videoSwarmStatus } from "../engine.js";
 
 /** "You → mac-a [0,16) → mac-c [16,48) → You" */
 export function routeText(route, self) {
@@ -71,7 +72,13 @@ export default {
     const emptyBox = h("div");
     const swarmCard = h("section.card.cat-card", swarmH, rows,
       h("div.lbar-key.small.faint", ...[["srv", "Served"], ["load", "Loading"], ["plan", "Not reachable from here"], ["gap", "Waiting for a peer"]].map(([c, l]) => h("span", h(`i.${c}`), l))));
-    const page = h("div.page", intro, stats, cat.mine, swarmCard, emptyBox, cat.finder);
+    // Video roles: this machine's share of the H3 prompt encoder, and whether it renders.
+    const vText = h("div.small.muted"), vRoute = h("div.small.faint");
+    const videoCard = h("section.card.cat-card", secHead("video", "Video (MiniMax-H3)"),
+      h("div.row.wrap", { style: { gap: "12px", padding: "0 16px 14px" } }, h("div.grow.col", { style: { gap: "4px" } }, vText, vRoute),
+        button("Manage in Video", { size: "sm", icon: "video", onclick: () => go("video") })));
+    let vAsk = 0;
+    const page = h("div.page", intro, stats, cat.mine, videoCard, swarmCard, emptyBox, cat.finder);
     root.append(page);
     let emptyKey = "";
 
@@ -100,6 +107,15 @@ export default {
       update(s) {
         const ms = models(s);
         cat.update(s);
+        const live = s.source === "live" && s.engine.phase === "running";
+        if (live && Date.now() - vAsk > 5000) { vAsk = Date.now(); videoSwarmStatus(); }
+        const v = live ? s.video.swarm : null, me = v?.machines?.find(m => m.me);
+        videoCard.hidden = !me;
+        if (me) {
+          text(vText, [me.encoder.length ? `This machine keeps prompt encoder layers ${me.encoder.map(([a, b]) => fmt.layers(a, b)).join(", ")}.` : "This machine keeps no prompt encoder layers.",
+            me.video ? "It renders video." : me.video_why ? `It can't render video: it ${me.video_why}.` : "It doesn't render video."].join(" "));
+          text(vRoute, v.route ? `A video job right now: ${v.route.encoder.map(([n, a, b]) => `${n} ${fmt.layers(a, b)}`).join(" → ")} → renders on ${v.route.video}.` : v.reason);
+        }
         const loc = localModels();
         S.run.set(ms.filter(m => m.runnable).length, `of ${ms.length} in the swarm`);
         S.lay.set(s.slices.reduce((a, x) => a + (x.hi - x.lo), 0), `${new Set(s.slices.map(x => x.model)).size} model(s)`);

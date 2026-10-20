@@ -107,3 +107,98 @@ def coverage(n_layers: int, offers: list[Offer]) -> list[int]:
         for i in range(max(o.lo, 0), min(o.hi, n_layers)):
             peers[i].add(o.peer_id)
     return [len(p) for p in peers]
+
+
+# ---------- video (MiniMax-H3) routes from peer roles ----------
+# Roles a peer advertises in NodeInfo.roles:
+#   h3-encoder:LO:HI         encoder layers [LO, HI) on disk; a hop must run a slice whole (it's one file)
+#   h3-video[:VRAM:RAM]      can render; GPU memory and system RAM in GB (missing on older peers: trusted)
+VIDEO_MIN_VRAM_GB = 11.0    # a "12 GB" card reports ~11.9
+VIDEO_MIN_RAM_GB = 31.0
+HOP_MS = 50.0               # each encoder hop also moves the hidden state; keeps routes short
+
+
+@dataclass(frozen=True)
+class VideoOffer:
+    """A peer's video roles, reachable with this RTT (0 for this machine)."""
+    peer_id: str
+    name: str
+    roles: tuple[str, ...]
+    rtt_ms: float = 0.0
+
+
+def parse_role(role: str) -> tuple | None:
+    """("encoder", lo, hi), ("video", vram_gb | None, ram_gb | None), or None for anything else."""
+    p = role.split(":")
+    try:
+        if p[0] == "h3-encoder" and len(p) == 3 and 0 <= int(p[1]) < int(p[2]):
+            return "encoder", int(p[1]), int(p[2])
+        if p[0] == "h3-video" and len(p) in (1, 3):
+            return ("video", None, None) if len(p) == 1 else ("video", float(p[1]), float(p[2]))
+    except ValueError:
+        pass
+    return None
+
+
+def video_role(vram_gb: float, ram_gb: float) -> str:
+    return f"h3-video:{vram_gb:g}:{ram_gb:g}"
+
+
+def can_render(offer: VideoOffer) -> str | None:
+    """Why this peer can't take the video stage, or None if it can."""
+    vids = [r for x in offer.roles if (r := parse_role(x)) and r[0] == "video"]
+    if not vids:
+        return "doesn't render video"
+    _, vram, ram = vids[0]
+    if vram is not None and vram < VIDEO_MIN_VRAM_GB:
+        return f"has {vram:g} GB of GPU memory (video needs 12 GB)"
+    if ram is not None and ram < VIDEO_MIN_RAM_GB:
+        return f"has {ram:g} GB of RAM (video needs 32 GB)"
+    return None
+
+
+def plan_video(n_layers: int, offers: list[VideoOffer], me: str,
+               exclude: frozenset[str] | set[str] = frozenset()) -> tuple[list[Hop], str]:
+    """Encoder hops covering [0, n_layers) and the peer that renders.
+
+    Hops run whole slices, chained end to start; the cheapest chain wins (each hop costs HOP_MS plus
+    its RTT, so fewer, closer hops; ties go to this machine). The renderer is this machine if it can,
+    else the closest capable peer. Raises ValueError saying what's missing."""
+    offers = [o for o in offers if o.peer_id not in exclude]
+    rtt = lambda o: 0.0 if o.peer_id == me else o.rtt_ms  # noqa: E731
+    edges = sorted(((s[1], min(s[2], n_layers), o) for o in offers for x in o.roles
+                    if (s := parse_role(x)) and s[0] == "encoder" and s[1] < n_layers),
+                   key=lambda e: (e[0], e[1], e[2].peer_id))
+    best: dict[int, tuple[float, int, int]] = {0: (0.0, 0, 0)}  # boundary -> (cost, hops, remote hops)
+    prev: dict[int, tuple[int, VideoOffer]] = {}
+    heap, done = [(0.0, 0, 0, 0)], set()
+    while heap:
+        cost, hops, remote, at = heapq.heappop(heap)
+        if at in done:
+            continue
+        done.add(at)
+        for lo, hi, o in edges:
+            if lo != at or hi <= at:
+                continue
+            key = (cost + HOP_MS + rtt(o), hops + 1, remote + (o.peer_id != me))
+            if hi not in best or key < best[hi]:
+                best[hi], prev[hi] = key, (at, o)
+                heapq.heappush(heap, (*key, hi))
+    if n_layers not in prev:
+        reach = max(done)
+        raise ValueError(f"No machine or peer has encoder layers starting at {reach}. "
+                         "Download the missing layers on a machine in the Video view.")
+    hops, at = [], n_layers
+    while at:
+        lo, o = prev[at]
+        hops.append(Hop(o.peer_id, o.name, lo, at))
+        at = lo
+    hops.reverse()
+
+    able = [o for o in offers if can_render(o) is None]
+    if not able:
+        why = [f"{o.name} {r}" for o in offers if (r := can_render(o)) != "doesn't render video"]
+        raise ValueError("No machine or peer can render video yet (needs an NVIDIA GPU with 12 GB or more"
+                         + (f"; {', '.join(why)}" if why else "") + ").")
+    video = min(able, key=lambda o: (o.peer_id != me, rtt(o), o.name))
+    return hops, video.peer_id
