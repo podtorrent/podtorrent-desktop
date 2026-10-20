@@ -296,9 +296,9 @@ export async function videoStatus() {
     return r.body;
   } catch { return null; }
 }
-async function videoPost(path, body, what) {
+async function videoPost(path, body, what, ms = 15000) {
   try {
-    const r = await post(path, body, 15000);
+    const r = await post(path, body, ms);
     if (!r.ok) { toast(what, "gap", r.body?.error || `HTTP ${r.status}`); return null; }
     return r.body;
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); return null; }
@@ -340,13 +340,13 @@ export async function encoderStatus() {
     return r.body;
   } catch { return null; }
 }
-const encoderPost = async (path, body, what) => {
-  const r = await videoPost(path, body, what);
+const encoderPost = async (path, body, what, ms) => {
+  const r = await videoPost(path, body, what, ms);
   if (r?.slices) { state.video.encoder = r; commit(); }
   return r;
 };
 export const encoderFetch = (lo, hi) => encoderPost("/api/video/encoder/fetch", { lo, hi }, "Couldn't download the layers");
-export const encoderRemove = (lo, hi) => encoderPost("/api/video/encoder/remove", { lo, hi }, "Couldn't remove the layers");
+export const encoderRemove = (lo, hi) => encoderPost("/api/video/encoder/remove", { lo, hi }, "Couldn't remove the layers", 10 * 60000); // splitting a slice copies GBs
 export async function encoderTest(prompt) {
   try {
     const r = await post("/api/video/encoder/test", { prompt }, 15 * 60000);

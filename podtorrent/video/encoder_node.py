@@ -156,9 +156,30 @@ class EncoderNode:
             self.fetching["error"] = f"Download failed: {e}"
         self._event()
 
-    def remove(self, lo: int, hi: int) -> dict:
-        self._shards.pop((lo, hi), None)
-        (self.dir / f"enc-{lo}-{hi}.safetensors").unlink(missing_ok=True)
+    async def remove(self, lo: int, hi: int) -> dict:
+        """Delete layers [lo, hi) from this machine. A slice that's only partly inside the range is
+        split: the layers outside it are copied into their own slice files first."""
+        from ..slicer import split_slice
+        if not 0 <= lo < hi <= H3_LAYERS:
+            raise ValueError(f"Pick layers between 0 and {H3_LAYERS - 1}.")
+        if self.testing:
+            raise RuntimeError("A test is running. Remove layers after it finishes.")
+        if self.fetching and not self.fetching.get("error") and self.fetching["lo"] < hi and lo < self.fetching["hi"]:
+            raise RuntimeError("These layers are still downloading.")
+        hit = [s for s in self.slices() if s["lo"] < hi and lo < s["hi"]]
+        if not hit:
+            raise ValueError("This machine has none of these layers.")
+        for s in hit:
+            keep = [(a, b) for a, b in ((s["lo"], lo), (hi, s["hi"])) if a < b]
+            need = sum(slice_bytes(a, b) for a, b in keep)
+            if need > shutil.disk_usage(self.dir).free - backend.GB:
+                raise RuntimeError(f"Not enough disk space to keep layers outside {lo}–{hi - 1}: needs "
+                                   f"{need / backend.GB:.1f} GB free while it copies them. Remove all of layers {s['lo']}–{s['hi'] - 1} instead.")
+            src = self.dir / f"enc-{s['lo']}-{s['hi']}.safetensors"
+            self._shards.pop((s["lo"], s["hi"]), None)
+            if keep:
+                await asyncio.to_thread(split_slice, src, self.dir, keep, "enc")
+            src.unlink(missing_ok=True)
         self._event()
         return self.status()
 

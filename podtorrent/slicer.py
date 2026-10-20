@@ -189,3 +189,48 @@ def download_slice(
             out.write(chunk)
     tmp_data.unlink()
     return out_path
+
+
+def split_slice(src: str | Path, out_dir: str | Path, pieces: list[tuple[int, int]], name: str,
+                on_progress: Optional[Callable[[int, int], None]] = None) -> list[Path]:
+    """Copy layers [a, b) of each piece out of the slice file src into out_dir/<name>-a-b.safetensors,
+    streaming tensor bytes (nothing is loaded into memory). Non-layer tensors (the embedding, final
+    norm, head) go with the piece that starts at layer 0, or are dropped. src is left as it is."""
+    src, out_dir = Path(src), Path(out_dir)
+    with open(src, "rb") as fh:
+        (n,) = struct.unpack("<Q", fh.read(8))
+        header = json.loads(fh.read(n))
+    meta, base = header.pop("__metadata__", None), 8 + n
+    total = sum(e - s for name_, t in header.items() for s, e in [t["data_offsets"]])
+    done, out = 0, []
+    for a, b in pieces:
+        def keep(k):
+            m = LAYER_RE.match(k)
+            return a <= int(m.group(1)) < b if m else a == 0
+        names = sorted((k for k in header if keep(k)), key=lambda k: header[k]["data_offsets"][0])
+        new, off = {}, 0
+        for k in names:
+            s, e = header[k]["data_offsets"]
+            new[k] = {**header[k], "data_offsets": [off, off + e - s]}
+            off += e - s
+        if meta is not None:
+            new["__metadata__"] = meta
+        hb = json.dumps(new, separators=(",", ":")).encode()
+        hb += b" " * (-len(hb) % 8)
+        path, tmp = out_dir / f"{name}-{a}-{b}.safetensors", out_dir / f"{name}-{a}-{b}.split.tmp"
+        with open(src, "rb") as fi, open(tmp, "wb") as fo:
+            fo.write(struct.pack("<Q", len(hb)) + hb)
+            for k in names:
+                s, e = header[k]["data_offsets"]
+                fi.seek(base + s)
+                left = e - s
+                while left:
+                    chunk = fi.read(min(left, 64 << 20))
+                    fo.write(chunk)
+                    left -= len(chunk)
+                    done += len(chunk)
+                    if on_progress:
+                        on_progress(done, total)
+        tmp.replace(path)
+        out.append(path)
+    return out

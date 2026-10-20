@@ -78,8 +78,8 @@ def routes(svc: VideoService, enc: EncoderNode, swarm: VideoSwarm) -> list:
     async def enc_remove(request):
         b = await request.json()
         try:
-            return web.json_response(enc.remove(int(b["lo"]), int(b["hi"])))
-        except (KeyError, ValueError) as e:
+            return web.json_response(await enc.remove(int(b["lo"]), int(b["hi"])))
+        except (KeyError, ValueError, RuntimeError) as e:
             return err(e)
 
     async def enc_test(request):

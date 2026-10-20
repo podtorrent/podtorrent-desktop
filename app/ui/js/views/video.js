@@ -41,29 +41,52 @@ function encoderCard() {
   let enc = null, busyTest = false, testPrompt = "";
   const n = () => enc?.n_layers || 50;
   const bytes = (lo, hi) => (hi - lo) * enc.layer_bytes + (lo === 0 ? enc.embed_bytes : 0);
-  const bar = h("div.lbar", { role: "img", "aria-label": "Encoder layers on this machine" });
-  const lo = h("input.input.num", { type: "number", min: "0", step: "1", value: "0", "aria-label": "First layer" });
-  const last = h("input.input.num", { type: "number", min: "0", step: "1", value: "24", "aria-label": "Last layer" });
+  // The pick is [pa, pb): set by a chip, or by clicking/dragging the boxes (click one end, then the other).
+  let pa = 0, pb = 25, anchor = null, dragging = false;
+  const bar = h("div.lbar.pickable", { role: "group", "aria-label": "Encoder layers on this machine. Click or drag to pick layers." });
+  const boxAt = e => { const t = e.target.closest?.("i[data-i]"); return t && bar.contains(t) ? +t.dataset.i : null; };
+  const span = (x, y) => { pa = Math.min(x, y); pb = Math.max(x, y) + 1; paint(); };
+  bar.addEventListener("pointerdown", e => {
+    const i = boxAt(e); if (i == null) return;
+    e.preventDefault(); dragging = true;
+    // A single-box pick is the first end: the next click picks the other end. Shift-click extends.
+    anchor = e.shiftKey || (pb - pa === 1 && i !== pa) ? pa : i;
+    span(anchor, i);
+  });
+  bar.addEventListener("pointerover", e => { const i = boxAt(e); if (dragging && i != null && anchor != null) { pa = Math.min(anchor, i); pb = Math.max(anchor, i) + 1; paint(); } });
+  addEventListener("pointerup", () => { dragging = false; });
+  // A chip is pressed while the pick matches it; pressing it again clears the pick so the boxes take over.
+  const chips = [];
+  const chip = (range, tip) => {
+    const c = h("button.chip-btn", { type: "button", "data-tip": tip, onclick: () => {
+      const [a, b] = range();
+      if (pa === a && pb === b) pa = pb = 0; else pa = a, pb = b;
+      anchor = null; paint();
+    } });
+    chips.push([c, range]);
+    return c;
+  };
   const presets = h("div.row.wrap", { style: { gap: "6px" } },
-    ...[["First half", 0, 25], ["Second half", 25, 50], ["All 50", 0, 50]].map(([l, a, b]) =>
-      button(`${l} (${a}–${b - 1})`, { size: "sm", variant: "ghost", onclick: () => { lo.value = a; last.value = b - 1; paint(); } })));
+    chip(() => [0, Math.floor(n() / 2)]), chip(() => [Math.floor(n() / 2), n()]), chip(() => [0, n()]));
   // A Mac runs its layers fastest, so it takes as many as its memory allows (from layer 0) and the
   // video machine takes the rest; 1.5 GB stays free for activations.
   // Memory already held by text-model layers on the same budget counts against it.
   const mostThatFit = () => Math.max(1, Math.min(n(), Math.floor(((enc.mem_budget_gb - (enc.shares_budget ? enc.text_gb || 0 : 0)) * 1e9 - enc.embed_bytes - 1.5e9) / enc.layer_bytes)));
-  const fitBtn = button("Most that fit", { size: "sm", variant: "ghost", tip: "As many layers from layer 0 as this machine's memory holds. The video machine takes the rest.",
-    onclick: () => { lo.value = 0; last.value = mostThatFit() - 1; paint(); } });
+  const fitBtn = chip(() => [0, mostThatFit()], "As many layers from layer 0 as this machine's memory holds. The video machine takes the rest.");
   presets.prepend(fitBtn);
-  // The layers no machine or peer holds yet: one click on the video machine completes the chain.
-  const fillNote = h("span.small.muted");
+  // The layers no machine or peer holds yet: a chip picks them, so one click completes the chain.
   let gap = null;
-  const fillBtn = button("Take the missing layers", { variant: "primary", icon: "download",
-    onclick: async () => { if (gap) { fillBtn.disabled = true; await encoderFetch(gap[0], gap[1]); paint(); } } });
-  const fillRow = h("div.row.wrap", { style: { gap: "10px", alignItems: "center" } }, fillNote, h("span.spacer"), fillBtn);
+  const gapChip = chip(() => gap || [0, 0], "The layers no machine or peer holds yet. Taking them completes the chain.");
+  presets.append(gapChip);
   const note = h("div.small.muted"), err = h("div.small.gap-text");
   const shared = h("div.next", icon("info"), h("span.grow"), button("Open My Node", { size: "sm", variant: "ghost", onclick: () => goView("node") }));
-  const dl = button("Download these layers", { variant: "primary", icon: "download", onclick: async () => {
-    dl.disabled = true; await encoderFetch(+lo.value, +last.value + 1); paint(); } });
+  // One button for the pick: download the layers this machine lacks, or remove the ones it has.
+  let act = null;
+  const actBtn = button("Download", { variant: "primary", icon: "download", onclick: async () => {
+    if (!act) return;
+    actBtn.disabled = true;
+    if (act.remove) { text(actBtn.lastChild, "Removing…"); await encoderRemove(act.lo, act.hi); } else await encoderFetch(act.lo, act.hi);
+    act = null; paint(); } });
   const prog = h("div.progress", h("i")), progMsg = h("div.small.muted");
   const mine = h("div.col", { style: { gap: "6px" } });
   const tIn = h("input.input", { placeholder: "A red fox runs through fresh snow at dawn.", "aria-label": "Test prompt" });
@@ -72,58 +95,72 @@ function encoderCard() {
     onclick: async () => { busyTest = true; paint(); await encoderTest(testPrompt); busyTest = false; paint(); } });
   const result = h("div.small.col", { style: { gap: "2px" } });
   const testRow = h("div.col", { style: { gap: "8px" } }, h("div.row", { style: { gap: "8px" } }, h("div.grow", tIn), tBtn), result);
-  for (const el of [lo, last]) el.addEventListener("input", () => paint());
   const el = h("section.card",
     h("div.card-h", h("h2", "Prompt encoder"), h("span.spacer"), h("span.small.faint", "Qwen3-VL-32B · 50 layers")),
     h("div.card-b.col", { style: { gap: "12px" } },
       h("p.small.muted", "H3 reads your prompt with Qwen3-VL's first 50 layers before the video machine draws it. Machines split these layers, so each one downloads only its share. Pick the layers this machine keeps."),
       h("div.lbar-wrap", bar, h("div.lbar-key.small.faint", ...[["srv", "In memory"], ["disk", "Downloaded"], ["load", "Downloading"], ["pick", "Your pick"]].map(([c, l]) => h("span", h(`i.${c}`), l)))),
-      mine, fillRow,
-      h("div.row.wrap", { style: { gap: "12px", alignItems: "flex-end" } },
-        h("div.field", h("label", "From layer"), lo), h("div.field", h("label", "Through layer"), last), presets),
-      shared, note, err, prog, progMsg, h("div.row", h("span.spacer"), dl),
+      mine,
+      presets,
+      shared, note, err, prog, progMsg, h("div.row", h("span.spacer"), actBtn),
       h("div", { style: { borderTop: "1px solid var(--line-1)" } }), h("b.small", "Test"), testRow,
       h("p.small.faint", "The test runs only this machine's layers. Video jobs chain them with the other machines' layers automatically.")));
 
   function paint() {
     enc = state.video.encoder;
     if (!enc) return;
-    const N = n(), a = +lo.value, b = +last.value + 1, f = enc.fetching && !enc.fetching.error ? enc.fetching : null;
-    lo.max = last.max = String(N - 1);
-    const valid = Number.isInteger(a) && Number.isInteger(b) && a >= 0 && b > a && b <= N;
+    const N = n(), f = enc.fetching && !enc.fetching.error ? enc.fetching : null;
     const has = i => enc.slices.find(s => s.lo <= i && i < s.hi);
+    const mk = JSON.stringify(enc.slices);
+    if (mine.dataset.k !== mk) {
+      // Layers came or went: start the pick on the first layers this machine doesn't have.
+      pa = Array.from({ length: N }, (_, i) => i).find(i => !has(i)) ?? N;
+      for (pb = pa; pb < N && !has(pb);) pb++;
+      anchor = null;
+    }
+    pb = Math.min(pb, N); pa = Math.min(pa, pb);
+    const a = pa, b = pb, valid = b > a;
     bar.replaceChildren(...Array.from({ length: N }, (_, i) => {
       const s = has(i);
-      const c = s ? (s.loaded ? ".srv" : ".disk") : f && f.lo <= i && i < f.hi ? ".load" : valid && a <= i && i < b ? ".pick" : "";
-      return h(`i${c}`, { title: `Layer ${i}` });
+      const c = (s ? (s.loaded ? ".srv" : ".disk") : f && f.lo <= i && i < f.hi ? ".load" : "") + (valid && a <= i && i < b ? ".pick" : "");
+      return h(`i${c}`, { title: `Layer ${i}`, "data-i": i });
     }));
-    const mk = JSON.stringify(enc.slices);
-    if (mine.dataset.k !== mk) mine.dataset.k = mk, mine.replaceChildren(...enc.slices.map(s => h("div.row", { style: { gap: "8px" } },
+    if (mine.dataset.k !== mk) mine.dataset.k = mk, mine.replaceChildren(...enc.slices.map(s => h("div.row.enc-slice", { style: { gap: "8px" } },
       h("b", `Layers ${fmt.layers(s.lo, s.hi)}`), h("span.small.muted", `${fmt.bytes(s.bytes)} · ${s.loaded ? "in memory" : "on disk"}${s.lo === 0 ? " · reads the prompt" : ""}${s.hi === N ? " · makes the final output" : ""}`),
       h("span.spacer"), button("Remove", { size: "sm", variant: "ghost", onclick: () => encoderRemove(s.lo, s.hi) }))));
     const textGb = enc.shares_budget ? enc.text_gb || 0 : 0;
     shared.hidden = !textGb;
     if (textGb) text(shared.children[1], `Text-model layers on this machine use ${fmt.gb(textGb)} of the same memory. To keep more encoder layers here, stop serving some text layers in My Node.`);
     const left = enc.mem_budget_gb - textGb - enc.slices.reduce((x, s) => x + bytes(s.lo, s.hi), 0) / 1e9;
+    const held = valid ? Array.from({ length: b - a }, (_, k) => a + k).filter(i => has(i)) : [];
+    const lack = valid ? Array.from({ length: b - a }, (_, k) => a + k).filter(i => !has(i)) : [];
+    const all = enc.slices.reduce((x, s) => x + s.hi - s.lo, 0) >= N;
+    // Download what the pick lacks when that's one run of layers; remove when it's all here already.
+    act = !valid ? null : !lack.length ? { remove: true, lo: a, hi: b }
+      : lack.at(-1) - lack[0] + 1 === lack.length ? { lo: lack[0], hi: lack.at(-1) + 1 } : null;
     let e = "";
-    if (!valid) e = `Pick layers from 0 through ${N - 1}, with the last at or after the first.`;
-    else if (enc.slices.some(s => s.lo < b && a < s.hi)) e = "This machine already has some of these layers.";
-    else if (bytes(a, b) / 1e9 > left) e = `Too big for this machine's memory: these layers need ${fmt.gb(bytes(a, b) / 1e9)} and ${fmt.gb(Math.max(left, 0))} is left${textGb ? " (text-model layers use the rest: stop serving some in My Node to make room)" : ""}. Pick fewer layers.`;
-    text(note, valid ? `Layers ${fmt.layers(a, b)}: ${b - a} layers${a === 0 ? " plus the token embedding" : ""}, about ${fmt.bytes(bytes(a, b))} to download and about the same in memory. `
-      + `${fmt.bytes(enc.disk_free)} free on disk, ${fmt.gb(enc.mem_budget_gb)} memory budget for ${enc.device === "cpu" ? "encoder layers. They run on the CPU from system RAM: the GPU is kept for video" : `models${enc.text_gb ? `, ${fmt.gb(enc.text_gb)} of it used by text-model layers` : ""}`}.` : "");
+    if (act && !act.remove && bytes(act.lo, act.hi) / 1e9 > left) e = `Too big for this machine's memory: layers ${fmt.layers(act.lo, act.hi)} need ${fmt.gb(bytes(act.lo, act.hi) / 1e9)} and ${fmt.gb(Math.max(left, 0))} is left${textGb ? " (text-model layers use the rest: stop serving some in My Node to make room)" : ""}. Pick fewer layers.`;
+    const budget = `${fmt.bytes(enc.disk_free)} free on disk, ${fmt.gb(enc.mem_budget_gb)} memory budget for ${enc.device === "cpu" ? "encoder layers. They run on the CPU from system RAM: the GPU is kept for video" : `models${enc.text_gb ? `, ${fmt.gb(enc.text_gb)} of it used by text-model layers` : ""}`}.`;
+    text(note, !valid ? (all ? `All ${N} layers are on this machine. Pick some to remove them.` : "Pick layers: click a box for the first layer, then another for the last, or drag across them.")
+      : !act ? "Your pick has layers here and gaps between them. Pick only layers this machine has to remove them, or one run of new layers to download."
+      : act.remove ? `Removing layers ${fmt.layers(a, b)} frees about ${fmt.bytes(bytes(a, b))}. Another machine or peer can take them.`
+      : `Layers ${fmt.layers(act.lo, act.hi)}: ${act.hi - act.lo} layers${act.lo === 0 ? " plus the token embedding" : ""}, about ${fmt.bytes(bytes(act.lo, act.hi))} to download and about the same in memory`
+        + `${held.length ? ` (the other ${held.length} you picked are already here)` : ""}. ${budget}`);
     text(err, e || enc.fetching?.error || "");
-    dl.disabled = !!e || !!f;
+    actBtn.hidden = !act;
+    if (act) {
+      cls(actBtn, "primary", !act.remove); cls(actBtn, "danger", !!act.remove);
+      actBtn.firstChild.replaceWith(icon(act.remove ? "x" : "download"));
+      text(actBtn.lastChild, `${act.remove ? "Remove" : "Download"} layers ${fmt.layers(act.lo, act.hi)}`);
+    }
+    actBtn.disabled = !act || !!e || !!f || !!enc.testing;
     prog.hidden = progMsg.hidden = !f;
     if (f) { prog.firstChild.style.width = `${Math.round(100 * f.done / (f.total || 1))}%`; text(progMsg, `Downloading layers ${fmt.layers(f.lo, f.hi)} · ${fmt.bytes(f.done)} of ${fmt.bytes(f.total)}`); }
     gap = missingLayers(state.video.swarm, N);
-    fillRow.hidden = !gap;
-    if (gap) {
-      text(fillNote, `No machine or peer holds encoder layers ${fmt.layers(gap[0], gap[1])} yet (about ${fmt.bytes(bytes(gap[0], gap[1]))}).`);
-      fillBtn.lastChild.textContent = `Take layers ${fmt.layers(gap[0], gap[1])}`;
-      fillBtn.disabled = !!f || enc.slices.some(s => s.lo < gap[1] && gap[0] < s.hi);
-    }
+    gapChip.hidden = !gap;
     fitBtn.hidden = enc.device === "cpu";  // the video machine fills in the rest instead
-    fitBtn.lastChild.textContent = `Most that fit (0–${mostThatFit() - 1})`;
+    const labels = ["First half", "Second half", "All", "Most that fit", "Missing"];
+    chips.forEach(([c, range], k) => { const [x, y] = range(); text(c, `${labels[k]} (${fmt.layers(x, y)})`); c.setAttribute("aria-pressed", String(pa === x && pb === y)); });
     tBtn.disabled = busyTest || enc.testing || !enc.slices.length;
     tBtn.lastChild.textContent = busyTest || enc.testing ? "Testing…" : "Test my layers";
     const t = enc.last_test;
