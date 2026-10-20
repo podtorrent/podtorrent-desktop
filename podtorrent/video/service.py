@@ -42,15 +42,13 @@ MIN_VRAM_GB = 11.0      # a "12 GB" card reports ~11.9
 MIN_RAM_GB = 31.0       # ComfyUI parks the 21 GB video model and 16 GB encoder in RAM
 DISK_SPARE_GB = 15.0    # ComfyUI + venv + outputs
 FAKE = os.environ.get("PODTORRENT_VIDEO_FAKE") == "1"
-# ComfyUI v0.41's new model compiler (CUDA graphs over DynamicVRAM) is the prime suspect for the
-# patchwork/blocky H3 output on RTX 50-series under Windows, so it's off by default. Override with
-# PODTORRENT_COMFY_ARGS (e.g. "" to restore defaults, or "--disable-comfy-compiler --disable-dynamic-vram").
-COMFY_EXTRA_ARGS = os.environ.get("PODTORRENT_COMFY_ARGS", "--disable-comfy-compiler --fp32-vae").split()
-# Workarounds patched into ComfyUI at startup (comma list): "int8" runs the int8 layers at full
-# precision instead of int8 matmuls (the blocky/noise output persisted with the compiler off, and
-# int8 compute was the one path shared by the cu128 and cu130 runs); "kitchen" also turns off
-# comfy_kitchen's CUDA kernels. "none" turns both off.
-COMFY_SAFE = [w for w in os.environ.get("PODTORRENT_COMFY_SAFE", "int8").replace(" ", "").split(",") if w in ("int8", "kitchen")]
+# Extra ComfyUI flags. The blocky H3 output on RTX 50-series came from the int8_convrot model file
+# (see h3.FILES), not from ComfyUI settings; the fp8 model was verified clean with only the model
+# compiler off. Override with PODTORRENT_COMFY_ARGS (e.g. "" for ComfyUI's defaults).
+COMFY_EXTRA_ARGS = os.environ.get("PODTORRENT_COMFY_ARGS", "--disable-comfy-compiler").split()
+# Diagnostic workarounds patched into ComfyUI at startup (comma list, off by default): "int8" runs
+# int8 layers at full precision instead of int8 matmuls; "kitchen" turns off comfy_kitchen's CUDA kernels.
+COMFY_SAFE = [w for w in os.environ.get("PODTORRENT_COMFY_SAFE", "none").replace(" ", "").split(",") if w in ("int8", "kitchen")]
 SAFE_NODE = """# Written by PodTorrent at startup; see COMFY_SAFE in podtorrent/video/service.py.
 import logging
 import os
@@ -225,7 +223,8 @@ class VideoService:
                 "installed": self.installed(), "models_ready": self.models_ready(),
                 "models_gb": _gb(h3.MODELS_BYTES), "missing_gb": 0 if FAKE else _gb(self._missing_bytes()),
                 "setup": self.setup_state, "fake": FAKE, "folder": str(self.root),
-                "update": self.models_ready() and not self.installed() and (self.root / ".installed").exists(),
+                # an earlier install that needs a new engine or a new model file
+                "update": (self.root / ".installed").exists() and not (self.installed() and self.models_ready()),
                 "presets": h3.PRESETS, "modes": h3.MODES, "min_seconds": h3.MIN_SECONDS, "max_seconds": h3.MAX_SECONDS, "jobs": sorted(self.jobs.values(), key=lambda j: -j["created"])}
 
     def _setup_event(self, phase: str, done: float = 0, total: float = 0, message: str = ""):
