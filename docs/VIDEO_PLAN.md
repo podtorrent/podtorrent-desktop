@@ -99,10 +99,14 @@ Prove the Windows PC can render H3 at all, and settle the unknowns.
 
 ### Phase 1: Encoder chain on the Macs
 
-- [ ] Add Qwen3-VL's language model to `shard.py` and `shard_torch.py` (checking how it differs from `qwen3_moe`).
-- [ ] An encoder-mode forward pass: one full pass over the prompt with no token sampling, returning the hidden states from the layers H3 reads.
-- [ ] Parity test (`tests/parity_h3_encoder.py`): split across 2 processes vs. the reference transformers encoder, with a maximum-difference threshold.
-- [ ] Peak memory per half on a 16 GB Mac.
+H3 reads Qwen3-VL-32B truncated to **50 of 64 layers**: raw prompt tokens (no chat template, no padding, no mask), and the conditioning is the un-normalized hidden state after layer 50 (ComfyUI `comfy/text_encoders/minimax.py`). Needed weights: 14.2 GB at 4-bit, not the repo's 19.6 GB.
+
+- [x] Qwen3-VL's language model as encoder slices: `video/encoder_mlx.py` (MLX) and `video/encoder_torch.py` (reuses `shard_torch`'s dense layer; it now also loads unquantized weights).
+- [x] Encoder-mode pass: one causal pass, no KV cache, no sampling, `[1, T, 5120]` out of the last slice.
+- [x] Parity test (`tests/parity_h3_encoder.py`). Real 32B, 2 processes on one Mac, `--no-whole --no-reference`: MLX→torch vs MLX→MLX cos 1.000000, rel ≤ 0.09% on 3 prompts. Not yet checked against ComfyUI's encoder (phase 3, on Windows); the fp32 transformers reference doesn't fit any of our machines at 32B.
+- [x] Peak memory per half on a 16 GB Mac: layers 0–24 + embedding 7.36 GB, layers 25–49 6.92 GB.
+- [x] Per-machine slice download (`slicer.py` handles Qwen3-VL key names and stale repo indexes) and an Encoder card in the Video view to pick, download, test and remove this machine's layers.
+- [ ] Check fp16 wire headroom on long prompts (activations reach the thousands).
 
 **Exit:** two processes on one Mac produce embeddings identical to the reference, within tolerance.
 

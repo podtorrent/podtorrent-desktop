@@ -3,7 +3,8 @@
 import { h, text, cls, fmt } from "../dom.js";
 import { state } from "../store.js";
 import { button, segmented, empty, badge, setBadge } from "../ui.js";
-import { startHost, videoStatus, videoSetup, videoSubmit, videoCancel, videoReport, videoUrl } from "../engine.js";
+import { startHost, videoStatus, videoSetup, videoSubmit, videoCancel, videoReport, videoUrl,
+  encoderStatus, encoderFetch, encoderRemove, encoderTest } from "../engine.js";
 import { copyText } from "../actions.js";
 
 const LENGTHS = [5, 8, 10, 15]; // the model is trained on ~5-15 s clips
@@ -16,6 +17,81 @@ const IDEAS = [
   "Close-up of rain hitting a city window at night, neon reflections, gentle thunder.",
   "A street drummer in a busy market, handheld camera, crowd chatter and steady beat.",
 ];
+
+/** Prompt encoder card: this machine's share of H3's 50 Qwen3-VL layers. Shown on every machine. */
+function encoderCard() {
+  let enc = null, busyTest = false, testPrompt = "";
+  const n = () => enc?.n_layers || 50;
+  const bytes = (lo, hi) => (hi - lo) * enc.layer_bytes + (lo === 0 ? enc.embed_bytes : 0);
+  const bar = h("div.lbar", { role: "img", "aria-label": "Encoder layers on this machine" });
+  const lo = h("input.input.num", { type: "number", min: "0", step: "1", value: "0", "aria-label": "First layer" });
+  const last = h("input.input.num", { type: "number", min: "0", step: "1", value: "24", "aria-label": "Last layer" });
+  const presets = h("div.row.wrap", { style: { gap: "6px" } },
+    ...[["First half", 0, 25], ["Second half", 25, 50], ["All 50", 0, 50]].map(([l, a, b]) =>
+      button(`${l} (${a}–${b - 1})`, { size: "sm", variant: "ghost", onclick: () => { lo.value = a; last.value = b - 1; paint(); } })));
+  const note = h("div.small.muted"), err = h("div.small.gap-text");
+  const dl = button("Download these layers", { variant: "primary", icon: "download", onclick: async () => {
+    dl.disabled = true; await encoderFetch(+lo.value, +last.value + 1); paint(); } });
+  const prog = h("div.progress", h("i")), progMsg = h("div.small.muted");
+  const mine = h("div.col", { style: { gap: "6px" } });
+  const tIn = h("input.input", { placeholder: "A red fox runs through fresh snow at dawn.", "aria-label": "Test prompt" });
+  tIn.addEventListener("input", () => { testPrompt = tIn.value; });
+  const tBtn = button("Test my layers", { icon: "play", tip: "Reads the prompt with the layers on this machine and reports time, memory and the output.",
+    onclick: async () => { busyTest = true; paint(); await encoderTest(testPrompt); busyTest = false; paint(); } });
+  const result = h("div.small.col", { style: { gap: "2px" } });
+  const testRow = h("div.col", { style: { gap: "8px" } }, h("div.row", { style: { gap: "8px" } }, h("div.grow", tIn), tBtn), result);
+  for (const el of [lo, last]) el.addEventListener("input", () => paint());
+  const el = h("section.card",
+    h("div.card-h", h("h2", "Prompt encoder"), h("span.spacer"), h("span.small.faint", "Qwen3-VL-32B · 50 layers")),
+    h("div.card-b.col", { style: { gap: "12px" } },
+      h("p.small.muted", "H3 reads your prompt with Qwen3-VL's first 50 layers before the video machine draws it. Machines split these layers, so each one downloads only its share. Pick the layers this machine keeps."),
+      h("div.lbar-wrap", bar, h("div.lbar-key.small.faint", ...[["srv", "In memory"], ["disk", "Downloaded"], ["load", "Downloading"], ["pick", "Your pick"]].map(([c, l]) => h("span", h(`i.${c}`), l)))),
+      mine,
+      h("div.row.wrap", { style: { gap: "12px", alignItems: "flex-end" } },
+        h("div.field", h("label", "From layer"), lo), h("div.field", h("label", "Through layer"), last), presets),
+      note, err, prog, progMsg, h("div.row", h("span.spacer"), dl),
+      h("div", { style: { borderTop: "1px solid var(--line-1)" } }), h("b.small", "Test"), testRow,
+      h("p.small.faint", "Handing the result to the next machine or peer comes with the video job protocol. For now, each machine tests its own layers.")));
+
+  function paint() {
+    enc = state.video.encoder;
+    if (!enc) return;
+    const N = n(), a = +lo.value, b = +last.value + 1, f = enc.fetching && !enc.fetching.error ? enc.fetching : null;
+    lo.max = last.max = String(N - 1);
+    const valid = Number.isInteger(a) && Number.isInteger(b) && a >= 0 && b > a && b <= N;
+    const has = i => enc.slices.find(s => s.lo <= i && i < s.hi);
+    bar.replaceChildren(...Array.from({ length: N }, (_, i) => {
+      const s = has(i);
+      const c = s ? (s.loaded ? ".srv" : ".disk") : f && f.lo <= i && i < f.hi ? ".load" : valid && a <= i && i < b ? ".pick" : "";
+      return h(`i${c}`, { title: `Layer ${i}` });
+    }));
+    const mk = JSON.stringify(enc.slices);
+    if (mine.dataset.k !== mk) mine.dataset.k = mk, mine.replaceChildren(...enc.slices.map(s => h("div.row", { style: { gap: "8px" } },
+      h("b", `Layers ${fmt.layers(s.lo, s.hi)}`), h("span.small.muted", `${fmt.bytes(s.bytes)} · ${s.loaded ? "in memory" : "on disk"}${s.lo === 0 ? " · reads the prompt" : ""}${s.hi === N ? " · makes the final output" : ""}`),
+      h("span.spacer"), button("Remove", { size: "sm", variant: "ghost", onclick: () => encoderRemove(s.lo, s.hi) }))));
+    let e = "";
+    if (!valid) e = `Pick layers from 0 through ${N - 1}, with the last at or after the first.`;
+    else if (enc.slices.some(s => s.lo < b && a < s.hi)) e = "This machine already has some of these layers.";
+    text(note, valid ? `Layers ${fmt.layers(a, b)}: ${b - a} layers${a === 0 ? " plus the token embedding" : ""}, about ${fmt.bytes(bytes(a, b))} to download and about the same in memory. `
+      + `${fmt.bytes(enc.disk_free)} free on disk, ${fmt.gb(enc.mem_budget_gb)} memory budget for models.` : "");
+    text(err, e || enc.fetching?.error || "");
+    dl.disabled = !!e || !!f;
+    prog.hidden = progMsg.hidden = !f;
+    if (f) { prog.firstChild.style.width = `${Math.round(100 * f.done / (f.total || 1))}%`; text(progMsg, `Downloading layers ${fmt.layers(f.lo, f.hi)} · ${fmt.bytes(f.done)} of ${fmt.bytes(f.total)}`); }
+    tBtn.disabled = busyTest || enc.testing || !enc.slices.length;
+    tBtn.lastChild.textContent = busyTest || enc.testing ? "Testing…" : "Test my layers";
+    const t = enc.last_test;
+    if (!t) result.replaceChildren(h("span.faint", enc.slices.length ? "No test yet. The first test also loads the layers into memory." : "Download some layers to test them."));
+    else if (t.error && !t.runs) result.replaceChildren(h("span.gap-text", t.error));
+    else result.replaceChildren(
+      h("span", h("b", t.ok ? (t.complete ? "Done: full prompt encoding" : "Done: this machine's share") : "Problem"), ` · ${t.tokens} tokens · ${t.seconds}s · peak ${t.peak_gb ? t.peak_gb + " GB" : "–"}`),
+      ...t.runs.map(r => h("span.muted", `Layers ${fmt.layers(r.lo, r.hi)}: ${r.load_s ? `loaded in ${r.load_s}s, ` : ""}ran in ${r.run_s}s`)),
+      h("span.muted", `Output ${t.shape.join(" × ")} · mean |x| ${t.mean_abs.toFixed(3)} · max |x| ${t.max_abs.toFixed(1)}`),
+      t.stand_in ? h("span.faint", "These layers don't start at layer 0, so they ran on a stand-in input: the timing and memory are real, the numbers aren't a real encoding.") : "",
+      t.error ? h("span.gap-text", t.error) : "");
+  }
+  return { el, paint };
+}
 
 let pick = { preset: "draft", seconds: 5, mode: "best" }, draft = "";
 const elapsed = (a, b) => { const s = Math.max(0, Math.round((b || Date.now() / 1000) - a)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`; };
@@ -120,6 +196,8 @@ export default {
       });
     }
 
+    const enc = encoderCard();
+    let encAsked = false;
     const page = h("div.page.video");
     root.append(page);
     let shown = null, asked = false;
@@ -129,13 +207,15 @@ export default {
     return {
       unmount() { clearInterval(tick); },
       update(s) {
-        if (s.source !== "live" || s.engine.phase !== "running") { asked = false; return show("offline", offline); }
+        if (s.source !== "live" || s.engine.phase !== "running") { asked = encAsked = false; return show("offline", offline); }
+        if (!encAsked) { encAsked = true; encoderStatus(); }
+        enc.paint();
         if (!s.video.status) { if (!asked) { asked = true; videoStatus(); } return show("loading", loading); }
         const st = s.video.status, cap = st.capability;
         const ready = st.installed && st.models_ready;
         if (!cap.ok && !ready) {
-          unsupported.replaceChildren(empty({ icon: "video", title: "This machine can't make videos yet", body: cap.reason }));
-          return show(`unsupported:${cap.reason}`, unsupported);
+          unsupported.replaceChildren(empty({ icon: "video", title: "This machine can't render videos", body: `${cap.reason} It can still take part by keeping some prompt encoder layers (above).` }));
+          return show(`unsupported:${cap.reason}`, enc.el, unsupported);
         }
         if (!ready) {
           const su = s.video.setup || st.setup || {};
@@ -151,12 +231,12 @@ export default {
           text(setupErr, su.phase === "error" ? `${su.message}. Press Set up video to continue where it stopped.` : "");
           setupBtn.disabled = busy;
           setupBtn.lastChild.textContent = su.phase === "error" ? "Try again" : busy ? (st.update ? "Updating…" : "Setting up…") : st.update ? "Update" : "Set up video";
-          return show("setup", setupCard);
+          return show("setup", setupCard, enc.el);
         }
         if (!presetSeg.firstChild) presetSeg.append(segmented(Object.entries(st.presets).map(([k, p]) => ({ value: k, label: p.label, tip: `${p.width}×${p.height}` })), pick.preset, v => { pick.preset = v; }, "Shape"));
         if (!modeSeg.firstChild) modeSeg.append(segmented(Object.entries(st.modes || { best: { label: "Best" } }).map(([k, m]) => ({ value: k, label: m.label, tip: `${m.steps} steps` })), pick.mode, v => { pick.mode = v; }, "Quality"));
         text(warn, [cap.warn, "Draft is fastest (minutes). HD on a 12 GB GPU can take an hour or more. Best is sharper; Fast takes about half the time."].filter(Boolean).join(" "));
-        show("ready", composer, jobsBox);
+        show("ready", composer, enc.el, jobsBox);
         paintJobs(s);
       },
       focus() { prompt.focus(); },

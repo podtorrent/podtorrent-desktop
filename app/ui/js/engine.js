@@ -314,3 +314,28 @@ export async function videoReport(id) {
   try { const r = await get(`/api/video/report/${id}`, 8000); return r.ok ? r.body : null; }
   catch { return null; }
 }
+
+// ---------- H3 prompt encoder: this machine's layer slices ----------
+export async function encoderStatus() {
+  if (!live()) return null;
+  try {
+    const r = await get("/api/video/encoder", 8000);
+    if (!r.ok) return null;
+    state.video.encoder = r.body; commit();
+    return r.body;
+  } catch { return null; }
+}
+const encoderPost = async (path, body, what) => {
+  const r = await videoPost(path, body, what);
+  if (r?.slices) { state.video.encoder = r; commit(); }
+  return r;
+};
+export const encoderFetch = (lo, hi) => encoderPost("/api/video/encoder/fetch", { lo, hi }, "Couldn't download the layers");
+export const encoderRemove = (lo, hi) => encoderPost("/api/video/encoder/remove", { lo, hi }, "Couldn't remove the layers");
+export async function encoderTest(prompt) {
+  try {
+    const r = await post("/api/video/encoder/test", { prompt }, 15 * 60000);
+    if (!r.ok) { toast("Couldn't test the encoder", "gap", r.body?.error || `HTTP ${r.status}`); return null; }
+    return r.body;
+  } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); return null; }
+}

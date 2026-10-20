@@ -2,10 +2,11 @@
 
 from aiohttp import web
 
+from .encoder_node import EncoderNode
 from .service import VideoService
 
 
-def routes(svc: VideoService) -> list:
+def routes(svc: VideoService, enc: EncoderNode) -> list:
     def err(e: Exception, status=400):
         return web.json_response({"error": str(e)}, status=status)
 
@@ -49,6 +50,32 @@ def routes(svc: VideoService) -> list:
     async def report(request):
         return _file(request, ".json")
 
-    return [web.get("/api/video/status", status), web.post("/api/video/setup", setup),
+    async def enc_status(_):
+        return web.json_response(enc.status())
+
+    async def enc_fetch(request):
+        b = await request.json()
+        try:
+            return web.json_response(enc.start_fetch(int(b["lo"]), int(b["hi"])))
+        except (KeyError, ValueError, RuntimeError) as e:
+            return err(e)
+
+    async def enc_remove(request):
+        b = await request.json()
+        try:
+            return web.json_response(enc.remove(int(b["lo"]), int(b["hi"])))
+        except (KeyError, ValueError) as e:
+            return err(e)
+
+    async def enc_test(request):
+        b = await request.json()
+        try:
+            return web.json_response(await enc.test(str(b.get("prompt") or "").strip() or "A red fox runs through snow."))
+        except RuntimeError as e:
+            return err(e)
+
+    return [web.get("/api/video/encoder", enc_status), web.post("/api/video/encoder/fetch", enc_fetch),
+            web.post("/api/video/encoder/remove", enc_remove), web.post("/api/video/encoder/test", enc_test),
+            web.get("/api/video/status", status), web.post("/api/video/setup", setup),
             web.post("/api/video/jobs", submit), web.post("/api/video/jobs/{id}/cancel", cancel),
             web.get("/api/video/file/{id}", video), web.get("/api/video/report/{id}", report)]

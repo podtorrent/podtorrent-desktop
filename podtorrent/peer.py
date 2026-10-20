@@ -34,6 +34,7 @@ from .route import Hop, Offer, coverage, plan
 from .backend import Shard
 from .slicer import download_slice, estimate_slice_bytes, fetch_meta
 from .video import api as video_api
+from .video.encoder_node import EncoderNode
 from .video.service import VideoService
 
 STATIC = Path(__file__).parent / "static"
@@ -1032,7 +1033,7 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
                     web.post("/api/unserve", app_state.unserve),
                     web.post("/api/chat", app_state.chat), web.post("/api/complete", app_state.complete),
                     web.post("/api/shutdown", app_state.shutdown)])
-    app.add_routes(video_api.routes(app_state.video))
+    app.add_routes(video_api.routes(app_state.video, EncoderNode(app_state.emit)))
     app.on_cleanup.append(lambda _: asyncio.to_thread(app_state.video.stop))
 
     def load_all():  # one at a time: each slice's memory check sees the ones before it

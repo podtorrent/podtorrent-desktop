@@ -43,7 +43,7 @@ function blank() {
     feed: [],
     health: null,
     swarm: { status: "offline", selfId: "", peers: [] }, // global registry: every PodTorrent Mac online
-    video: { status: null, setup: null, jobs: {} }, // MiniMax-H3 on this machine: capability, setup, jobs by id
+    video: { status: null, setup: null, jobs: {}, encoder: null }, // MiniMax-H3 on this machine: capability, setup, jobs by id
     booted: false,
   };
 }
@@ -170,6 +170,14 @@ export function applyEvent(ev) {
       if (state.video.status) Object.assign(state.video.status, { installed: ev.installed, models_ready: ev.models_ready });
       if (ev.phase === "ready" && was && was !== "ready") feed("download", "Video is ready on this machine", "", "success", ts);
       if (ev.phase === "error" && was !== "error") feed("error", "Video setup stopped", ev.message, "error", ts);
+      break;
+    }
+    case "video_encoder": {
+      const { type, ts: _t, ...enc } = ev;
+      const was = state.video.encoder;
+      state.video.encoder = enc;
+      if (was?.fetching && !was.fetching.error && !enc.fetching) feed("download", "Encoder layers downloaded", `Layers ${fmt.layers(was.fetching.lo, was.fetching.hi)}`, "success", ts);
+      if (enc.fetching?.error && !was?.fetching?.error) feed("error", "Encoder download stopped", enc.fetching.error, "error", ts);
       break;
     }
     case "video_job": {
