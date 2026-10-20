@@ -5,7 +5,9 @@ import { h, text, cls, fmt } from "../dom.js";
 import { state } from "../store.js";
 import { button, segmented, empty, badge, setBadge } from "../ui.js";
 import { startHost, videoStatus, videoSetup, videoSubmit, videoCancel, videoReport, videoUrl,
-  encoderStatus, encoderFetch, encoderRemove, encoderTest, videoSwarmStatus, videoSwarmSubmit } from "../engine.js";
+  encoderStatus, encoderFetch, encoderRemove, encoderTest, videoSwarmStatus, videoSwarmSubmit, unserveSlice } from "../engine.js";
+import { go as goView } from "../actions.js";
+import { icon } from "../icons.js";
 import { videoFlow, activeStage } from "../viz/videoflow.js";
 import { copyText } from "../actions.js";
 
@@ -59,6 +61,7 @@ function encoderCard() {
     onclick: async () => { if (gap) { fillBtn.disabled = true; await encoderFetch(gap[0], gap[1]); paint(); } } });
   const fillRow = h("div.row.wrap", { style: { gap: "10px", alignItems: "center" } }, fillNote, h("span.spacer"), fillBtn);
   const note = h("div.small.muted"), err = h("div.small.gap-text");
+  const shared = h("div.next", icon("info"), h("span.grow"), button("Open My Node", { size: "sm", variant: "ghost", onclick: () => goView("node") }));
   const dl = button("Download these layers", { variant: "primary", icon: "download", onclick: async () => {
     dl.disabled = true; await encoderFetch(+lo.value, +last.value + 1); paint(); } });
   const prog = h("div.progress", h("i")), progMsg = h("div.small.muted");
@@ -78,7 +81,7 @@ function encoderCard() {
       mine, fillRow,
       h("div.row.wrap", { style: { gap: "12px", alignItems: "flex-end" } },
         h("div.field", h("label", "From layer"), lo), h("div.field", h("label", "Through layer"), last), presets),
-      note, err, prog, progMsg, h("div.row", h("span.spacer"), dl),
+      shared, note, err, prog, progMsg, h("div.row", h("span.spacer"), dl),
       h("div", { style: { borderTop: "1px solid var(--line-1)" } }), h("b.small", "Test"), testRow,
       h("p.small.faint", "The test runs only this machine's layers. Video jobs chain them with the other machines' layers automatically.")));
 
@@ -98,9 +101,14 @@ function encoderCard() {
     if (mine.dataset.k !== mk) mine.dataset.k = mk, mine.replaceChildren(...enc.slices.map(s => h("div.row", { style: { gap: "8px" } },
       h("b", `Layers ${fmt.layers(s.lo, s.hi)}`), h("span.small.muted", `${fmt.bytes(s.bytes)} · ${s.loaded ? "in memory" : "on disk"}${s.lo === 0 ? " · reads the prompt" : ""}${s.hi === N ? " · makes the final output" : ""}`),
       h("span.spacer"), button("Remove", { size: "sm", variant: "ghost", onclick: () => encoderRemove(s.lo, s.hi) }))));
+    const textGb = enc.shares_budget ? enc.text_gb || 0 : 0;
+    shared.hidden = !textGb;
+    if (textGb) text(shared.children[1], `Text-model layers on this machine use ${fmt.gb(textGb)} of the same memory. To keep more encoder layers here, stop serving some text layers in My Node.`);
+    const left = enc.mem_budget_gb - textGb - enc.slices.reduce((x, s) => x + bytes(s.lo, s.hi), 0) / 1e9;
     let e = "";
     if (!valid) e = `Pick layers from 0 through ${N - 1}, with the last at or after the first.`;
     else if (enc.slices.some(s => s.lo < b && a < s.hi)) e = "This machine already has some of these layers.";
+    else if (bytes(a, b) / 1e9 > left) e = `Too big for this machine's memory: these layers need ${fmt.gb(bytes(a, b) / 1e9)} and ${fmt.gb(Math.max(left, 0))} is left${textGb ? " (text-model layers use the rest: stop serving some in My Node to make room)" : ""}. Pick fewer layers.`;
     text(note, valid ? `Layers ${fmt.layers(a, b)}: ${b - a} layers${a === 0 ? " plus the token embedding" : ""}, about ${fmt.bytes(bytes(a, b))} to download and about the same in memory. `
       + `${fmt.bytes(enc.disk_free)} free on disk, ${fmt.gb(enc.mem_budget_gb)} memory budget for ${enc.device === "cpu" ? "encoder layers. They run on the CPU from system RAM: the GPU is kept for video" : `models${enc.text_gb ? `, ${fmt.gb(enc.text_gb)} of it used by text-model layers` : ""}`}.` : "");
     text(err, e || enc.fetching?.error || "");
@@ -142,6 +150,11 @@ export default {
     const offline = empty({ icon: "video", title: "Start your node to make videos", body: "Video runs on this machine's GPU through the PodTorrent engine.",
       actions: [button("Start My Node", { variant: "primary", icon: "power", onclick: () => startHost() })] });
     const unsupported = h("div");
+    const pausedMsg = h("div.grow");
+    const pausedBox = h("div.next", icon("alert"), pausedMsg,
+      button("Stop serving text layers", { size: "sm", variant: "primary", onclick: async () => {
+        for (const x of [...state.slices]) await unserveSlice(x.model, x.lo, x.hi);
+        videoStatus(); } }));
     const loading = h("div.card.pad.muted", "Checking this machine…");
 
     // ---- setup ----
@@ -257,7 +270,7 @@ export default {
     let encAsked = false;
     const page = h("div.page.video");
     root.append(page);
-    let shown = null, asked = false, swarmAsked = 0;
+    let shown = null, asked = false, swarmAsked = 0, slicesKey = null;
     const show = (key, ...els) => { if (shown !== key) { shown = key; page.replaceChildren(...els); } };
     const tick = setInterval(() => paintJobs(state), 1000);
 
@@ -268,6 +281,8 @@ export default {
         if (!encAsked) { encAsked = true; encoderStatus(); }
         enc.paint();
         if (Date.now() - swarmAsked > 3000) { swarmAsked = Date.now(); videoSwarmStatus(); }
+        const sk = JSON.stringify(s.slices.map(x => [x.model, x.lo, x.hi, x.loaded]));
+        if (sk !== slicesKey) { if (slicesKey !== null) { videoStatus(); encoderStatus(); } slicesKey = sk; }
         if (!s.video.status) { if (!asked) { asked = true; videoStatus(); } return show("loading", loading); }
         const st = s.video.status, cap = st.capability;
         const ready = st.installed && st.models_ready;
@@ -304,7 +319,9 @@ export default {
           show(`setup:${viaSwarm}`, ...work, setupCard, ...tail);
           return paintJobs(s);
         }
-        show("ready", composer, ...tail);
+        pausedBox.hidden = !st.paused;
+        text(pausedMsg, st.paused || "");
+        show("ready", pausedBox, composer, ...tail);
         paintJobs(s);
       },
       focus() { prompt.focus(); },

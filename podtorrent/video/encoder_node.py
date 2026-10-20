@@ -113,8 +113,20 @@ class EncoderNode:
         if need / backend.GB > left:
             return (f"Too big for this machine's memory: these layers need {need / backend.GB:.1f} GB and "
                     f"{max(left, 0):.1f} GB is left"
-                    + (f" ({text:.1f} GB is used by text-model layers)" if text >= 0.1 else "") + ". Pick fewer layers.")
+                    + (f" ({text:.1f} GB is used by text-model layers: stop serving some in My Node to make room)" if text >= 0.1 else "")
+                    + ". Pick fewer layers.")
         return None
+
+    def check_load(self, lo: int, hi: int):
+        """Before a video job loads a slice: refuse clearly instead of running out of memory (chats
+        on text-model layers can grow past what was planned at download time)."""
+        if (lo, hi) in self._shards or not self.shares_budget():
+            return
+        need, free = slice_bytes(lo, hi) / backend.GB, backend.mem_free_gb()
+        if need + 0.5 > free:
+            raise RuntimeError(f"Not enough free memory on this machine for its video encoder layers {lo}–{hi - 1}: "
+                               f"they need {need:.1f} GB and {free:.1f} GB is free. Stop serving some text-model "
+                               "layers (My Node) or keep fewer encoder layers (Video).")
 
     def start_fetch(self, lo: int, hi: int) -> dict:
         if why := self.check(lo, hi):

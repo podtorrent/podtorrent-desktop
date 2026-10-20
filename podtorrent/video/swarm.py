@@ -59,7 +59,7 @@ class VideoSwarm:
     # ---------- roles ----------
     def roles(self) -> list[str]:
         out = [f"h3-encoder:{s['lo']}:{s['hi']}" for s in self.enc.slices()]
-        if self.svc.capability().get("ok") and self.svc.render_ready():
+        if self.svc.capability().get("ok") and self.svc.render_ready() and not self.svc.paused():
             out.append(route.video_role(self.svc.gpu.get("vram_gb", 0), self.svc.ram or 0))
         return sorted(set(out + FAKE_ROLES))
 
@@ -193,6 +193,7 @@ class VideoSwarm:
         from .. import backend
         from .encoder_mlx import tokenize
         lo, hi = parse_encoder(role)
+        self.enc.check_load(lo, hi)
         shard = self.enc._shard(lo, hi)
         if backend.NAME == "mlx":
             import mlx.core as mx

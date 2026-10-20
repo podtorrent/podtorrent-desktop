@@ -158,6 +158,9 @@ class VideoService:
         self.proc: subprocess.Popen | None = None
         self.running: str | None = None
         self.cancelled: set[str] = set()
+        # Memory text-model layers hold on this GPU (set by the peer on CUDA machines). Rendering needs
+        # the whole card, so while any are served, rendering pauses with a message saying why.
+        self.gpu_text_gb: Callable[[], float] = lambda: 0.0
         self.watchers: dict[str, Callable[[dict], None]] = {}  # job id -> called on every event (swarm renders)
 
     # ---------- state ----------
@@ -200,6 +203,14 @@ class VideoService:
             return self.setup_state["phase"] == "ready"
         return all((self.models / folder / name).exists() for folder, name, _ in h3.FILES)
 
+    def paused(self) -> str:
+        """Why rendering is paused on this machine, or "". Only once video is set up."""
+        held = self.gpu_text_gb()
+        if held < 0.3 or not (self.installed() or FAKE):
+            return ""
+        return (f"Rendering is paused: this machine's GPU is serving text-model layers ({held:.1f} GB), and video "
+                "needs all of its memory. Stop serving them (My Node) to render again, or serve text layers on another machine.")
+
     def render_ready(self) -> bool:
         """Can render swarm jobs: those arrive encoded, so ComfyUI's text encoder isn't needed."""
         if FAKE:
@@ -227,7 +238,7 @@ class VideoService:
 
     def status(self) -> dict:
         return {"gpu": self.gpu, "ram_gb": self.ram, "capability": self.capability(),
-                "installed": self.installed(), "models_ready": self.models_ready(), "render_ready": self.render_ready(),
+                "installed": self.installed(), "models_ready": self.models_ready(), "render_ready": self.render_ready(), "paused": self.paused(),
                 "models_gb": _gb(h3.MODELS_BYTES), "missing_gb": 0 if FAKE else _gb(self._missing_bytes()),
                 "setup": self.setup_state, "fake": FAKE, "folder": str(self.root),
                 # an earlier install that needs a new engine or a new model file
@@ -413,6 +424,8 @@ class VideoService:
             raise ValueError(f"unknown mode {mode!r}")
         if not (self.installed() and self.models_ready()):
             raise RuntimeError("Set up video on this machine first")
+        if why := self.paused():
+            raise RuntimeError(why)
         seconds = min(h3.MAX_SECONDS, max(h3.MIN_SECONDS, float(seconds)))
         p = h3.PRESETS[preset]
         job = {"id": uuid.uuid4().hex[:10], "node": self.node, "prompt": prompt[:4000], "preset": preset,
@@ -430,6 +443,8 @@ class VideoService:
             raise ValueError(f"unknown mode {mode!r}")
         if not self.render_ready():
             raise RuntimeError("Video isn't set up on this machine.")
+        if why := self.paused():
+            raise RuntimeError(why)
         if width % 32 or height % 32 or width * height > 1344 * 768 or min(width, height) < 32:
             raise ValueError(f"unsupported size {width}x{height}")
         seconds = min(h3.MAX_SECONDS, max(h3.MIN_SECONDS, float(seconds)))

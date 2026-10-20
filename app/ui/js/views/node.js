@@ -78,7 +78,7 @@ export default {
         h("div.col", { style: { gap: "6px" } }, h("div.row", h("span.wl-tag.text", "Text"), h("b", "Text models"), h("span.small.faint", "Layers kept in memory, used by every chat that routes through this machine")), sliceList),
         h("div.col", { style: { gap: "6px" } }, h("div.row", h("span.wl-tag.video", "Video"), h("b", "Video (MiniMax-H3)"), h("span.small.faint", "Prompt encoder layers and rendering, used by video jobs")), videoList),
         h("p.small.muted.policy", "Both kinds of work run side by side. They share this machine's memory, so a new download is checked against what the other already uses. Requests are handled as they arrive, so a video job and a chat at the same moment both run, each a little slower.")));
-    let askedVideo = false;
+    let askedVideo = false, slicesKey = "";
     function paintVideo(s) {
       const enc = s.video.encoder, st = s.video.status;
       const rows = [];
@@ -90,12 +90,13 @@ export default {
         h("div.d", `${fmt.bytes(enc.fetching.done)} of ${fmt.bytes(enc.fetching.total)}`)), badge(`Downloading ${fmt.pct(enc.fetching.done / (enc.fetching.total || 1))}`, "degraded", { dot: true, pulse: true })));
       if (st) {
         const cap = st.capability || {};
-        const [label, kind, d] = st.render_ready ? ["Renders", "serving", `Renders video jobs on ${st.gpu?.name || "this machine's GPU"}`]
+        const [label, kind, d] = st.paused ? ["Paused", "degraded", st.paused]
+          : st.render_ready ? ["Renders", "serving", `Renders video jobs on ${st.gpu?.name || "this machine's GPU"}`]
           : cap.ok ? [st.setup?.phase === "install" || st.setup?.phase === "models" ? "Setting up" : "Not set up", "neutral", "This machine can render video. Set it up in Video."]
           : ["Not on this machine", "neutral", `${cap.reason || "No suitable GPU."} Another machine or peer in the swarm renders.`];
         rows.push(h("div.list-row", h("div.grow", h("div.t", h("b", "Rendering")), h("div.d", d)), badge(label, kind, { dot: true })));
       }
-      const k = JSON.stringify([enc?.slices, enc?.fetching, enc?.device, st?.render_ready, st?.capability, st?.setup?.phase]);
+      const k = JSON.stringify([enc?.slices, enc?.fetching, enc?.device, st?.render_ready, st?.paused, st?.capability, st?.setup?.phase]);
       if (videoList.dataset.k !== k) {
         videoList.dataset.k = k;
         videoList.replaceChildren(...(rows.length ? rows : [h("div.small.muted", "No video work on this machine yet.")]));
@@ -220,7 +221,8 @@ export default {
         text(hv.layers, loaded.length ? String(loaded.reduce((a, x) => a + x.hi - x.lo, 0)) : "None yet");
         paintSlices(s);
         if (s.source === "live" && phase === "running") {
-          if (!askedVideo) { askedVideo = true; encoderStatus(); videoStatus(); }
+          const sk = JSON.stringify(s.slices.map(x => [x.model, x.lo, x.hi, x.loaded]));
+          if (!askedVideo || sk !== slicesKey) { askedVideo = true; slicesKey = sk; encoderStatus(); videoStatus(); }
           paintVideo(s);
         } else { askedVideo = false; videoList.replaceChildren(h("div.small.muted", "Shown while your node runs.")); memBar.hidden = memKey.hidden = true; }
         const day = new Date().toISOString().slice(0, 10);

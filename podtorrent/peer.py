@@ -218,7 +218,8 @@ class Slices:
             if need + MEM_HEADROOM_GB > free:
                 raise MemoryError(f"{model.split('/')[-1]} layers [{lo},{hi}) need ~{need:.1f} GB, "
                                   f"but this machine has {max(free, 0):.1f} GB free for models"
-                                  + (f" ({video:.1f} GB is kept for its video encoder layers)" if video >= 0.1 else ""))
+                                  + (f" ({video:.1f} GB is kept for its video encoder layers: remove some in the Video view "
+                                     "to make room)" if video >= 0.1 else ""))
             s = self.items[(model, lo, hi)] = Served(model, lo, hi, n)
 
             def emit(phase, done=0, total=0, msg=""):
@@ -1053,6 +1054,8 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
     # Text-model slices and video encoder layers share one memory budget (unless the encoder runs on the CPU).
     enc.text_gb = app_state.slices.held_gb
     app_state.slices.reserved = enc.reserved_gb
+    if B.NAME == "torch" and B.CUDA:  # text layers on this GPU pause rendering (see VideoService.paused)
+        app_state.video.gpu_text_gb = app_state.slices.held_gb
     app_state.video_swarm = VideoSwarm(app_state.net, app_state.video, enc, app_state.me)
 
     def node_info():
