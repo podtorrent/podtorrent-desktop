@@ -123,11 +123,14 @@ H3 reads Qwen3-VL-32B truncated to **50 of 64 layers**: raw prompt tokens (no ch
 
 ### Phase 3: Video worker on Windows
 
-- [ ] `worker_torch.py`: load the transformer and VAEs once and keep them loaded. Accept embeddings and run the steps, with progress events every step.
-- [ ] Settings for quantization and offload, set automatically from the machine's GPU memory and system RAM.
-- [ ] Cancellation between steps. Out-of-memory errors fail the job cleanly.
-- [ ] Downloading the model through the existing catalog, without range downloads (whole files are fine for a single machine).
-- [ ] The Windows installer includes diffusers and its dependencies. Click and run still works.
+Built on release 1's headless ComfyUI rather than a separate diffusers worker (see Revision): the engine already keeps the model loaded, sets offload from the machine's memory, reports every step and handles cancel and errors.
+
+- [x] Swarm renders go through the same queue as local jobs (`VideoService.submit_render`). The hidden states land as a `.npy` in `~/.podtorrent/video/inbox/`. A custom node (`h3.EMBEDS_NODE`, written into `custom_nodes/` at engine start) turns them into what `MiniMaxH3ImageToVideo` builds for a text prompt: `[[h, {minimax_token_tags: ones(T)}]]` and the empty AV latent. ComfyUI's own text encoder isn't loaded for these jobs.
+- [x] `h3-video` needs only the video model, LoRA and VAEs (`render_ready`), not ComfyUI's 15.7 GB text encoder.
+- [x] Progress (queue wait, loading, each step, decoding) goes back to the requester. Cancel from the requester interrupts ComfyUI or drops the job from the queue. Errors (including out of memory) fail the job and are reported to the requester.
+- [x] `tests/video_swarm.py --queue`: C renders through its real queue in simulation mode; passes, including cancel.
+- [ ] Run on the Windows PC with real Mac encoder halves. Compare the MLX 4-bit encoder's output against ComfyUI's nvfp4 encoder on the same prompt, and the renders on a fixed seed.
+- [ ] Check the Windows installer still works with click and run (no new dependencies: the custom node uses only ComfyUI's venv).
 
 **Exit:** the full v1 path works. Text on any peer goes through the Mac encoder chain to the Windows PC, and a real MP4 comes back.
 

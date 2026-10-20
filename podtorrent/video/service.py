@@ -158,6 +158,7 @@ class VideoService:
         self.proc: subprocess.Popen | None = None
         self.running: str | None = None
         self.cancelled: set[str] = set()
+        self.watchers: dict[str, Callable[[dict], None]] = {}  # job id -> called on every event (swarm renders)
 
     # ---------- state ----------
     def _load_jobs(self) -> dict:
@@ -199,6 +200,13 @@ class VideoService:
             return self.setup_state["phase"] == "ready"
         return all((self.models / folder / name).exists() for folder, name, _ in h3.FILES)
 
+    def render_ready(self) -> bool:
+        """Can render swarm jobs: those arrive encoded, so ComfyUI's text encoder isn't needed."""
+        if FAKE:
+            return self.setup_state["phase"] == "ready"
+        return self.installed() and all((self.models / folder / name).exists()
+                                        for folder, name, _ in h3.FILES if folder != "text_encoders")
+
     def capability(self) -> dict:
         """Can this machine render? {ok, reason, warn}."""
         if "error" in self.gpu:
@@ -235,6 +243,8 @@ class VideoService:
     def _job_event(self, job: dict, **changes):
         job.update(changes)
         self.emit("video_job", key=f"video:{job['id']}", **job)
+        if w := self.watchers.get(job["id"]):
+            w(job)
         if job["state"] in ("done", "failed", "cancelled") or "state" in changes:
             self._save_jobs()
 
@@ -365,6 +375,7 @@ class VideoService:
                "--disable-auto-launch", "--output-directory", str(out),
                "--extra-model-paths-config", str(self.root / "extra_model_paths.yaml"), *COMFY_EXTRA_ARGS]
         (self.comfy_dir / "custom_nodes" / "podtorrent_safe.py").write_text(SAFE_NODE, encoding="utf-8")
+        (self.comfy_dir / "custom_nodes" / "podtorrent_h3_embeds.py").write_text(h3.EMBEDS_NODE, encoding="utf-8")
         env = {**os.environ, "PODTORRENT_COMFY_SAFE_ACTIVE": ",".join(COMFY_SAFE)}
         log = open(self.root / "comfyui.log", "w", encoding="utf-8")
         self.proc = subprocess.Popen(cmd, cwd=self.comfy_dir, env=env, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -410,6 +421,28 @@ class VideoService:
                "seed": seed if seed is not None else int.from_bytes(os.urandom(6), "big"),
                "state": "queued", "detail": "Waiting", "step": 0, "steps": h3.MODES[mode]["steps"],
                "created": time.time(), "started": None, "finished": None, "error": "", "video": None, "fake": FAKE}
+        return self._enqueue(job)
+
+    def submit_render(self, embeds: Path, requester: str, width: int, height: int, seconds: float,
+                      seed: int, mode: str, watch: Callable[[dict], None]) -> dict:
+        """Queue a render for a swarm job whose prompt another machine encoded (`embeds`: .npy, [1, T, 5120]).
+        It shares the queue with local jobs; `watch` sees each of its events."""
+        if mode not in h3.MODES:
+            raise ValueError(f"unknown mode {mode!r}")
+        if not self.render_ready():
+            raise RuntimeError("Video isn't set up on this machine.")
+        if width % 32 or height % 32 or width * height > 1344 * 768 or min(width, height) < 32:
+            raise ValueError(f"unsupported size {width}x{height}")
+        seconds = min(h3.MAX_SECONDS, max(h3.MIN_SECONDS, float(seconds)))
+        job = {"id": uuid.uuid4().hex[:10], "node": self.node, "prompt": f"(encoded by the swarm for {requester})",
+               "preset": "", "width": width, "height": height, "seconds": seconds, "frames": h3.frames_for(seconds),
+               "mode": mode, "seed": seed, "state": "queued", "detail": "Waiting", "step": 0, "steps": h3.MODES[mode]["steps"],
+               "created": time.time(), "started": None, "finished": None, "error": "", "video": None, "fake": FAKE,
+               "embeds": str(embeds), "for": requester}
+        self.watchers[job["id"]] = watch
+        return self._enqueue(job)
+
+    def _enqueue(self, job: dict) -> dict:
         self.jobs[job["id"]] = job
         self._job_event(job)
         self.queue.put_nowait(job["id"])
@@ -495,7 +528,8 @@ class VideoService:
     async def _run_comfy(self, job: dict, diag: dict):
         cid = uuid.uuid4().hex
         prefix = f"podtorrent/{job['id']}"
-        g = h3.graph(job["prompt"], job["width"], job["height"], job["seconds"], job["seed"], prefix, job.get("mode", "best"))
+        g = h3.graph(job["prompt"], job["width"], job["height"], job["seconds"], job["seed"], prefix, job.get("mode", "best"),
+                     embeds=job.get("embeds"))
         peak = {"vram_used_gb": 0.0, "ram_rss_gb": 0.0}
         stage_t = {"name": None, "t": time.time()}
         last_step = [time.time()]

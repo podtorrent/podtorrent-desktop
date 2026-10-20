@@ -1,4 +1,4 @@
-"""Video jobs across the swarm (docs/VIDEO_PLAN.md, phase 2).
+"""Video jobs across the swarm (docs/VIDEO_PLAN.md, phases 2–3).
 
 The requester drives the job; the data moves peer to peer:
 
@@ -84,7 +84,7 @@ class VideoSwarm:
     # ---------- roles ----------
     def roles(self) -> list[str]:
         out = [f"h3-encoder:{s['lo']}:{s['hi']}" for s in self.enc.slices()]
-        if self.svc.capability().get("ok") and self.svc.installed() and self.svc.models_ready():
+        if self.svc.capability().get("ok") and self.svc.render_ready():
             out.append("h3-video")
         return sorted(set(out + FAKE_ROLES))
 
@@ -151,18 +151,19 @@ class VideoSwarm:
         print(f"video: {job.stage} for {self.net._name(conn.peer_id)} job {job.job_id}"
               + (f" layers [{job.layer_lo},{job.layer_hi})" if job.stage == "encode" else ""), flush=True)
         try:
-            await self.run_stage(job, send, cancelled)
+            await self.run_stage(job, send, cancelled, self.net._name(conn.peer_id))
         finally:
             w.cancel()
 
-    async def run_stage(self, job: pb.VideoJob, send: Callable[[pb.JobEvent], None], cancelled: asyncio.Event):
+    async def run_stage(self, job: pb.VideoJob, send: Callable[[pb.JobEvent], None], cancelled: asyncio.Event,
+                        who: str = "this machine"):
         t0 = time.time()
         ev = lambda **k: send(pb.JobEvent(job_id=job.job_id, **k))  # noqa: E731
         try:
             if job.stage == "encode":
                 out = await self._encode(job, ev, cancelled)
             elif job.stage == "render":
-                out = await self._render(job, ev, cancelled)
+                out = await self._render(job, ev, cancelled, who)
             else:
                 raise ValueError(f"unknown stage {job.stage!r}")
             if cancelled.is_set():
@@ -213,7 +214,7 @@ class VideoSwarm:
         x = shard.embed([tokenize(self.enc.dir, prompt)]) if h is None else torch.from_numpy(h.copy())
         return shard.run_layers(x).float().cpu().numpy()
 
-    async def _render(self, job: pb.VideoJob, ev, cancelled) -> pb.BlobRef:
+    async def _render(self, job: pb.VideoJob, ev, cancelled, who: str) -> pb.BlobRef:
         if "h3-video" not in self.roles():
             raise RuntimeError("This machine can't render video.")
         ev(state="generating", detail="Receiving the prompt embeddings")
@@ -222,7 +223,7 @@ class VideoSwarm:
         if h.size != int(np.prod(job.input.shape)) or not np.isfinite(h).all():
             raise RuntimeError("The prompt embeddings arrived damaged.")
         if not self._fake("h3-video"):
-            raise RuntimeError("Rendering from swarm embeddings arrives in phase 3; this machine renders local jobs only.")
+            return await self._render_real(job, h.reshape(list(job.input.shape)), ev, cancelled, who)
         for i in range(1, job.steps + 1):
             if cancelled.is_set():
                 return pb.BlobRef()
@@ -231,6 +232,50 @@ class VideoSwarm:
         ev(state="decoding", detail="Decoding frames and audio")
         await asyncio.sleep(FAKE_STEP_S)
         sha, size = self.store.put_file(PLACEHOLDER)
+        return pb.BlobRef(sha256=sha, size=size, holder=self.me, kind="mp4")
+
+    async def _render_real(self, job: pb.VideoJob, h: np.ndarray, ev, cancelled, who: str) -> pb.BlobRef:
+        """Render on this machine's ComfyUI, in the same queue as its local jobs."""
+        if h.ndim != 3 or h.shape[0] != 1 or h.shape[2] != HIDDEN:
+            raise RuntimeError(f"The prompt embeddings have the wrong shape {list(h.shape)}.")
+        inbox = self.svc.root / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        npy = inbox / f"{job.job_id}.npy"
+        np.save(npy, h)
+        finished = asyncio.Event()
+
+        def watch(j: dict):
+            if j["state"] in ("done", "failed", "cancelled"):
+                finished.set()
+            elif j["state"] == "queued":
+                ev(state="generating", detail="Waiting for the video machine's queue")
+            else:
+                ev(state="decoding" if j["state"] in ("decoding", "saving") else "generating",
+                   detail=j["detail"], step=j.get("step") or 0, steps=j.get("steps") or 0)
+
+        mode = job.mode if job.mode in h3.MODES else "best"
+        rjob = self.svc.submit_render(npy, who,
+                                      job.width, job.height, job.seconds, job.seed, mode, watch)
+        try:
+            c = asyncio.ensure_future(cancelled.wait())
+            f = asyncio.ensure_future(finished.wait())
+            await asyncio.wait({c, f}, return_when=asyncio.FIRST_COMPLETED)
+            c.cancel()
+            if not finished.is_set():
+                await self.svc.cancel(rjob["id"])
+                await finished.wait()
+                f.cancel()
+        finally:
+            self.svc.watchers.pop(rjob["id"], None)
+            npy.unlink(missing_ok=True)
+        if cancelled.is_set() or rjob["state"] == "cancelled":
+            return pb.BlobRef()
+        if rjob["state"] != "done":
+            raise RuntimeError(rjob["error"] or "The render failed.")
+        video = self.svc.outputs / rjob["video"] if rjob.get("video") else (PLACEHOLDER if self.svc.jobs[rjob["id"]].get("fake") else None)
+        if not video or not video.exists():
+            raise RuntimeError("The render finished but saved no video.")
+        sha, size = self.store.put_file(video)
         return pb.BlobRef(sha256=sha, size=size, holder=self.me, kind="mp4")
 
     # ---------- requesting ----------

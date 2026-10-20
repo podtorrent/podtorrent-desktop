@@ -40,8 +40,13 @@ def frames_for(seconds: float) -> int:
     return n + (5 - n % 17) % 17
 
 
-def graph(prompt: str, width: int, height: int, seconds: float, seed: int, prefix: str, mode: str = "best") -> dict:
-    """ComfyUI /prompt payload ("API format"). Node ids are strings; links are [node_id, output]."""
+def graph(prompt: str, width: int, height: int, seconds: float, seed: int, prefix: str, mode: str = "best",
+          embeds: str | None = None) -> dict:
+    """ComfyUI /prompt payload ("API format"). Node ids are strings; links are [node_id, output].
+
+    With `embeds` (a .npy of the encoder's [1, T, 5120] hidden states, from the swarm's encoder
+    chain), the prompt isn't encoded here: EMBEDS_NODE loads the file and ComfyUI's text encoder
+    is never loaded."""
     unet, clip, lora, vae, avae = (f[1] for f in FILES)
     m = MODES[mode]
     model = ["lora", 0] if m["lora"] else ["unet", 0]
@@ -74,7 +79,48 @@ def graph(prompt: str, width: int, height: int, seconds: float, seed: int, prefi
     }
     if not m["lora"]:
         del g["lora"]
+    if embeds:
+        del g["clip"]
+        g["cond"] = {"class_type": "PodTorrentH3Embeds", "inputs": {
+            "path": embeds, "width": width, "height": height, "length": frames_for(seconds)}}
     return g
+
+
+# Written into ComfyUI's custom_nodes at startup. Builds what MiniMaxH3ImageToVideo builds for a
+# text-only prompt (ComfyUI v0.41.0): the hidden states with all-text token tags (1 per token),
+# plus the empty AV latent.
+EMBEDS_NODE = """# Written by PodTorrent at startup; see podtorrent/video/h3.py.
+import numpy as np
+import torch
+from comfy_extras.nodes_minimax_h3 import _empty_av_latent
+
+
+class PodTorrentH3Embeds:
+    CATEGORY = "podtorrent"
+    RETURN_TYPES = ("CONDITIONING", "LATENT")
+    RETURN_NAMES = ("positive", "latent")
+    FUNCTION = "load"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "path": ("STRING", {"default": ""}),
+            "width": ("INT", {"default": 832, "min": 32, "max": 8192, "step": 32}),
+            "height": ("INT", {"default": 480, "min": 32, "max": 8192, "step": 32}),
+            "length": ("INT", {"default": 124, "min": 5, "max": 3600}),
+        }}
+
+    def load(self, path, width, height, length):
+        h = torch.from_numpy(np.load(path)).float()
+        if h.ndim != 3 or h.shape[0] != 1 or h.shape[2] != 5120:
+            raise ValueError(f"prompt embeddings must be [1, T, 5120], got {list(h.shape)}")
+        tags = torch.ones(h.shape[1], dtype=torch.long)
+        latent, _ = _empty_av_latent(width, height, length)
+        return ([[h, {"pooled_output": None, "minimax_token_tags": tags}]], latent)
+
+
+NODE_CLASS_MAPPINGS = {"PodTorrentH3Embeds": PodTorrentH3Embeds}
+"""
 
 
 # Which stage the user sees while ComfyUI runs each node.

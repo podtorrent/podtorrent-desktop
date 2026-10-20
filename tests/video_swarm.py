@@ -1,7 +1,11 @@
 """Phase 2 exit test: a video job on A goes through fake encoder halves on B and C and a fake video
 worker on C, and the MP4 comes back to A over QUIC.
 
-Usage: python -m tests.video_swarm [--port 8300]
+Usage: python -m tests.video_swarm [--port 8300] [--queue]
+
+--queue (phase 3): C renders through its real video queue (VideoService in simulation mode,
+PODTORRENT_VIDEO_FAKE=1) instead of a fake h3-video role, so the swarm path through the queue,
+progress relay and cancellation are covered without a GPU.
 
 Three peers, each with its own identity and home, find each other through the rendezvous:
     A: requester, no roles      B: h3-encoder:0:25      C: h3-encoder:25:50, h3-video
@@ -30,16 +34,25 @@ def wait(what, fn, timeout):
     raise SystemExit(f"timed out waiting for {what}")
 
 
+def _try(fn):
+    try:
+        return fn() or True
+    except OSError:
+        return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8300)
+    ap.add_argument("--queue", action="store_true")
     a = ap.parse_args()
     tmp = Path(tempfile.mkdtemp(prefix="podtorrent-video-"))
-    roles = {"A": "", "B": "h3-encoder:0:25", "C": "h3-encoder:25:50,h3-video"}
+    roles = {"A": "", "B": "h3-encoder:0:25", "C": "h3-encoder:25:50" if a.queue else "h3-encoder:25:50,h3-video"}
     procs, bases = {}, {}
     for i, (name, r) in enumerate(roles.items()):
         env = {**os.environ, "PODTORRENT_HOME": str(tmp / name), "PODTORRENT_NAME": f"vt{name}",
-               "PODTORRENT_VIDEO_FAKE_ROLES": r, "PODTORRENT_VIDEO_FAKE_STEP_S": "0.2"}
+               "PODTORRENT_VIDEO_FAKE_ROLES": r, "PODTORRENT_VIDEO_FAKE_STEP_S": "0.2",
+               **({"PODTORRENT_VIDEO_FAKE": "1"} if a.queue and name == "C" else {})}
         procs[name] = subprocess.Popen([sys.executable, "-m", "podtorrent.cli", "peer", "--port", str(a.port + i)],
                                        env=env, stdout=open(tmp / f"{name}.log", "w"), stderr=subprocess.STDOUT)
         bases[name] = f"http://127.0.0.1:{a.port + i}"
@@ -60,6 +73,9 @@ def main():
         return s if s.get("route") else None
 
     try:
+        if a.queue:  # simulated setup, so C offers h3-video
+            wait("C's API", lambda: _try(lambda: http(bases["C"] + "/api/video/setup", {})), 60)
+            wait("C's setup", lambda: http(bases["C"] + "/api/video/status")["setup"]["phase"] == "ready", 60)
         s = wait("a full video route on A", swarm, 180)
         print(f"  route: {s['route']}")
         check(s["route"] == {"encoder": [["vtB", 0, 25], ["vtC", 25, 50]], "video": "vtC"}, "A routes B → C, renders on C")
@@ -83,6 +99,10 @@ def main():
         check(stages == ["encode", "encode", "render", "fetch"], f"report lists the stages ({stages})")
         enc = rep["stages"][1]
         check(enc["shape"][2] == 5120 and enc["out_bytes"] == 4 * 5120 * enc["shape"][1], f"hidden state shape {enc['shape']}")
+        if a.queue:
+            cj = [x for x in http(bases["C"] + "/api/video/status")["jobs"] if x.get("for") == "vtA"]
+            check(len(cj) == 1 and cj[0]["state"] == "done" and cj[0]["embeds"], f"C rendered it in its queue ({cj and cj[0]['state']})")
+            check(not list((tmp / "C" / "video" / "inbox").glob("*.npy")), "C removed the embeddings file")
 
         job = http(A + "/api/video/swarm/jobs", {"prompt": "Waves at night.", "mode": "best"})
 
@@ -94,6 +114,10 @@ def main():
         j = wait("cancel", finished, 30)
         check(j["state"] == "cancelled", f"cancelled mid-render ({j['state']})")
         check(not (tmp / "A" / "video" / "outputs" / f"{job['id']}.mp4").exists(), "no MP4 for the cancelled job")
+        if a.queue:
+            cj = wait("C's queue to cancel", lambda: [x for x in http(bases["C"] + "/api/video/status")["jobs"]
+                                                      if x.get("for") == "vtA" and x["state"] in ("cancelled", "failed")], 30)
+            check(cj[0]["state"] == "cancelled", f"the render was cancelled in C's queue ({cj[0]['state']})")
     finally:
         for p in procs.values():
             p.terminate()
