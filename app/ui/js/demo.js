@@ -154,7 +154,7 @@ export function startDemo(presetName = settings.demoPreset) {
     publish();
   }
 
-  ev("host_info", { port: 8000, repo: QWEN, n_layers: 48, chip: me.chip, name: SELF, peer_id: "self" });
+  ev("host_info", { port: 27183, repo: QWEN, n_layers: 48, chip: me.chip, name: SELF, peer_id: "self" });
   ev("node_joined", { node: SELF, address: "udp/51820", role: "host", chip: me.chip, mem_total_gb: me.mem });
   ev("memory", { node: SELF, active_gb: memOf(me.mem, mine), peak_gb: memOf(me.mem, mine) + 0.4, total_gb: me.mem });
   peers.forEach((p, i) => { if (p.online) T(() => joinPeer(p), 120 + i * 140); else T(() => joinPeer(p, i), p.joinAt * 1000); });

@@ -73,3 +73,74 @@ def test_coverage_counts_distinct_peers():
     offers = [Offer("a", "A", 0, 4), Offer("a", "A", 2, 6), Offer("b", "B", 4, 8)]
     assert coverage(8, offers) == [1, 1, 1, 1, 2, 2, 1, 1]
     assert coverage(4, [Offer("a", "A", 2, 99)]) == [0, 0, 1, 1]
+
+
+# ---------- video routes ----------
+import pytest  # noqa: E402
+
+from podtorrent.route import VideoOffer, can_render, parse_role, plan_video  # noqa: E402
+
+
+def V(pid, *roles, rtt=10):
+    return VideoOffer(pid, pid.upper(), tuple(roles), rtt)
+
+
+def test_video_two_halves_and_renderer():
+    offers = [V("me"), V("b", "h3-encoder:0:25"), V("c", "h3-encoder:25:50", "h3-video:11.9:64")]
+    hops, video = plan_video(50, offers, "me")
+    assert spans(hops) == [("b", 0, 25), ("c", 25, 50)] and video == "c"
+
+
+def test_video_prefers_whole_slice_and_this_machine():
+    offers = [V("me", "h3-encoder:0:50"), V("b", "h3-encoder:0:25"), V("c", "h3-encoder:25:50", "h3-video")]
+    hops, _ = plan_video(50, offers, "me")
+    assert spans(hops) == [("me", 0, 50)]
+    offers = [V("me", "h3-encoder:0:25"), V("b", "h3-encoder:0:25", rtt=1), V("c", "h3-encoder:25:50", "h3-video")]
+    assert spans(plan_video(50, offers, "me")[0])[0] == ("me", 0, 25)
+
+
+def test_video_slices_must_chain_end_to_start():
+    # 0:30 then 25:50 don't chain (a slice runs whole); 0:25 + 25:50 do, through a farther peer
+    offers = [V("a", "h3-encoder:0:30", rtt=1), V("b", "h3-encoder:25:50", rtt=1),
+              V("far", "h3-encoder:0:25", rtt=300), V("r", "h3-video")]
+    assert spans(plan_video(50, offers, "me")[0]) == [("far", 0, 25), ("b", 25, 50)]
+
+
+def test_video_prefers_closer_hops():
+    offers = [V("near", "h3-encoder:0:25", rtt=20), V("far", "h3-encoder:0:25", rtt=200),
+              V("c", "h3-encoder:25:50", "h3-video")]
+    assert plan_video(50, offers, "me")[0][0].peer_id == "near"
+
+
+def test_video_gap_named():
+    with pytest.raises(ValueError, match="starting at 25"):
+        plan_video(50, [V("b", "h3-encoder:0:25"), V("c", "h3-encoder:30:50", "h3-video")], "me")
+
+
+def test_video_skips_small_gpu():
+    offers = [V("b", "h3-encoder:0:50"), V("small", "h3-video:8:64", rtt=1), V("big", "h3-video:11.9:64", rtt=90)]
+    assert plan_video(50, offers, "me")[1] == "big"
+    with pytest.raises(ValueError, match="SMALL has 8 GB"):
+        plan_video(50, offers[:2], "me")
+    assert can_render(V("x", "h3-video:16:16")).startswith("has 16 GB of RAM")
+
+
+def test_video_renderer_prefers_me_then_rtt():
+    offers = [V("me", "h3-video"), V("b", "h3-encoder:0:50", "h3-video", rtt=1)]
+    assert plan_video(50, offers, "me")[1] == "me"
+    offers = [V("b", "h3-encoder:0:50", "h3-video", rtt=40), V("c", "h3-video", rtt=5)]
+    assert plan_video(50, offers, "me")[1] == "c"
+
+
+def test_video_exclude_and_parse():
+    offers = [V("b", "h3-encoder:0:50", "h3-video"), V("c", "h3-encoder:0:50")]
+    assert spans(plan_video(50, offers, "me", exclude={"c"})[0]) == [("b", 0, 50)]
+    assert parse_role("h3-encoder:5:3") is None and parse_role("h3-video:x:y") is None
+    assert parse_role("h3-video") == ("video", None, None)
+
+
+def test_video_demo_one_mac_small_share():
+    # the demo: the Mac keeps layers 0-3, the Windows PC the rest and renders
+    offers = [V("mac", "h3-encoder:0:4"), V("win", "h3-encoder:4:50", "h3-video:11.9:64", rtt=80)]
+    hops, video = plan_video(50, offers, "mac")
+    assert spans(hops) == [("mac", 0, 4), ("win", 4, 50)] and video == "win"

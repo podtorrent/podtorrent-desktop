@@ -1,0 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch>=2.8
+diffusers>=0.36
+transformers>=4.57
+accelerate
+huggingface_hub
+safetensors
+psutil
+soundfile
+imageio
+imageio-ffmpeg

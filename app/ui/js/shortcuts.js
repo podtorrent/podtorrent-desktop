@@ -8,7 +8,7 @@ import { handleMenu, go } from "./actions.js";
 import { openPalette, paletteOpen } from "./palette.js";
 
 export const SHORTCUTS = [
-  ["Navigation", [["Swarm", "⌘ 1"], ["Models", "⌘ 2"], ["Playground", "⌘ 3"], ["My Node", "⌘ 4"], ["Peers", "⌘ 5"], ["Activity", "⌘ 6"], ["Settings", "⌘ ,"]]],
+  ["Navigation", [["Swarm", "⌘ 1"], ["Models", "⌘ 2"], ["Playground", "⌘ 3"], ["My Node", "⌘ 4"], ["Peers", "⌘ 5"], ["Activity", "⌘ 6"], ["Video", "⌘ 7"], ["Settings", "⌘ ,"]]],
   ["Anywhere", [["Command palette", "⌘ K"], ["Toggle sidebar", "⌘ \\"], ["Toggle inspector", "⌘ I"], ["Graph / grid", "⌘ G"], ["Demo Mode", "⌥ ⌘ D"], ["Shortcuts", "?"], ["Close sheet or palette", "esc"]]],
   ["Node", [["Start my node", "⇧ ⌘ H"], ["Load model", "⇧ ⌘ L"], ["Stop node", "⇧ ⌘ ."], ["Close window (keeps running)", "⌘ W"], ["Quit", "⌘ Q"]]],
   ["Playground", [["Send", "↵"], ["New line", "⇧ ↵"]]],

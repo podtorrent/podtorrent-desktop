@@ -6,6 +6,10 @@ from pathlib import Path
 DEFAULT_REPO = "mlx-community/Qwen3-30B-A3B-4bit"
 
 
+# Deliberately uncommon so we never fight dev tools (8000, 3000, ...) for the port.
+DEFAULT_PORT = int(os.environ.get("PODTORRENT_PORT", "27183"))
+
+
 def default_dir(repo):
     return Path(os.environ.get("PODTORRENT_HOME", Path.home() / ".podtorrent")) / "models" / repo.split("/")[-1]
 
@@ -20,6 +24,79 @@ def parse_slice(spec: str) -> tuple[str | None, int, int]:
         return model, int(parts[-2]), int(parts[-1])
     except ValueError:
         raise argparse.ArgumentTypeError(f"expected [MODEL:]LO:HI, got {spec!r}") from None
+
+
+def parse_serve(spec: str):
+    """A layer slice ([MODEL:]LO:HI) or a video role (h3-encoder:LO:HI, h3-video)."""
+    if spec.startswith("h3-"):
+        from .route import parse_role
+        if spec not in ("h3-video", "h3-encoder:missing") and not (parse_role(spec) or ("",))[0] == "encoder":
+            raise argparse.ArgumentTypeError(f"expected h3-encoder:LO:HI, h3-encoder:missing or h3-video, got {spec!r}")
+        return spec
+    return parse_slice(spec)
+
+
+def serve_video_role(role: str, port: int, remove: bool = False):
+    """Take on (or drop) a video role on the running peer, waiting for the download."""
+    import time
+    if role == "h3-video":
+        if remove:
+            raise SystemExit("To stop rendering, delete the video engine folder shown in the Video view.")
+        r = local_api("/api/video/setup", {}, port)
+        if "error" in r:
+            raise SystemExit(r["error"])
+        last = ""
+        while True:
+            st = local_api("/api/video/status", None, port)
+            su = st.get("setup") or {}
+            if st.get("installed") and st.get("models_ready"):
+                break
+            if su.get("phase") == "error":
+                raise SystemExit(su.get("message") or "setup failed")
+            line = su.get("message", "") + (f" {100 * su['done'] // su['total']}%" if su.get("total") else "")
+            if line != last:
+                print(line, flush=True)
+                last = line
+            time.sleep(2)
+    else:
+        if role == "h3-encoder:missing":
+            from .route import Offer, gaps
+            sw = local_api("/api/video/swarm", None, port)
+            g = gaps(50, [Offer(m["name"], m["name"], lo, hi) for m in sw.get("machines", []) for lo, hi in m["encoder"]])
+            if not g:
+                raise SystemExit("Every encoder layer already has a machine or peer.")
+            role = f"h3-encoder:{g[0][0]}:{g[0][1]}"
+            print(f"taking the missing encoder layers {g[0][0]}–{g[0][1] - 1}", flush=True)
+        lo, hi = (int(x) for x in role.split(":")[1:])
+        r = local_api("/api/video/encoder/" + ("remove" if remove else "fetch"), {"lo": lo, "hi": hi}, port)
+        if "error" in r:
+            raise SystemExit(r["error"])
+        last = -1
+        while not remove:
+            st = local_api("/api/video/encoder", None, port)
+            f = st.get("fetching")
+            if any(x["lo"] == lo and x["hi"] == hi for x in st.get("slices", [])) and not f:
+                break
+            if f and f.get("error"):
+                raise SystemExit(f["error"])
+            pct = 100 * f["done"] // max(f["total"], 1) if f else 0
+            if pct // 5 != last:
+                print(f"downloading encoder layers {lo}–{hi - 1}: {pct}%", flush=True)
+                last = pct // 5
+            time.sleep(2)
+    print_video(local_api("/api/video/swarm", None, port))
+
+
+def print_video(r: dict):
+    for m in r.get("machines", []):
+        enc = ", ".join(f"[{lo},{hi})" for lo, hi in m["encoder"]) or "–"
+        vid = "renders" if m["video"] else (m["video_why"] or "–")
+        print(f"{m['name']}: encoder {enc} · video {vid}")
+    if r.get("route"):
+        rt = r["route"]
+        print("video route: " + " → ".join(f"{n} [{lo},{hi})" for n, lo, hi in rt["encoder"]) + f" → render on {rt['video']}")
+    else:
+        print(f"video route: none. {r.get('reason', '')}")
 
 
 def local_api(path: str, body: dict | None, port: int) -> dict:
@@ -63,7 +140,8 @@ def main():
         p.add_argument("--model", default=DEFAULT_REPO)
         p.add_argument("--model-dir")
         p.add_argument("--layers", type=int, help="total layers (default: from the model's config)")
-        p.add_argument("--port", type=int, default=8000, help="local API port (127.0.0.1 only)")
+        p.add_argument("--port", type=int, default=DEFAULT_PORT,
+                       help=f"local API port, 127.0.0.1 only (default {DEFAULT_PORT}; env PODTORRENT_PORT)")
         p.add_argument("--serve", action="append", type=parse_slice, metavar="[MODEL:]LO:HI",
                        help="a slice to serve, e.g. 0:24 or mlx-community/X:0:24; repeatable "
                             "(default: the slices saved from last time)")
@@ -80,13 +158,16 @@ def main():
     for cmd, desc in (("serve", "ask the running peer to serve another slice (waits until loaded)"),
                       ("unserve", "ask the running peer to stop serving a slice, or a whole model")):
         c = sub.add_parser(cmd, help=desc)
-        c.add_argument("slice", type=parse_slice if cmd == "serve" else str,
-                       metavar="[MODEL:]LO:HI" if cmd == "serve" else "[MODEL:]LO:HI | MODEL")
+        c.add_argument("slice", type=parse_serve if cmd == "serve" else str,
+                       metavar="[MODEL:]LO:HI | h3-encoder:LO:HI | h3-encoder:missing | h3-video" if cmd == "serve"
+                       else "[MODEL:]LO:HI | MODEL | h3-encoder:LO:HI")
         if cmd == "serve":
             c.add_argument("--peer", help="have this connected peer (name or id) serve it instead")
-        c.add_argument("--port", type=int, default=8000)
+        c.add_argument("--port", type=int, default=DEFAULT_PORT)
+    v = sub.add_parser("video", help="video roles of every machine and the route a video job would take")
+    v.add_argument("--port", type=int, default=DEFAULT_PORT)
     m = sub.add_parser("models", help="coverage of every model the swarm serves, as this peer sees it")
-    m.add_argument("--port", type=int, default=8000)
+    m.add_argument("--port", type=int, default=DEFAULT_PORT)
 
     sw = sub.add_parser("swarm", help="list every PodTorrent peer online right now")
     sw.add_argument("--name", default=platform.node().split(".")[0])
@@ -96,6 +177,14 @@ def main():
     if a.cmd in ("peer", "host"):
         from .peer import run_peer
         run_peer(a.model, a.model_dir or default_dir(a.model), a.layers, a.port, a.serve, a.open)
+    elif a.cmd == "serve" and isinstance(a.slice, str):
+        if a.peer:
+            raise SystemExit("--peer works for model slices only; run `podtorrent serve` on that machine")
+        serve_video_role(a.slice, a.port)
+    elif a.cmd == "unserve" and a.slice.startswith("h3-"):
+        serve_video_role(a.slice, a.port, remove=True)
+    elif a.cmd == "video":
+        print_video(local_api("/api/video/swarm", None, a.port))
     elif a.cmd == "serve":
         model, lo, hi = a.slice
         r = local_api("/api/serve", {"model": model, "lo": lo, "hi": hi, "peer": a.peer, "wait": True}, a.port)

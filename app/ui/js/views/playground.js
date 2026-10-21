@@ -1,7 +1,8 @@
-// Playground: streaming chat with model picker, inspector (⌘I), live tok/s and Token Trace.
+// Playground, in two modes. Text: streaming chat with model picker, inspector (⌘I), live tok/s and
+// Token Trace. Video: the MiniMax-H3 studio (prompt, route, jobs). The switch sits at the top of each.
 import { h, text, fmt, reconcile, cls } from "../dom.js";
 import { state, settings, setSetting, models, commit, on } from "../store.js";
-import { button, iconButton, slider, empty, kbd, popover } from "../ui.js";
+import { button, iconButton, slider, empty, kbd, popover, segmented } from "../ui.js";
 import { icon } from "../icons.js";
 import { modelStrip } from "../viz/strip.js";
 import { tokenTrace } from "../viz/trace.js";
@@ -10,6 +11,7 @@ import { sendPrompt } from "../engine.js";
 import { go, copyText, actions } from "../actions.js";
 import { openServe } from "../serve.js";
 import { routeText } from "./models.js";
+import { videoStudio } from "./video.js";
 
 const SUGGEST = [
   "Explain pipeline parallelism in three sentences.",
@@ -23,11 +25,18 @@ on("pick-model", id => { pickedModel = id; commit(); });
 
 export default {
   title: "Playground",
-  subtitle: s => { const m = current(s); return m ? m.name : ""; },
+  subtitle: s => { if (mode() === "video") return "MiniMax-H3"; const m = current(s); return m ? m.name : ""; },
   toolbar() {
     return [iconButton("sliders", "Toggle inspector", () => { setSetting("inspector", !settings.inspector); }, { kbd: "⌘I" })];
   },
   mount(root) {
+    // ---- mode switch: one control, moved to the top of whichever mode is shown ----
+    let modeSeg = null, shownMode = null;
+    const modeSlot = () => { modeSeg = segmented([{ value: "text", label: "Text", icon: "playground" }, { value: "video", label: "Video", icon: "video" }], mode(),
+      v => setSetting("playgroundTab", v), "Playground mode"); return modeSeg; };
+    const studioTop = h("div.play-mode-top");
+    const studio = videoStudio(studioTop);
+
     // ---- model picker ----
     const pickStrip = modelStrip({ compact: true });
     const pickName = h("b"), pickBadge = h("span.badge.dot");
@@ -65,7 +74,8 @@ export default {
     const meter = h("div.meter", h("span.statedot.active"), h("b.num.mv", "0.0"), h("span", "tok/s"), h("span.faint.num.mt"));
     const composer = h("div.composer", h("div.composer-box", ta, stopBtn, sendBtn), h("div.composer-f.small.faint", meter, h("span.spacer"), h("span.hint", "Single-turn · greedy decoding · ", kbd("↵"), " send, ", kbd("⇧ ↵"), " newline")));
     const inUse = h("div.chat-inuse.small", { role: "status" }, h("span.statedot.active"), h("span", "Another machine is using the model too. Replies share it, so they may stream slower."));
-    const chat = h("div.chat", h("div.chat-top", picker), scroller, intro, blocked, inUse, composer);
+    const chatTop = h("div.chat-top", picker);
+    const chat = h("div.chat", chatTop, scroller, intro, blocked, inUse, composer);
 
     // ---- inspector ----
     const maxL = h("b.num");
@@ -80,7 +90,7 @@ export default {
         h("div.small.faint", "The engine always picks the most likely token, so the same prompt gives the same answer. Temperature and top-p aren't supported yet.")),
       h("div.ins-sec", h("div.caps", "Session"), h("div.kv-list.small", h("span.faint", "Replies"), h("b.num.ns"), h("span.faint", "Median first token"), h("b.num.nt"), h("span.faint", "Last reply"), h("b.num.nl"))));
     const wrap = h("div.play", chat, inspector);
-    root.append(wrap);
+    root.append(wrap, studio.el);
     let stick = true;
     scroller.addEventListener("scroll", () => { stick = scroller.scrollTop + scroller.clientHeight > scroller.scrollHeight - 40; });
 
@@ -139,6 +149,15 @@ export default {
     let blockKey = "";
     return {
       update(s) {
+        const md = mode();
+        if (md !== shownMode) {
+          shownMode = md;
+          modeSeg?.remove();  // fresh, so it shows the mode even when go() switched it
+          (md === "video" ? studioTop : chatTop).prepend(modeSlot());
+          wrap.hidden = md !== "text"; studio.el.hidden = md !== "video";
+          requestAnimationFrame(() => md === "video" ? studio.focus() : ta.focus());
+        }
+        if (md === "video") return studio.update(s);
         const ms = models(s), m = current(s);
         cls(wrap, "no-inspector", !settings.inspector);
         // picker
@@ -197,11 +216,13 @@ export default {
         const lastDone = [...msgs].reverse().find(x => x.done)?.done;
         text(inspector.querySelector(".nl"), lastDone ? `${fmt.fixed(lastDone.tok_s)} tok/s` : "–");
       },
-      focus() { ta.focus(); },
-      unmount() { document.removeEventListener("pointerdown", closePick); pop.el.remove(); },
+      focus() { if (mode() === "video") studio.focus(); else ta.focus(); },
+      unmount() { document.removeEventListener("pointerdown", closePick); pop.el.remove(); studio.unmount(); },
     };
   },
 };
+
+const mode = () => settings.playgroundTab === "video" ? "video" : "text";
 
 /** True while this peer is generating for another window or app (it never says who, or what). Info only. */
 function othersTurn(s) {

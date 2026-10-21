@@ -33,6 +33,11 @@ from .net.rendezvous import SwarmClient
 from .route import Hop, Offer, coverage, plan
 from .backend import Shard
 from .slicer import download_slice, estimate_slice_bytes, fetch_meta
+from .video import api as video_api
+from .video.encoder_node import EncoderNode
+from .video.service import MIN_VRAM_GB
+from .video.service import VideoService
+from .video.swarm import VideoSwarm
 
 STATIC = Path(__file__).parent / "static"
 MLX = threading.Lock()   # one computation at a time in this process (MLX or PyTorch)
@@ -110,6 +115,13 @@ class Slices:
         self.last_compute_ms = 0.0
         self.last_forward_ts = 0.0
         self._load_lock = threading.Lock()
+        # Memory promised to other work on the same GPU budget: video encoder layers on disk that
+        # load on the next video job. Set by run_peer.
+        self.reserved: Callable[[], float] = lambda: 0.0
+
+    def held_gb(self) -> float:
+        """Memory these text-model slices take (or will, once loaded)."""
+        return sum(gb(self.model_dir(s.model), s.lo, s.hi) for s in list(self.items.values()))
 
     def slices(self) -> list[dict]:
         return [s.record() for s in sorted(self.items.values(), key=lambda s: (s.model, s.lo, s.hi))]
@@ -201,10 +213,13 @@ class Slices:
                 raise ValueError(f"layers [{lo},{hi}) out of range: {model} has {n} layers")
             replaced = [s for s in self.loaded(model) if lo <= s.lo and s.hi <= hi]
             need = gb(d, lo, hi)
-            free = mem_free_gb() + sum(gb(d, s.lo, s.hi) for s in replaced)
+            video = self.reserved()
+            free = mem_free_gb() - video + sum(gb(d, s.lo, s.hi) for s in replaced)
             if need + MEM_HEADROOM_GB > free:
                 raise MemoryError(f"{model.split('/')[-1]} layers [{lo},{hi}) need ~{need:.1f} GB, "
-                                  f"but this machine has {free:.1f} GB free for models")
+                                  f"but this machine has {max(free, 0):.1f} GB free for models"
+                                  + (f" ({video:.1f} GB is kept for its video encoder layers: remove some in the Video view "
+                                     "to make room)" if video >= 0.1 else ""))
             s = self.items[(model, lo, hi)] = Served(model, lo, hi, n)
 
             def emit(phase, done=0, total=0, msg=""):
@@ -291,6 +306,10 @@ class PeerApp:
         self._known: set[str] = set()
         self._names: dict[str, str] = {}   # peer_id -> display name, for peers that vanish
         self.peers: list[dict] = []   # swarm records, each with this Mac's `link` to it
+
+    def free_for_models(self) -> float:
+        """Room for more text-model layers: free GPU budget minus what video encoder layers will need."""
+        return max(mem_free_gb() - self.slices.reserved(), 0.0)
 
     def model_dir(self, model: str) -> Path:
         return self._dirs.get(model) or default_dir(model)
@@ -541,7 +560,7 @@ class PeerApp:
         self._route_key = ""
         self.route_events()
         self.emit("models", key="models", models=self.models())
-        self.emit("slices", key="slices", slices=self.slices.slices(), mem_free_gb=mem_free_gb())
+        self.emit("slices", key="slices", slices=self.slices.slices(), mem_free_gb=self.free_for_models())
         if self.swarm and self.loop:
             asyncio.run_coroutine_threadsafe(self.swarm.publish(), self.loop)
 
@@ -905,7 +924,7 @@ class PeerApp:
         return web.json_response({"ok": True})
 
     async def models_api(self, _):
-        return web.json_response({"models": self.models(), "mem_free_gb": round(mem_free_gb(), 1),
+        return web.json_response({"models": self.models(), "mem_free_gb": round(self.free_for_models(), 1),
                                   "slices": self.slices.slices()})
 
     async def chat(self, request):
@@ -982,13 +1001,14 @@ class PeerApp:
             "name": NAME, "peer_id": self.me, "repo": self.repo, "n_layers": self.n_layers,
             "slices": s.slices(), "phase": s.phase, "done": busy.done if busy else 0,
             "total": busy.total if busy else 0, "message": busy.message if busy else "",
-            "mem_free_gb": round(mem_free_gb(), 1), "heads": sorted(self.heads),
+            "mem_free_gb": round(self.free_for_models(), 1), "heads": sorted(self.heads),
             "head_loaded": self.repo in self.heads, "route": [[h.name, h.lo, h.hi] for h in hops], "gaps": gaps,
             "links": {self.net._name(k): {kk: v[kk] for kk in ("state", "rtt_ms", "via", "addr", "error")}
                       for k, v in self.net.snapshot().items()},
             "served": s.served, "tokens": s.tokens, "active_requests": len(s.caches)})
 
     async def shutdown(self, _):
+        self.video.stop()  # os._exit would orphan ComfyUI
         asyncio.get_running_loop().call_later(0.3, os._exit, 0)
         return web.json_response({"ok": True})
 
@@ -1005,7 +1025,15 @@ class PeerApp:
 def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[tuple[str | None, int, int]] | None,
              open_browser: bool = False):
     """`serve`: slices to load at start as (model or None for `repo`, lo, hi); default: the saved config."""
+    import socket
+    with socket.socket() as probe:  # fail fast, before loading any model
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            raise SystemExit(f"port {port} is already in use by another program; "
+                             f"pick a free one with --port or PODTORRENT_PORT")
     app_state = PeerApp(repo, Path(model_dir), n_layers)
+    app_state.video = VideoService(app_state.emit, NAME)
     if serve:
         serve = [(m or repo, lo, hi) for m, lo, hi in serve]
     else:
@@ -1021,6 +1049,22 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
                     web.post("/api/unserve", app_state.unserve),
                     web.post("/api/chat", app_state.chat), web.post("/api/complete", app_state.complete),
                     web.post("/api/shutdown", app_state.shutdown)])
+    enc = EncoderNode(app_state.emit)
+    enc.renders = lambda: app_state.video.gpu.get("vram_gb", 0) >= MIN_VRAM_GB  # a video machine, set up or not
+    # Text-model slices and video encoder layers share one memory budget (unless the encoder runs on the CPU).
+    enc.text_gb = app_state.slices.held_gb
+    app_state.slices.reserved = enc.reserved_gb
+    if B.NAME == "torch" and B.CUDA:  # text layers on this GPU pause rendering (see VideoService.paused)
+        app_state.video.gpu_text_gb = app_state.slices.held_gb
+    app_state.video_swarm = VideoSwarm(app_state.net, app_state.video, enc, app_state.me)
+
+    def node_info():
+        ni = app_state.slices.info()
+        ni.roles.extend(app_state.video_swarm.roles())
+        return ni
+    app_state.net.info = node_info
+    app.add_routes(video_api.routes(app_state.video, enc, app_state.video_swarm))
+    app.on_cleanup.append(lambda _: asyncio.to_thread(app_state.video.stop))
 
     def load_all():  # one at a time: each slice's memory check sees the ones before it
         for m, lo, hi in serve:

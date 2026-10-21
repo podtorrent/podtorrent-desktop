@@ -8,7 +8,11 @@ from typing import Callable, Optional
 import httpx
 from huggingface_hub import get_token, hf_hub_download, hf_hub_url
 
-LAYER_RE = re.compile(r"^model\.layers\.(\d+)\.")
+# Language-model keys: "model.layers.N." (Qwen3), "model.language_model.layers.N." or
+# "language_model.model.layers.N." (Qwen3-VL). Vision-tower tensors are never selected.
+LAYER_RE = re.compile(r"^(?:model\.|language_model\.)*layers\.(\d+)\.")
+EMBED_RE = re.compile(r"^(?:model\.|language_model\.)*embed_tokens\.")
+NORM_RE = re.compile(r"^(?:model\.|language_model\.)*norm\.weight$")
 
 
 def select_tensors(weight_map: dict, lo: int, hi: int, host: bool, tail: bool) -> list[str]:
@@ -19,9 +23,9 @@ def select_tensors(weight_map: dict, lo: int, hi: int, host: bool, tail: bool) -
         if m:
             if lo <= int(m.group(1)) < hi:
                 names.append(name)
-        elif name.startswith("model.embed_tokens.") and host:
+        elif EMBED_RE.match(name) and host:
             names.append(name)
-        elif (name.startswith("lm_head.") or name == "model.norm.weight") and tail:
+        elif (name.startswith("lm_head.") or NORM_RE.match(name)) and tail:
             names.append(name)
     return names
 
@@ -72,6 +76,29 @@ def fetch_meta(repo: str, out_dir: str | Path) -> dict:
     return json.loads((out_dir / "config.json").read_text())
 
 
+def weight_map(repo: str, out_dir: str | Path) -> dict:
+    """tensor name -> file, from the repo's index if it matches the repo's files. Some repos ship a
+    stale index (mlx-community/Qwen3-VL-32B-Instruct-4bit lists 14 files but has 4); then read the
+    real files' headers instead and cache the result as weight_map.json."""
+    from huggingface_hub import HfApi
+    out_dir = Path(out_dir)
+    cached = out_dir / "weight_map.json"
+    if cached.exists():
+        return json.loads(cached.read_text())
+    files = [f for f in HfApi().list_repo_files(repo) if f.endswith(".safetensors")]
+    idx = out_dir / "model.safetensors.index.json"
+    wm = json.loads(idx.read_text())["weight_map"] if idx.exists() else {}
+    if not wm or not set(wm.values()) <= set(files):
+        wm = {}
+        with httpx.Client(follow_redirects=True, timeout=120) as client:
+            for f in files:
+                url = hf_hub_url(repo, f)
+                (hlen,) = struct.unpack("<Q", _fetch(client, url, 0, 7))
+                wm.update({k: f for k in json.loads(_fetch(client, url, 8, 8 + hlen - 1)) if k != "__metadata__"})
+    cached.write_text(json.dumps(wm))
+    return wm
+
+
 def estimate_slice_bytes(out_dir: str | Path, lo: int, hi: int) -> int:
     """Rough size of layers [lo, hi) from the index's total size, ignoring embeddings and head
     (fetch_meta first). Good enough for a memory check before downloading."""
@@ -101,7 +128,7 @@ def download_slice(
     fetch_meta(repo, out_dir)
 
     out_path = out_dir / f"{name}.safetensors"
-    index = json.loads((out_dir / "model.safetensors.index.json").read_text())
+    index = {"weight_map": weight_map(repo, out_dir)}
     wanted = select_tensors(index["weight_map"], lo, hi, host, tail)
     if out_path.exists() or set(wanted) <= local_tensors(out_dir):  # already fetched, maybe as another slice
         size = out_path.stat().st_size if out_path.exists() else 1
@@ -162,3 +189,48 @@ def download_slice(
             out.write(chunk)
     tmp_data.unlink()
     return out_path
+
+
+def split_slice(src: str | Path, out_dir: str | Path, pieces: list[tuple[int, int]], name: str,
+                on_progress: Optional[Callable[[int, int], None]] = None) -> list[Path]:
+    """Copy layers [a, b) of each piece out of the slice file src into out_dir/<name>-a-b.safetensors,
+    streaming tensor bytes (nothing is loaded into memory). Non-layer tensors (the embedding, final
+    norm, head) go with the piece that starts at layer 0, or are dropped. src is left as it is."""
+    src, out_dir = Path(src), Path(out_dir)
+    with open(src, "rb") as fh:
+        (n,) = struct.unpack("<Q", fh.read(8))
+        header = json.loads(fh.read(n))
+    meta, base = header.pop("__metadata__", None), 8 + n
+    total = sum(e - s for name_, t in header.items() for s, e in [t["data_offsets"]])
+    done, out = 0, []
+    for a, b in pieces:
+        def keep(k):
+            m = LAYER_RE.match(k)
+            return a <= int(m.group(1)) < b if m else a == 0
+        names = sorted((k for k in header if keep(k)), key=lambda k: header[k]["data_offsets"][0])
+        new, off = {}, 0
+        for k in names:
+            s, e = header[k]["data_offsets"]
+            new[k] = {**header[k], "data_offsets": [off, off + e - s]}
+            off += e - s
+        if meta is not None:
+            new["__metadata__"] = meta
+        hb = json.dumps(new, separators=(",", ":")).encode()
+        hb += b" " * (-len(hb) % 8)
+        path, tmp = out_dir / f"{name}-{a}-{b}.safetensors", out_dir / f"{name}-{a}-{b}.split.tmp"
+        with open(src, "rb") as fi, open(tmp, "wb") as fo:
+            fo.write(struct.pack("<Q", len(hb)) + hb)
+            for k in names:
+                s, e = header[k]["data_offsets"]
+                fi.seek(base + s)
+                left = e - s
+                while left:
+                    chunk = fi.read(min(left, 64 << 20))
+                    fo.write(chunk)
+                    left -= len(chunk)
+                    done += len(chunk)
+                    if on_progress:
+                        on_progress(done, total)
+        tmp.replace(path)
+        out.append(path)
+    return out

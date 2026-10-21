@@ -3,7 +3,8 @@
 import { h, text, fmt } from "./dom.js";
 import { state, models, shortModel } from "./store.js";
 import { button, sheet } from "./ui.js";
-import { serveSlice } from "./engine.js";
+import { serveSlice, encoderStatus, videoStatus } from "./engine.js";
+import { icon } from "./icons.js";
 
 const DEFAULT_REPO = "mlx-community/Qwen3-30B-A3B-4bit";
 
@@ -25,6 +26,17 @@ export function openServe(pre = {}) {
       return h("option", { value: p.name || p.peer_id }, `${p.name || p.peer_id.slice(0, 8)}${free != null ? ` · ${fmt.gb(free)} free` : ""}`);
     }));
   const note = h("div.small.muted");
+  // Text and video on this machine: say what serving text here does to video, before it happens.
+  const clash = h("div.next");
+  const paintClash = () => {
+    const enc = state.video.encoder, vs = state.video.status, here = !where.value;
+    const msgs = [];
+    if (here && vs?.render_ready && !vs.paused) msgs.push("This machine renders video. Serving text layers here pauses rendering until you stop serving them: video needs all of the GPU's memory. To keep rendering, serve text layers on another machine.");
+    if (here && enc?.shares_budget && enc.held_gb) msgs.push(`${fmt.gb(enc.held_gb)} of this machine's memory is kept for its video encoder layers, so less is free for text layers. To serve more text layers, remove some encoder layers in the Video view.`);
+    clash.hidden = !msgs.length;
+    clash.replaceChildren(icon("alert"), h("div.col", { style: { gap: "4px" } }, ...msgs.map(m => h("span", m))));
+  };
+  if (state.source === "live") Promise.all([encoderStatus(), videoStatus()]).then(paintClash);
   const err = h("div.small", { style: { color: "var(--c-gap)" } });
 
   const n = () => layersOf(model.value.trim());
@@ -45,6 +57,7 @@ export function openServe(pre = {}) {
   const first = pre.hi != null ? pre.hi - 1 : (n() ?? 48) - 1;
   last.value = first;
   for (const el of [model, lo, last]) el.addEventListener("input", sync);
+  where.addEventListener("change", paintClash);
 
   const go = button("Serve", {
     variant: "primary", icon: "download", onclick: async () => {
@@ -54,15 +67,16 @@ export function openServe(pre = {}) {
     },
   });
   const s = sheet({
-    title: "Serve layers",
+    title: "Serve text-model layers",
     body: h("div.col", { style: { gap: "14px" } },
       h("div.field", h("label", "Model"), model),
       h("div.row", { style: { gap: "12px" } },
         h("div.field.grow", h("label", "From layer"), lo),
         h("div.field.grow", h("label", "Through layer"), last)),
       h("div.field", h("label", "Serve on"), where),
-      note, err, list),
+      clash, note, err, list),
     footer: [button("Cancel", { onclick: () => s.close() }), go],
   });
   sync();
+  paintClash();
 }

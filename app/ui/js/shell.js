@@ -81,7 +81,8 @@ export function mountShell() {
     const setNb = (id, html) => { if (items[id].nb.innerHTML !== html) items[id].nb.innerHTML = html; };
     setNb("swarm", st.total ? `${dot(st.online < st.total ? "degraded" : "serving")}${st.online}` : "");
     setNb("models", m ? dot(m.runnable ? "serving" : m.verdict.level === "gap" ? "gap" : m.verdict.level === "degraded" ? "degraded" : "off") : "");
-    setNb("playground", s.chat.busy ? dot("active") : "");
+    const vj = Object.values(s.video.jobs);
+    setNb("playground", s.chat.busy || vj.some(j => !["done", "failed", "cancelled"].includes(j.state)) ? dot("active") : "");
     setNb("node", s.engine.phase === "starting" ? dot("active") : me ? dot(meSt === "idle" ? "off" : meSt) : s.engine.error ? dot("gap") : "");
     setNb("peers", st.total ? String(st.total) : "");
     const fresh = curId === "activity" ? 0 : s.feed.length - unseen.at;

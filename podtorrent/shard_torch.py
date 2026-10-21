@@ -54,6 +54,25 @@ class QLinear:
         return dequantize(self.w[ids], self.scales[ids], self.biases[ids], self.gs).to(DTYPE)
 
 
+class Dense:
+    """An unquantized linear layer (original Hugging Face checkpoints), same interface as QLinear."""
+
+    def __init__(self, w):
+        self.w = w
+
+    def __call__(self, x, idx=None):
+        return (x.float() @ self.w.float().T).to(DTYPE)
+
+    def rows(self, ids):
+        return self.w[ids].to(DTYPE)
+
+
+def linear(p, name, gs):
+    if f"{name}.scales" not in p:
+        return Dense(p[f"{name}.weight"])
+    return QLinear(p[f"{name}.weight"], p[f"{name}.scales"], p[f"{name}.biases"], gs)
+
+
 def rms_norm(x, w, eps):
     xf = x.float()
     return (xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + eps) * w.float()).to(DTYPE)
@@ -89,7 +108,7 @@ class KVCache:
 class Layer:
     def __init__(self, p, cfg, gs):
         def q(name):
-            return QLinear(p[f"{name}.weight"], p[f"{name}.scales"], p[f"{name}.biases"], gs)
+            return linear(p, name, gs)
 
         self.cfg = cfg
         self.n_heads, self.n_kv = cfg["num_attention_heads"], cfg["num_key_value_heads"]

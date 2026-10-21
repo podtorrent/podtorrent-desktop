@@ -54,7 +54,7 @@ IDLE_TIMEOUT_S = 30
 MAX_FRAME = 256 << 20
 WINDOW = 64 << 20
 
-M_AUTH, M_HEARTBEAT, M_INFO, M_FORWARD, M_LOAD = 0, 1, 2, 3, 4
+M_AUTH, M_HEARTBEAT, M_INFO, M_FORWARD, M_LOAD, M_VIDEO, M_BLOB = 0, 1, 2, 3, 4, 5, 6
 # A streaming handler gets the first request frame and the stream; it writes response frames.
 Handler = Callable[["Conn", bytes, asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]]
 
@@ -480,7 +480,7 @@ class PeerNet(asyncio.DatagramProtocol):
                       "requests_served": ni.requests_served, "tokens_processed": ni.tokens_processed,
                       "busy": ni.busy, "active_requests": ni.active_requests,
                       "mem_peak_gb": round(ni.mem_peak_gb, 1), "mem_free_gb": round(ni.mem_free_gb, 1),
-                      "ts": time.time(),
+                      "ts": time.time(), "roles": list(ni.roles),
                       "slices": [{"model": x.model, "lo": x.lo, "hi": x.hi, "loaded": x.loaded,
                                   "n_layers": x.n_layers} for x in ni.slices]}
             self.on_change()

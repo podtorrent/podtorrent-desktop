@@ -4,7 +4,7 @@ import { state, settings, setSetting, chatKey, applyEvent, resetState, commit, e
 import { invoke, isTauri } from "./native.js";
 import { uid, fmt } from "./dom.js";
 
-export const HOST_PORT = 8000;
+export const HOST_PORT = 27183;
 const HOST = `http://localhost:${HOST_PORT}`;
 /** Approximate size of the first-run install off Apple Silicon (CUDA PyTorch, unpacked). */
 const SETUP_BYTES = 4.5e9;
@@ -279,4 +279,78 @@ export async function catalogDelete(m) {
     toast(`Deleted ${shortModel(m.repo)}`, "info", fmt.bytes(m.disk_bytes) + " freed");
     return true;
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
+}
+
+// ---------- video (MiniMax-H3 on this machine's NVIDIA GPU) ----------
+export const videoUrl = (id, kind = "file") => `${HOST}/api/video/${kind}/${id}`;
+/** Capability, setup state and job history; also seeds state.video. */
+export async function videoStatus() {
+  if (!live()) return null;
+  try {
+    const r = await get("/api/video/status", 8000);
+    if (!r.ok) return null;
+    state.video.status = r.body;
+    state.video.setup = r.body.setup;
+    for (const j of r.body.jobs || []) state.video.jobs[j.id] = j;
+    commit();
+    return r.body;
+  } catch { return null; }
+}
+async function videoPost(path, body, what, ms = 15000) {
+  try {
+    const r = await post(path, body, ms);
+    if (!r.ok) { toast(what, "gap", r.body?.error || `HTTP ${r.status}`); return null; }
+    return r.body;
+  } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); return null; }
+}
+export const videoSetup = () => videoPost("/api/video/setup", {}, "Couldn't set up video");
+export async function videoSubmit(prompt, preset, seconds, seed, mode = "best") {
+  const j = await videoPost("/api/video/jobs", { prompt, preset, seconds, seed, mode }, "Couldn't start the video");
+  if (j) { state.video.jobs[j.id] = j; commit(); }
+  return j;
+}
+/** Video roles across the swarm and the route a job would take; stored in state.video.swarm. */
+export async function videoSwarmStatus() {
+  if (!live()) return null;
+  try {
+    const r = await get("/api/video/swarm", 8000);
+    if (!r.ok) return null;
+    state.video.swarm = r.body; commit();
+    return r.body;
+  } catch { return null; }
+}
+export async function videoSwarmSubmit(prompt, preset, seconds, seed, mode = "best") {
+  const j = await videoPost("/api/video/swarm/jobs", { prompt, preset, seconds, seed, mode }, "Couldn't start the video");
+  if (j) { state.video.jobs[j.id] = j; commit(); }
+  return j;
+}
+export const videoCancel = id => videoPost(`/api/video/jobs/${id}/cancel`, {}, "Couldn't cancel");
+export async function videoReport(id) {
+  try { const r = await get(`/api/video/report/${id}`, 8000); return r.ok ? r.body : null; }
+  catch { return null; }
+}
+
+// ---------- H3 prompt encoder: this machine's layer slices ----------
+export async function encoderStatus() {
+  if (!live()) return null;
+  try {
+    const r = await get("/api/video/encoder", 8000);
+    if (!r.ok) return null;
+    state.video.encoder = r.body; commit();
+    return r.body;
+  } catch { return null; }
+}
+const encoderPost = async (path, body, what, ms) => {
+  const r = await videoPost(path, body, what, ms);
+  if (r?.slices) { state.video.encoder = r; commit(); }
+  return r;
+};
+export const encoderFetch = (lo, hi) => encoderPost("/api/video/encoder/fetch", { lo, hi }, "Couldn't download the layers");
+export const encoderRemove = (lo, hi) => encoderPost("/api/video/encoder/remove", { lo, hi }, "Couldn't remove the layers", 10 * 60000); // splitting a slice copies GBs
+export async function encoderTest(prompt) {
+  try {
+    const r = await post("/api/video/encoder/test", { prompt }, 15 * 60000);
+    if (!r.ok) { toast("Couldn't test the encoder", "gap", r.body?.error || `HTTP ${r.status}`); return null; }
+    return r.body;
+  } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); return null; }
 }
