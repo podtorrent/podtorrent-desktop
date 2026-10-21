@@ -13,7 +13,7 @@ import { videoFlow, activeStage } from "../viz/videoflow.js";
 /** Video roles of every machine (encoder layers, renders or not) and the route a video job takes. */
 function videoCard() {
   const flow = h("div"), roles = h("div.vroles"), reason = h("div.small.muted"), jobs = h("div.small.muted");
-  const el = h("button.card.cov-card", { type: "button", onclick: () => go("video") },
+  const el = h("button.card.cov-card", { type: "button", onclick: () => go("models", "video") },
     h("div.row", h("span.wl-tag.video", "Video"), h("b", "MiniMax-H3"), h("span.spacer"), h("span.small.faint", "Prompt encoder on the swarm, video on a GPU machine")),
     roles, flow, reason, jobs);
   let key = "";

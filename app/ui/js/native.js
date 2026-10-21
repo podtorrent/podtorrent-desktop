@@ -58,7 +58,7 @@ export function initNative() {
     if (s.kind === "joined") notify(`${s.node} joined your swarm`, "It can now serve layers and carry your prompts.");
     if (s.kind === "lost") notify(`${s.node} went offline`, "Its layers have no peer until it reconnects.");
     if (s.kind === "ready") notify("Model fully covered", "Every layer is loaded. The Playground is ready.");
-    if (s.kind === "video") notify("Your video is ready", "Open PodTorrent › Video to watch it.");
+    if (s.kind === "video") notify("Your video is ready", "Open PodTorrent › Playground › Video to watch it.");
     if (s.kind === "milestone") notify(`${fmt.compact(s.tokens)} tokens contributed`, "This machine has processed that many tokens for the swarm.");
   });
   let hiddenOnce = false;

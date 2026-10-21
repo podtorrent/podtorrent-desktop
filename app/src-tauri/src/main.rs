@@ -35,11 +35,84 @@ fn kill_group(child: &mut Child) {
     let _ = child.wait();
 }
 
-/// ~/.podtorrent, the same folder the engine uses (Python's Path.home(): HOME, else USERPROFILE on Windows).
-fn data_dir() -> PathBuf {
+/// ~/.podtorrent (Python's Path.home(): HOME, else USERPROFILE on Windows). Always holds the
+/// `location` pointer file, even when the data itself lives elsewhere.
+fn default_dir() -> PathBuf {
     let home = std::env::var_os("HOME").filter(|h| !h.is_empty())
         .or_else(|| std::env::var_os("USERPROFILE")).unwrap_or_default();
     PathBuf::from(home).join(".podtorrent")
+}
+
+/// Where models, the venv and logs live: the folder the user chose (default_dir()/location), else
+/// default_dir(). The engine gets it as PODTORRENT_HOME.
+fn data_dir() -> PathBuf {
+    std::fs::read_to_string(default_dir().join("location")).ok()
+        .map(|s| PathBuf::from(s.trim())).filter(|p| p.is_absolute())
+        .unwrap_or_else(default_dir)
+}
+
+/// Free bytes on the disk holding `p` (the mount point that is its longest prefix).
+fn free_bytes(p: &std::path::Path) -> Option<u64> {
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    disks.list().iter().filter(|d| p.starts_with(d.mount_point()))
+        .max_by_key(|d| d.mount_point().as_os_str().len()).map(|d| d.available_space())
+}
+
+fn location_info(p: PathBuf) -> serde_json::Value {
+    serde_json::json!({
+        "path": p.to_string_lossy(), "default": p == default_dir(),
+        "free_gb": free_bytes(&p).map(|b| b as f64 / (1u64 << 30) as f64),
+    })
+}
+
+/// The data folder in use, and free space on its disk.
+#[tauri::command]
+fn data_location() -> serde_json::Value { location_info(data_dir()) }
+
+/// Native folder picker; None if cancelled. Runs off the main thread (async command).
+#[tauri::command]
+async fn pick_folder(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog().file().set_title("Choose where PodTorrent keeps models").set_directory(data_dir())
+        .blocking_pick_folder().and_then(|f| f.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Use `path` for data from the next engine start. Existing data is not moved (it can be many GB);
+/// only this machine's identity and settings are copied so it stays the same peer.
+#[tauri::command]
+fn set_data_location(state: State<Engine>, path: Option<String>) -> Result<serde_json::Value, String> {
+    if state.0.lock().unwrap().is_some() {
+        return Err("Stop your node before changing where data is stored.".into());
+    }
+    let new = match path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => PathBuf::from(p),
+        None => default_dir(),
+    };
+    if !new.is_absolute() {
+        return Err("Choose a full folder path.".into());
+    }
+    // A chosen drive root or existing folder gets its own subfolder, so data never mixes with other files.
+    let new = if new != default_dir() && new.file_name().is_none_or(|n| n != "PodTorrent") { new.join("PodTorrent") } else { new };
+    std::fs::create_dir_all(&new).map_err(|e| format!("Can't create {}: {e}", new.display()))?;
+    let probe = new.join(".write-test");
+    std::fs::write(&probe, b"ok").map_err(|e| format!("Can't write to {}: {e}", new.display()))?;
+    let _ = std::fs::remove_file(probe);
+    let old = data_dir();
+    if old != new {
+        for f in ["identity", "config.json"] {
+            if old.join(f).exists() && !new.join(f).exists() {
+                let _ = std::fs::copy(old.join(f), new.join(f));
+            }
+        }
+    }
+    let base = default_dir();
+    std::fs::create_dir_all(&base).map_err(|e| e.to_string())?;
+    if new == base {
+        let _ = std::fs::remove_file(base.join("location"));
+    } else {
+        std::fs::write(base.join("location"), new.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
+    }
+    Ok(location_info(new))
 }
 
 const UV: &str = if cfg!(windows) { "uv.exe" } else { "uv" };
@@ -75,6 +148,7 @@ fn start_engine(app: AppHandle, state: State<Engine>, mode: String, name: Option
     let uv = if dir.join(UV).exists() { dir.join(UV) } else { PathBuf::from(UV) };
     let mut cmd = Command::new(uv);
     cmd.args(["run", "--project"]).arg(&dir).args(["podtorrent"]).args(&args)
+        .env("PODTORRENT_HOME", &data)
         .env("UV_PROJECT_ENVIRONMENT", data.join("venv"))
         // uv's own native Python: a system one (e.g. an Intel Miniconda under Rosetta) can't load MLX.
         .env("UV_PYTHON_PREFERENCE", "only-managed")
@@ -90,6 +164,11 @@ fn start_engine(app: AppHandle, state: State<Engine>, mode: String, name: Option
     // setup_progress measure it; macOS keeps uv's shared cache so existing installs don't redownload.
     #[cfg(not(target_os = "macos"))]
     cmd.env("UV_CACHE_DIR", data.join("uv-cache"));
+    // In a chosen folder uv's managed Python goes there too, so nothing large lands on the system
+    // drive. The default location keeps uv's own, so existing installs don't rebuild their venv.
+    if data != default_dir() {
+        cmd.env("UV_PYTHON_INSTALL_DIR", data.join("python"));
+    }
     let name: String = name.unwrap_or_default().chars().filter(|c| !c.is_control()).take(40).collect();
     if !name.trim().is_empty() {
         cmd.env("PODTORRENT_NAME", name.trim());
@@ -145,7 +224,7 @@ fn local_models() -> Vec<serde_json::Value> {
             _ => 0,
         }).sum()).unwrap_or(0)
     }
-    let home = std::env::var_os("PODTORRENT_HOME").map(PathBuf::from).unwrap_or_else(data_dir).join("models");
+    let home = data_dir().join("models");
     let mut dirs: Vec<_> = std::fs::read_dir(&home).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect()).unwrap_or_default();
     dirs.sort();
     dirs.iter().map(|d| {
@@ -260,7 +339,8 @@ fn system_health() -> serde_json::Value {
     })
 }
 
-/// Elsewhere: chip, memory and memory pressure (from free RAM); thermal and power are unknown.
+/// Elsewhere: chip, memory and memory pressure (from free RAM); on Windows also power and
+/// Battery Saver, and with an NVIDIA GPU its temperature (as the thermal state), load and memory.
 #[cfg(not(target_os = "macos"))]
 #[tauri::command]
 fn system_health() -> serde_json::Value {
@@ -270,11 +350,49 @@ fn system_health() -> serde_json::Value {
     sys.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
     let avail = sys.available_memory() as f64 / sys.total_memory().max(1) as f64;
     let pressure = if avail < 0.05 { "critical" } else if avail < 0.15 { "warn" } else { "normal" };
+    let (power, battery_pct, low_power) = power_status();
+    let gpu = nvidia_gpu();
+    let thermal = match gpu.as_ref().and_then(|g| g["temp_c"].as_f64()) {
+        Some(t) if t >= 93.0 => "critical", Some(t) if t >= 87.0 => "serious",
+        Some(t) if t >= 80.0 => "fair", Some(_) => "nominal", None => "unknown",
+    };
     serde_json::json!({
         "chip": s.chip, "mem_total_gb": s.mem_bytes as f64 / (1u64 << 30) as f64, "os": s.os,
-        "thermal": "unknown", "low_power": false,
-        "power": "unknown", "battery_pct": null, "mem_pressure": pressure,
+        "thermal": thermal, "low_power": low_power,
+        "power": power, "battery_pct": battery_pct, "mem_pressure": pressure,
+        "ram_used_pct": ((1.0 - avail) * 100.0).round(), "gpu": gpu,
     })
+}
+
+/// AC or battery, battery percent (None on a desktop) and whether Battery Saver is on.
+#[cfg(windows)]
+fn power_status() -> (&'static str, Option<u32>, bool) {
+    use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    let mut p: SYSTEM_POWER_STATUS = unsafe { std::mem::zeroed() };
+    if unsafe { GetSystemPowerStatus(&mut p) } == 0 { return ("unknown", None, false); }
+    let power = match p.ACLineStatus { 1 => "ac", 0 => "battery", _ => "unknown" };
+    // BatteryFlag 128: no battery; BatteryLifePercent 255: unknown.
+    let pct = (p.BatteryFlag & 128 == 0 && p.BatteryLifePercent != 255).then_some(p.BatteryLifePercent as u32);
+    (power, pct, p.SystemStatusFlag == 1)
+}
+#[cfg(not(any(windows, target_os = "macos")))]
+fn power_status() -> (&'static str, Option<u32>, bool) { ("unknown", None, false) }
+
+/// The first NVIDIA GPU's name, temperature, load and memory from nvidia-smi, or None.
+#[cfg(not(target_os = "macos"))]
+fn nvidia_gpu() -> Option<serde_json::Value> {
+    let mut cmd = Command::new("nvidia-smi");
+    cmd.args(["--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"]);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flashes every poll
+    let out = cmd.output().ok().filter(|o| o.status.success())?;
+    let line = String::from_utf8_lossy(&out.stdout).lines().next()?.to_string();
+    let f: Vec<&str> = line.split(',').map(str::trim).collect();
+    let num = |i: usize| f.get(i).and_then(|v| v.parse::<f64>().ok());
+    Some(serde_json::json!({
+        "name": f.first()?, "temp_c": num(1), "util_pct": num(2),
+        "mem_used_gb": num(3).map(|m| m / 1024.0), "mem_total_gb": num(4).map(|m| m / 1024.0),
+    }))
 }
 
 // ---- tray ----
@@ -413,10 +531,12 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Engine::default())
         .invoke_handler(tauri::generate_handler![
             engine_log, engine_log_tail, engine_running, start_engine,
-            stop_engine, quit_app, system_health, tray_update, notify, setup_progress, local_models
+            stop_engine, quit_app, system_health, tray_update, notify, setup_progress, local_models,
+            data_location, pick_folder, set_data_location
         ])
         .setup(|app| {
             let handle = app.handle();

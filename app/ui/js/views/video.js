@@ -1,15 +1,15 @@
-// Video: text to video with MiniMax-H3. A job runs on the swarm (prompt encoder layers on the machines
-// that hold them, then a GPU machine renders) or, on an NVIDIA machine that's set up, all here.
-// Setup downloads a headless ComfyUI and ~44 GB of weights once; each job keeps a diagnostics report.
+// Video with MiniMax-H3. A job runs on the swarm (prompt encoder layers on the machines that hold
+// them, then a GPU machine renders) or, on an NVIDIA machine that's set up, all here. The encoder
+// and render cards live in Models › Video; the studio (prompt and jobs) in Playground's Video mode.
+// Render setup downloads a headless ComfyUI and ~44 GB of weights once; each job keeps a diagnostics report.
 import { h, text, cls, fmt } from "../dom.js";
 import { state } from "../store.js";
 import { button, segmented, empty, badge, setBadge } from "../ui.js";
 import { startHost, videoStatus, videoSetup, videoSubmit, videoCancel, videoReport, videoUrl,
-  encoderStatus, encoderFetch, encoderRemove, encoderTest, videoSwarmStatus, videoSwarmSubmit, unserveSlice } from "../engine.js";
-import { go as goView } from "../actions.js";
+  encoderFetch, encoderRemove, encoderTest, videoSwarmStatus, videoSwarmSubmit, unserveSlice } from "../engine.js";
+import { go as goView, copyText } from "../actions.js";
 import { icon } from "../icons.js";
 import { videoFlow, activeStage } from "../viz/videoflow.js";
-import { copyText } from "../actions.js";
 
 const LENGTHS = [5, 8, 10, 15]; // the model is trained on ~5-15 s clips
 const STAGES = { queued: "Waiting", starting: "Starting", loading: "Loading model", encoding: "Reading prompt", generating: "Generating",
@@ -37,7 +37,7 @@ function missingLayers(sw, n) {
 }
 
 /** Prompt encoder card: this machine's share of H3's 50 Qwen3-VL layers. Shown on every machine. */
-function encoderCard() {
+export function encoderCard() {
   let enc = null, busyTest = false, testPrompt = "";
   const n = () => enc?.n_layers || 50;
   const bytes = (lo, hi) => (hi - lo) * enc.layer_bytes + (lo === 0 ? enc.embed_bytes : 0);
@@ -103,8 +103,10 @@ function encoderCard() {
       mine,
       presets,
       shared, note, err, prog, progMsg, h("div.row", h("span.spacer"), actBtn),
-      h("div", { style: { borderTop: "1px solid var(--line-1)" } }), h("b.small", "Test"), testRow,
-      h("p.small.faint", "The test runs only this machine's layers. Video jobs chain them with the other machines' layers automatically.")));
+      // Test my layers: hidden for now.
+      // h("div", { style: { borderTop: "1px solid var(--line-1)" } }), h("b.small", "Test"), testRow,
+      // h("p.small.faint", "The test runs only this machine's layers. Video jobs chain them with the other machines' layers automatically.")
+    ));
 
   function paint() {
     enc = state.video.encoder;
@@ -176,192 +178,204 @@ function encoderCard() {
   return { el, paint };
 }
 
+/** Rendering card: whether this machine draws the frames of video jobs (an NVIDIA GPU, after a one-time
+ *  download of a headless ComfyUI and the H3 weights). Lives in Models › Video next to the encoder layers. */
+export function renderCard() {
+  const msg = h("div.small.muted"), bar = h("div.progress", h("i")), err = h("div.small.gap-text");
+  const setupBtn = button("Set up rendering", { variant: "primary", icon: "download", onclick: () => videoSetup() });
+  const size = h("b"), updateSize = h("span"), state_ = h("span.badge");
+  const first = h("p.small.muted", "Downloads the MiniMax-H3 video model (", size, ") and a video engine once. Frames are drawn on this machine's GPU. This takes a while; you can leave the app open and do other things.");
+  const update = h("p.small.muted", "The video engine has an update that fixes blocky, noisy video. It downloads about ", updateSize, ".");
+  const license = h("p.small.faint", "By setting up, you accept the MiniMax H3 Community License.");
+  const pausedMsg = h("div.grow");
+  const paused = h("div.next", icon("alert"), pausedMsg,
+    button("Stop serving text layers", { size: "sm", variant: "primary", onclick: async () => {
+      for (const x of [...state.slices]) await unserveSlice(x.model, x.lo, x.hi);
+      videoStatus(); } }));
+  const foot = h("div.card-f", setupBtn);
+  const el = h("section.card",
+    h("div.card-h", h("h2", "Render videos on this machine"), h("span.spacer"), state_),
+    h("div.card-b.col", { style: { gap: "10px" } },
+      h("p.small.muted", "After the prompt encoder reads a prompt, one GPU machine draws the video frames. This needs an NVIDIA GPU; any machine or peer that has one can do it for the swarm."),
+      msg, first, update, license, bar, err, paused),
+    foot);
+  function paint(s) {
+    const st = s.video.status;
+    if (!st) { setBadge(state_, "Checking", "neutral"); text(msg, "Checking this machine…"); first.hidden = update.hidden = license.hidden = bar.hidden = paused.hidden = foot.hidden = true; return; }
+    const cap = st.capability || {}, ready = st.installed && st.models_ready;
+    const su = s.video.setup || st.setup || {}, busy = ["install", "models"].includes(su.phase);
+    paused.hidden = !(ready && st.paused);
+    text(pausedMsg, st.paused || "");
+    if (!cap.ok && !ready) {
+      setBadge(state_, "Not on this machine", "neutral");
+      text(msg, `${cap.reason || "This machine has no suitable GPU."} Another machine or peer in the swarm renders; this one can still keep prompt encoder layers (above).`);
+      first.hidden = update.hidden = license.hidden = bar.hidden = foot.hidden = true; text(err, "");
+      return;
+    }
+    if (ready && !st.update) {
+      setBadge(state_, st.paused ? "Paused" : "Renders", st.paused ? "degraded" : "serving", { dot: true });
+      text(msg, `Renders video jobs on ${st.gpu?.name || "this machine's GPU"}.`);
+      first.hidden = update.hidden = license.hidden = bar.hidden = foot.hidden = true; text(err, "");
+      return;
+    }
+    setBadge(state_, busy ? (st.update ? "Updating" : "Setting up") : st.update ? "Update available" : "Not set up", busy ? "active" : "neutral", { dot: busy, pulse: busy });
+    text(size, `about ${st.missing_gb || st.models_gb} GB`);
+    text(updateSize, `${st.missing_gb || 3} GB`);  // 3 GB: engine-only update
+    first.hidden = !!st.update; update.hidden = !st.update; license.hidden = false; foot.hidden = false;
+    bar.hidden = !busy;
+    cls(bar, "indeterminate", su.phase === "install" || !su.total);
+    bar.firstChild.style.width = su.phase === "models" && su.total ? `${Math.round(100 * su.done / su.total)}%` : "";
+    text(msg, busy ? (su.phase === "models" && su.total ? `${su.message} · ${fmt.bytes(su.done)} of ${fmt.bytes(su.total)}` : su.message) : "");
+    text(err, su.phase === "error" ? `${su.message}. Press ${st.update ? "Update" : "Set up rendering"} to continue where it stopped.` : "");
+    setupBtn.disabled = busy;
+    setupBtn.lastChild.textContent = su.phase === "error" ? "Try again" : busy ? (st.update ? "Updating…" : "Setting up…") : st.update ? "Update" : "Set up rendering";
+  }
+  return { el, paint };
+}
+
 let pick = { preset: "draft", seconds: 5, mode: "best", where: "swarm" }, draft = "";
 const elapsed = (a, b) => { const s = Math.max(0, Math.round((b || Date.now() / 1000) - a)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`; };
 
-export default {
-  title: "Video",
-  subtitle: s => s.video.status?.gpu?.name || "",
-  mount(root) {
-    // ---- not running / unsupported ----
-    const offline = empty({ icon: "video", title: "Start your node to make videos", body: "Video runs on this machine's GPU through the PodTorrent engine.",
-      actions: [button("Start My Node", { variant: "primary", icon: "power", onclick: () => startHost() })] });
-    const unsupported = h("div");
-    const pausedMsg = h("div.grow");
-    const pausedBox = h("div.next", icon("alert"), pausedMsg,
-      button("Stop serving text layers", { size: "sm", variant: "primary", onclick: async () => {
-        for (const x of [...state.slices]) await unserveSlice(x.model, x.lo, x.hi);
-        videoStatus(); } }));
-    const loading = h("div.card.pad.muted", "Checking this machine…");
+/** Video studio for Playground: the prompt, the route a job takes, and every job with its result.
+ *  Which layers and rendering this machine holds is set in Models › Video. `top` goes above the composer. */
+export function videoStudio(top) {
+  const toModels = (variant = "primary") => button("Open Models › Video", { variant, icon: "models", onclick: () => goView("models", "video") });
+  const offline = empty({ icon: "video", title: "Start your node to make videos", body: "Video jobs run on the swarm: prompt encoder layers on the machines that hold them, then a GPU machine renders.",
+    actions: [button("Start My Node", { variant: "primary", icon: "power", onclick: () => startHost() })] });
+  const blocked = h("div");
+  const loading = h("div.card.pad.muted", "Checking the swarm…");
 
-    // ---- setup ----
-    const setupMsg = h("div.small.muted"), setupBar = h("div.progress", h("i")), setupErr = h("div.small.gap-text");
-    const setupBtn = button("Set up video", { variant: "primary", icon: "download", onclick: () => videoSetup() });
-    const setupSize = h("b"), setupTitle = h("h2");
-    const setupFirst = h("p", "PodTorrent downloads the MiniMax-H3 video model (", setupSize, ") and a video engine the first time. It runs here, on your GPU. This takes a while; you can leave the app open and do other things.");
-    const updateSize = h("span");
-    const setupUpdate = h("p", "The video engine has an update that fixes blocky, noisy video. It downloads about ", updateSize, ".");
-    const setupCard = h("section.card.video-setup",
-      h("div.card-h", setupTitle),
-      h("div.card-b.col", { style: { gap: "10px" } },
-        setupFirst, setupUpdate,
-        h("p.small.muted", "By setting up, you accept the MiniMax H3 Community License."),
-        setupBar, setupMsg, setupErr),
-      h("div.card-f", setupBtn));
+  // ---- composer ----
+  const prompt = h("textarea.input.video-prompt", { rows: 4, placeholder: "Describe the scene, the camera and the sound. For example: " + IDEAS[0], "aria-label": "Video prompt" });
+  prompt.value = draft;
+  prompt.addEventListener("input", () => { draft = prompt.value; paintGo(); });
+  prompt.addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go(); } });
+  const presetSeg = h("span"), modeSeg = h("span"), lenSeg = segmented(LENGTHS.map(s => ({ value: s, label: `${s}s` })), pick.seconds, v => { pick.seconds = v; }, "Length");
+  const goBtn = button("Generate", { variant: "primary", icon: "video", onclick: () => go() });
+  const cmpBtn = button("Compare Fast and Best", { size: "sm", tip: "Renders this prompt twice with the same seed, once in each mode, so you can see the difference.", onclick: () => compare() });
+  const ideas = h("div.suggest", IDEAS.map(t => h("button.suggest-btn", { type: "button", onclick: () => { prompt.value = draft = t; paintGo(); prompt.focus(); } }, t)));
+  const warn = h("div.small.muted");
+  const whereSeg = segmented([{ value: "swarm", label: "Swarm", tip: "Encoder layers on the machines that hold them, then a GPU machine renders" },
+    { value: "local", label: "This machine", tip: "Everything on this machine's GPU" }], pick.where, v => { pick.where = v; paintRoute(); }, "Where");
+  const whereRow = h("div.row.wrap", { style: { gap: "12px" } }, h("span.small.muted", "Where"), whereSeg);
+  const routeBox = h("div.col", { style: { gap: "6px" } });
+  let canLocal = false, swarmSt = null;
+  function paintRoute() {
+    const where = canLocal ? pick.where : "swarm";
+    whereRow.hidden = !canLocal || !swarmSt?.route;
+    if (where === "local") { routeBox.dataset.k = ""; return routeBox.replaceChildren(h("span.small.muted", "Runs entirely on this machine.")); }
+    const k = JSON.stringify([swarmSt?.route, swarmSt?.reason]);
+    if (routeBox.dataset.k === k) return;
+    routeBox.dataset.k = k;
+    routeBox.replaceChildren(...(swarmSt?.route ? [h("span.small.muted", "Route"), videoFlow(swarmSt.route)]
+      : [h("span.small.gap-text", swarmSt ? swarmSt.reason : "Looking for machines and peers…")]));
+  }
+  const pausedMsg = h("div.grow");
+  const paused = h("div.next", icon("alert"), pausedMsg, toModels("ghost"));
+  const composer = h("section.card",
+    h("div.card-h", h("h2", "New video"), h("span.spacer"), h("span.small.faint", "Ctrl+Enter to generate")),
+    h("div.card-b.col", { style: { gap: "12px" } }, prompt, ideas,
+      h("div.row.wrap", { style: { gap: "12px" } }, h("span.small.muted", "Shape"), presetSeg, h("span.small.muted", "Length"), lenSeg),
+      whereRow, routeBox,
+      h("div.row.wrap", { style: { gap: "12px" } }, h("span.small.muted", "Quality"), modeSeg, h("span.spacer"), cmpBtn, goBtn),
+      warn));
+  const submit = (...a) => (canLocal && pick.where === "local" ? videoSubmit : videoSwarmSubmit)(...a);
+  async function go() {
+    if (!draft.trim()) return prompt.focus();
+    goBtn.disabled = true;
+    const j = await submit(draft.trim(), pick.preset, pick.seconds, null, pick.mode);
+    goBtn.disabled = false;
+    if (j) { prompt.value = draft = ""; paintGo(); }
+  }
+  async function compare() {
+    if (!draft.trim()) return prompt.focus();
+    const seed = Math.floor(Math.random() * 2 ** 40);
+    cmpBtn.disabled = true;
+    const a = await submit(draft.trim(), pick.preset, pick.seconds, seed, "fast");
+    if (a) await submit(draft.trim(), pick.preset, pick.seconds, seed, "best");
+    cmpBtn.disabled = false;
+  }
+  const paintGo = () => { goBtn.disabled = cmpBtn.disabled = !draft.trim(); };
+  paintGo();
 
-    // ---- composer ----
-    const prompt = h("textarea.input.video-prompt", { rows: 4, placeholder: "Describe the scene, the camera and the sound. For example: " + IDEAS[0], "aria-label": "Video prompt" });
-    prompt.value = draft;
-    prompt.addEventListener("input", () => { draft = prompt.value; paintGo(); });
-    prompt.addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go(); } });
-    const presetSeg = h("span"), modeSeg = h("span"), lenSeg = segmented(LENGTHS.map(s => ({ value: s, label: `${s}s` })), pick.seconds, v => { pick.seconds = v; }, "Length");
-    const goBtn = button("Generate", { variant: "primary", icon: "video", onclick: () => go() });
-    const cmpBtn = button("Compare Fast and Best", { size: "sm", tip: "Renders this prompt twice with the same seed, once in each mode, so you can see the difference.", onclick: () => compare() });
-    const ideas = h("div.suggest", IDEAS.map(t => h("button.suggest-btn", { type: "button", onclick: () => { prompt.value = draft = t; paintGo(); prompt.focus(); } }, t)));
-    const warn = h("div.small.muted");
-    const whereSeg = segmented([{ value: "swarm", label: "Swarm", tip: "Encoder layers on the machines that hold them, then a GPU machine renders" },
-      { value: "local", label: "This machine", tip: "Everything on this machine's GPU" }], pick.where, v => { pick.where = v; paintRoute(); }, "Where");
-    const whereRow = h("div.row.wrap", { style: { gap: "12px" } }, h("span.small.muted", "Where"), whereSeg);
-    const routeBox = h("div.col", { style: { gap: "6px" } });
-    let canLocal = false, swarmSt = null;
-    function paintRoute() {
-      const where = canLocal ? pick.where : "swarm";
-      whereRow.hidden = !canLocal || !swarmSt?.route;
-      if (where === "local") return routeBox.replaceChildren(h("span.small.muted", "Runs entirely on this machine."));
-      const k = JSON.stringify([swarmSt?.route, swarmSt?.reason]);
-      if (routeBox.dataset.k === k) return;
-      routeBox.dataset.k = k;
-      routeBox.replaceChildren(...(swarmSt?.route ? [h("span.small.muted", "Route"), videoFlow(swarmSt.route)]
-        : [h("span.small.gap-text", swarmSt ? swarmSt.reason : "Looking for machines and peers…")]));
-    }
-    const composer = h("section.card",
-      h("div.card-h", h("h2", "New video"), h("span.spacer"), h("span.small.faint", "Ctrl+Enter to generate")),
-      h("div.card-b.col", { style: { gap: "12px" } }, prompt, ideas,
-        h("div.row.wrap", { style: { gap: "12px" } }, h("span.small.muted", "Shape"), presetSeg, h("span.small.muted", "Length"), lenSeg),
-        whereRow, routeBox,
-        h("div.row.wrap", { style: { gap: "12px" } }, h("span.small.muted", "Quality"), modeSeg, h("span.spacer"), cmpBtn, goBtn),
-        warn));
-    const submit = (...a) => (canLocal && pick.where === "local" ? videoSubmit : videoSwarmSubmit)(...a);
-    async function go() {
-      if (!draft.trim()) return prompt.focus();
-      goBtn.disabled = true;
-      const j = await submit(draft.trim(), pick.preset, pick.seconds, null, pick.mode);
-      goBtn.disabled = false;
-      if (j) { prompt.value = draft = ""; paintGo(); }
-    }
-    async function compare() {
-      if (!draft.trim()) return prompt.focus();
-      const seed = Math.floor(Math.random() * 2 ** 40);
-      cmpBtn.disabled = true;
-      const a = await submit(draft.trim(), pick.preset, pick.seconds, seed, "fast");
-      if (a) await submit(draft.trim(), pick.preset, pick.seconds, seed, "best");
-      cmpBtn.disabled = false;
-    }
-    const paintGo = () => { goBtn.disabled = cmpBtn.disabled = !draft.trim(); };
-    paintGo();
+  // ---- jobs ----
+  const jobsBox = h("div.col.video-jobs", { style: { gap: "12px" } });
+  const jobEls = new Map();
+  function jobEl(j) {
+    const b = badge("", "neutral"), bar = h("div.progress", h("i")), detail = h("span.small.muted"), time = h("span.small.faint");
+    const media = h("div.video-media"), err = h("div.small.gap-text"), flow = h("div");
+    const cancel = button("Cancel", { size: "sm", onclick: () => videoCancel(j.id) });
+    const report = button("Copy report", { size: "sm", icon: "copy", tip: "Diagnostics for this video: timings and memory. Paste it to whoever is helping you.",
+      onclick: async () => { const r = await videoReport(j.id); r ? copyText(JSON.stringify(r, null, 2), "Report copied") : copyText(JSON.stringify(state.video.jobs[j.id], null, 2), "Job details copied"); } });
+    const el = h("section.card.video-job",
+      h("div.card-h", b, h("span.ellipsis.grow.video-title", { title: j.prompt }, j.prompt), time),
+      h("div.card-b.col", { style: { gap: "8px" } }, media, flow, bar, h("div.row", detail, h("span.spacer"), h("span.small.faint", `${j.width}×${j.height} · ${j.seconds}s · ${j.mode === "fast" ? "Fast" : "Best"} · seed ${j.seed}`)), err),
+      h("div.card-f", cancel, report));
+    const o = { el, paint(j) {
+      setBadge(b, STAGES[j.state] || j.state, TONE[j.state] || "active");
+      const done = FINISHED.includes(j.state);
+      cls(bar, "indeterminate", !done && j.state !== "generating");
+      bar.hidden = done;
+      bar.firstChild.style.width = j.state === "generating" ? `${Math.round(100 * j.step / (j.steps || 1))}%` : "";
+      text(detail, done ? (j.state === "done" ? `Made in ${elapsed(j.started, j.finished)}` : "") : j.detail || "");
+      text(time, j.started ? elapsed(j.started, j.finished) : fmt.ago(Date.now() / 1000 - j.created));
+      text(err, j.error || "");
+      const at = j.route && !done ? activeStage(j, j.route) : null;
+      if (j.route && flow.dataset.k !== (at || "")) { flow.dataset.k = at || ""; flow.replaceChildren(videoFlow(j.route, at)); }
+      cancel.hidden = done;
+      report.hidden = !done;
+      if (j.state === "done" && j.video && !media.firstChild) media.append(h("video", { controls: true, preload: "metadata", src: videoUrl(j.id) }));
+      if (j.state === "done" && !j.video && !media.firstChild) media.append(h("div.small.muted", j.fake ? "Simulated run: no video file." : "No video file."));
+    } };
+    return o;
+  }
+  function paintJobs(s) {
+    const list = Object.values(s.video.jobs).sort((a, b) => b.created - a.created);
+    const keep = new Set(list.map(j => j.id));
+    for (const [id, o] of jobEls) if (!keep.has(id)) { o.el.remove(); jobEls.delete(id); }
+    list.forEach((j, i) => {
+      let o = jobEls.get(j.id);
+      if (!o) { o = jobEl(j); jobEls.set(j.id, o); }
+      o.paint(j);
+      if (jobsBox.children[i] !== o.el) jobsBox.insertBefore(o.el, jobsBox.children[i] || null);
+    });
+  }
 
-    // ---- jobs ----
-    const jobsBox = h("div.col.video-jobs", { style: { gap: "12px" } });
-    const jobEls = new Map();
-    function jobEl(j) {
-      const b = badge("", "neutral"), bar = h("div.progress", h("i")), detail = h("span.small.muted"), time = h("span.small.faint");
-      const media = h("div.video-media"), err = h("div.small.gap-text"), flow = h("div");
-      const cancel = button("Cancel", { size: "sm", onclick: () => videoCancel(j.id) });
-      const report = button("Copy report", { size: "sm", icon: "copy", tip: "Diagnostics for this video: timings and memory. Paste it to whoever is helping you.",
-        onclick: async () => { const r = await videoReport(j.id); r ? copyText(JSON.stringify(r, null, 2), "Report copied") : copyText(JSON.stringify(state.video.jobs[j.id], null, 2), "Job details copied"); } });
-      const el = h("section.card.video-job",
-        h("div.card-h", b, h("span.ellipsis.grow.video-title", { title: j.prompt }, j.prompt), time),
-        h("div.card-b.col", { style: { gap: "8px" } }, media, flow, bar, h("div.row", detail, h("span.spacer"), h("span.small.faint", `${j.width}×${j.height} · ${j.seconds}s · ${j.mode === "fast" ? "Fast" : "Best"} · seed ${j.seed}`)), err),
-        h("div.card-f", cancel, report));
-      const o = { el, paint(j) {
-        setBadge(b, STAGES[j.state] || j.state, TONE[j.state] || "active");
-        const done = FINISHED.includes(j.state);
-        cls(bar, "indeterminate", !done && j.state !== "generating");
-        bar.hidden = done;
-        bar.firstChild.style.width = j.state === "generating" ? `${Math.round(100 * j.step / (j.steps || 1))}%` : "";
-        text(detail, done ? (j.state === "done" ? `Made in ${elapsed(j.started, j.finished)}` : "") : j.detail || "");
-        text(time, j.started ? elapsed(j.started, j.finished) : fmt.ago(Date.now() / 1000 - j.created));
-        text(err, j.error || "");
-        const at = j.route && !done ? activeStage(j, j.route) : null;
-        if (j.route && flow.dataset.k !== (at || "")) { flow.dataset.k = at || ""; flow.replaceChildren(videoFlow(j.route, at)); }
-        cancel.hidden = done;
-        report.hidden = !done;
-        if (j.state === "done" && j.video && !media.firstChild) media.append(h("video", { controls: true, preload: "metadata", src: videoUrl(j.id) }));
-        if (j.state === "done" && !j.video && !media.firstChild) media.append(h("div.small.muted", j.fake ? "Simulated run: no video file." : "No video file."));
-      } };
-      return o;
-    }
-    function paintJobs(s) {
-      const list = Object.values(s.video.jobs).sort((a, b) => b.created - a.created);
-      const keep = new Set(list.map(j => j.id));
-      for (const [id, o] of jobEls) if (!keep.has(id)) { o.el.remove(); jobEls.delete(id); }
-      list.forEach((j, i) => {
-        let o = jobEls.get(j.id);
-        if (!o) { o = jobEl(j); jobEls.set(j.id, o); }
-        o.paint(j);
-        if (jobsBox.children[i] !== o.el) jobsBox.insertBefore(o.el, jobsBox.children[i] || null);
-      });
-    }
+  const body = h("div.col", { style: { gap: "16px" } });
+  const el = h("div.page.video", top, body, jobsBox);
+  let shown = null, asked = false, swarmAsked = 0;
+  const show = (key, ...els) => { if (shown !== key) { shown = key; body.replaceChildren(...els); } };
+  const tick = setInterval(() => paintJobs(state), 1000);
 
-    const enc = encoderCard();
-    let encAsked = false;
-    const page = h("div.page.video");
-    root.append(page);
-    let shown = null, asked = false, swarmAsked = 0, slicesKey = null;
-    const show = (key, ...els) => { if (shown !== key) { shown = key; page.replaceChildren(...els); } };
-    const tick = setInterval(() => paintJobs(state), 1000);
-
-    return {
-      unmount() { clearInterval(tick); },
-      update(s) {
-        if (s.source !== "live" || s.engine.phase !== "running") { asked = encAsked = false; return show("offline", offline); }
-        if (!encAsked) { encAsked = true; encoderStatus(); }
-        enc.paint();
-        if (Date.now() - swarmAsked > 3000) { swarmAsked = Date.now(); videoSwarmStatus(); }
-        const sk = JSON.stringify(s.slices.map(x => [x.model, x.lo, x.hi, x.loaded]));
-        if (sk !== slicesKey) { if (slicesKey !== null) { videoStatus(); encoderStatus(); } slicesKey = sk; }
-        if (!s.video.status) { if (!asked) { asked = true; videoStatus(); } return show("loading", loading); }
-        const st = s.video.status, cap = st.capability;
-        const ready = st.installed && st.models_ready;
-        swarmSt = s.video.swarm; canLocal = ready;
-        const viaSwarm = !!swarmSt?.route;
-        if (!presetSeg.firstChild) presetSeg.append(segmented(Object.entries(st.presets).map(([k, p]) => ({ value: k, label: p.label, tip: `${p.width}×${p.height}` })), pick.preset, v => { pick.preset = v; }, "Shape"));
-        if (!modeSeg.firstChild) modeSeg.append(segmented(Object.entries(st.modes || { best: { label: "Best" } }).map(([k, m]) => ({ value: k, label: m.label, tip: `${m.steps} steps` })), pick.mode, v => { pick.mode = v; }, "Quality"));
-        paintRoute();
-        text(warn, [ready ? cap.warn : "", "Draft is fastest (minutes). HD on a 12 GB GPU can take an hour or more. Best is sharper; Fast takes about half the time."].filter(Boolean).join(" "));
-        const work = ready || viaSwarm ? [composer] : [];
-        const tail = [enc.el, jobsBox];
-        if (!cap.ok && !ready) {
-          const renderer = swarmSt?.machines?.some(m => m.video);
-          unsupported.replaceChildren(empty({ icon: "video", title: renderer ? "Almost ready: the prompt encoder needs layers" : "No machine or peer can render videos yet",
-            body: renderer ? `${swarmSt.reason} This machine can keep some of them (below).`
-              : `${cap.reason} Start PodTorrent on a machine that has one. This machine can still take part by keeping prompt encoder layers (below).` }));
-          show(`unsupported:${cap.reason}:${viaSwarm}`, ...work, ...(viaSwarm ? [] : [unsupported]), ...tail);
-          return paintJobs(s);
-        }
-        if (!ready) {
-          const su = s.video.setup || st.setup || {};
-          const busy = ["install", "models"].includes(su.phase);
-          text(setupSize, `about ${st.missing_gb || st.models_gb} GB`);
-          text(updateSize, `${st.missing_gb || 3} GB`);  // 3 GB: engine-only update
-          text(setupTitle, st.update ? "Update the video engine" : "Set up video on this machine");
-          setupFirst.hidden = !!st.update; setupUpdate.hidden = !st.update;
-          setupBar.hidden = !busy;
-          cls(setupBar, "indeterminate", su.phase === "install" || !su.total);
-          setupBar.firstChild.style.width = su.phase === "models" && su.total ? `${Math.round(100 * su.done / su.total)}%` : "";
-          text(setupMsg, busy ? (su.phase === "models" && su.total ? `${su.message} · ${fmt.bytes(su.done)} of ${fmt.bytes(su.total)}` : su.message) : "");
-          text(setupErr, su.phase === "error" ? `${su.message}. Press Set up video to continue where it stopped.` : "");
-          setupBtn.disabled = busy;
-          setupBtn.lastChild.textContent = su.phase === "error" ? "Try again" : busy ? (st.update ? "Updating…" : "Setting up…") : st.update ? "Update" : "Set up video";
-          show(`setup:${viaSwarm}`, ...work, setupCard, ...tail);
-          return paintJobs(s);
-        }
-        pausedBox.hidden = !st.paused;
-        text(pausedMsg, st.paused || "");
-        show("ready", pausedBox, composer, ...tail);
-        paintJobs(s);
-      },
-      focus() { prompt.focus(); },
-    };
-  },
-};
+  return {
+    el,
+    unmount() { clearInterval(tick); },
+    focus() { prompt.focus(); },
+    update(s) {
+      paintJobs(s);
+      if (s.source !== "live" || s.engine.phase !== "running") { asked = false; return show("offline", offline); }
+      if (Date.now() - swarmAsked > 3000) { swarmAsked = Date.now(); videoSwarmStatus(); }
+      if (!s.video.status) { if (!asked) { asked = true; videoStatus(); } return show("loading", loading); }
+      const st = s.video.status;
+      canLocal = st.installed && st.models_ready;
+      swarmSt = s.video.swarm;
+      if (!presetSeg.firstChild) presetSeg.append(segmented(Object.entries(st.presets).map(([k, p]) => ({ value: k, label: p.label, tip: `${p.width}×${p.height}` })), pick.preset, v => { pick.preset = v; }, "Shape"));
+      if (!modeSeg.firstChild) modeSeg.append(segmented(Object.entries(st.modes || { best: { label: "Best" } }).map(([k, m]) => ({ value: k, label: m.label, tip: `${m.steps} steps` })), pick.mode, v => { pick.mode = v; }, "Quality"));
+      paintRoute();
+      text(warn, [canLocal ? st.capability?.warn : "", "Draft is fastest (minutes). HD on a 12 GB GPU can take an hour or more. Best is sharper; Fast takes about half the time."].filter(Boolean).join(" "));
+      paused.hidden = !(canLocal && st.paused);
+      text(pausedMsg, st.paused || "");
+      if (canLocal || swarmSt?.route) return show("ready", paused, composer);
+      // Nothing can run a job yet: say what's missing and where to fix it.
+      const renderer = swarmSt?.machines?.some(m => m.video);
+      const k = `blocked:${renderer}:${swarmSt?.reason}`;
+      if (shown !== k) blocked.replaceChildren(empty({ icon: "video", tone: "degraded",
+        title: !swarmSt ? "Looking for machines and peers…" : renderer ? "Almost ready: the prompt encoder needs layers" : "No machine or peer can render videos yet",
+        body: !swarmSt ? "Checking which machines hold prompt encoder layers and which can render." : renderer
+          ? `${swarmSt.reason} Keep some of them on this machine in Models › Video.`
+          : `${swarmSt.reason || ""} A machine or peer with an NVIDIA GPU sets up rendering in Models › Video. This machine can still keep prompt encoder layers there.`.trim(),
+        actions: [toModels()] }));
+      show(k, blocked);
+    },
+  };
+}

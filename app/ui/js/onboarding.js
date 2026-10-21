@@ -7,6 +7,7 @@ import { icon } from "./icons.js";
 import { button } from "./ui.js";
 import { go, setDemo } from "./actions.js";
 import { startHost } from "./engine.js";
+import { storagePicker } from "./storage.js";
 
 const REPO = "mlx-community/Qwen3-30B-A3B-4bit", LAYERS = 48, GB_PER_LAYER = 0.33;
 
@@ -16,7 +17,7 @@ export function initOnboarding() {
 }
 
 export function openOnboarding() {
-  let step = 0;
+  let step = 0, picker = null;
   let name = settings.peerName || "";
   const mem = state.health?.mem_total_gb;
   const CHOICES = [
@@ -64,6 +65,7 @@ export function openOnboarding() {
       },
       () => [
         h("h1", "What should this machine serve?"),
+        (picker ||= storagePicker()) && h("div.field", h("div.small.muted", "Models and the Python environment are stored in"), picker),
         h("p", mem ? `This machine has ${fmt.gb(mem)} of memory. You can change this any time, and serve more models later.` : "You can change this any time, and serve more models later."),
         h("div.onb-roles", { role: "radiogroup", "aria-label": "What to serve" }, CHOICES.map(c => h("button.onb-role", {
           type: "button", role: "radio", "aria-pressed": String(pick === c.id), "aria-checked": String(pick === c.id),

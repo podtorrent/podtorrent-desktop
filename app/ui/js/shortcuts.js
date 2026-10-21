@@ -22,7 +22,7 @@ export function showShortcuts() {
 }
 
 const MAP = {
-  "Digit1": "nav:swarm", "Digit2": "nav:models", "Digit3": "nav:playground", "Digit4": "nav:node", "Digit5": "nav:peers", "Digit6": "nav:activity", "Digit7": "nav:video",
+  "Digit1": "nav:swarm", "Digit2": "nav:models", "Digit3": "nav:playground", "Digit4": "nav:node", "Digit5": "nav:peers", "Digit6": "nav:activity",
   "Comma": "settings", "KeyK": "palette", "Backslash": "toggle-sidebar", "KeyI": "inspector", "KeyG": "swarm-layout", "Slash": "shortcuts",
 };
 const SHIFT = { "KeyH": "node:start-host", "KeyJ": "node:join", "KeyL": "node:load", "Period": "node:stop" };
