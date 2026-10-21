@@ -40,7 +40,7 @@ export default {
         h("div.col.join-cta-text", h("h2", "This machine isn't contributing yet"),
           h("p", "Your node is stopped. Start it to join the global swarm and serve layers. Everything below comes from this machine and your past sessions.")),
         h("div.col", { style: { gap: "8px", alignItems: "stretch" } }, offBtn,
-          armedButton("Quit", "Click again to quit", () => quitApp(), { icon: "power" }))));
+          button("Quit", { icon: "power", onclick: () => quitApp() }))));
     const startCard = h("section.card.role-card",
       h("div.row", h("div.role-ic", icon("node")), h("div.grow", h("h2", "This machine as a peer"), h("div.small.muted", "Joins the global swarm, connects directly to the other machines, and serves whichever layers you choose, of any model. Only those layers are downloaded."))),
       h("div.row", { style: { marginTop: "14px" } }, startBtn));
