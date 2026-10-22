@@ -1,5 +1,5 @@
 // Upload one installer to R2 and point latest.json at it.
-//   node downloads/scripts/publish.js <mac|windows> <path-to-installer> [--notes "..."] [--no-latest]
+//   node downloads/scripts/publish.js <mac|windows|linux> <path-to-installer> [--notes "..."] [--no-latest]
 // The version comes from app/src-tauri/tauri.conf.json. Versioned files are never overwritten;
 // to roll back, re-point latest.json with: node downloads/scripts/publish.js promote <version>
 import { execFileSync } from "node:child_process";
@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
 const BUCKET = "podtorrent-releases";
+const PLATFORMS = ["mac", "windows", "linux"];
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -52,8 +53,8 @@ if (cmd === "promote") {
   process.exit(0);
 }
 
-if (!["mac", "windows"].includes(cmd) || !arg) {
-  console.error("usage: publish.js <mac|windows> <installer> [--notes '...'] [--no-latest] | promote <version>");
+if (!PLATFORMS.includes(cmd) || !arg) {
+  console.error("usage: publish.js <mac|windows|linux> <installer> [--notes '...'] [--no-latest] | promote <version>");
   process.exit(1);
 }
 
@@ -78,7 +79,7 @@ if (!noLatest) {
   // Keep the other platform's latest build if this version doesn't have one yet.
   const latest = getJson("latest.json") ?? {};
   const merged = { ...rel };
-  for (const p of ["mac", "windows"]) {
+  for (const p of PLATFORMS) {
     if (!merged[p] && latest[p]) merged[p] = latest[p];
   }
   putJson("latest.json", merged);
