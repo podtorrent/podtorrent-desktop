@@ -6,7 +6,7 @@ import { valuation, valuationError, bases, basis, usdFor, kwh, usd } from "../va
 import { button, armedButton, toggle, badge, setBadge, ticker } from "../ui.js";
 import { icon } from "../icons.js";
 import { areaChart, barChart } from "../viz/chart.js";
-import { startHost, stopNode, quitApp, unserveSlice, encoderStatus, videoStatus } from "../engine.js";
+import { startHost, stopNode, unserveSlice, encoderStatus, videoStatus } from "../engine.js";
 import { openServe } from "../serve.js";
 import { isTauri } from "../native.js";
 import { setDemo, go } from "../actions.js";
@@ -39,8 +39,7 @@ export default {
         h("div.join-cta-art", icon("node")),
         h("div.col.join-cta-text", h("h2", "This machine isn't contributing yet"),
           h("p", "Your node is stopped. Start it to join the global swarm and serve layers. Everything below comes from this machine and your past sessions.")),
-        h("div.col", { style: { gap: "8px", alignItems: "stretch" } }, offBtn,
-          button("Quit", { icon: "power", onclick: () => quitApp() }))));
+        h("div.col", { style: { gap: "8px", alignItems: "stretch" } }, offBtn)));
     const startCard = h("section.card.role-card",
       h("div.row", h("div.role-ic", icon("node")), h("div.grow", h("h2", "This machine as a peer"), h("div.small.muted", "Joins the global swarm, connects directly to the other machines, and serves whichever layers you choose, of any model. Only those layers are downloaded."))),
       h("div.row", { style: { marginTop: "14px" } }, startBtn));

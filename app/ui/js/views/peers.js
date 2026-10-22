@@ -10,7 +10,7 @@ const ROW = 48;
 const COLS = [
   { k: "name", l: "Peer", w: "minmax(160px,1.4fr)", v: n => n.name },
   { k: "state", l: "State", w: "120px", v: n => nodeStateLabel(n) },
-  { k: "layers", l: "Layers", w: "90px", v: n => n.lo ?? 1e9 },
+  { k: "layers", l: "Layers", w: "minmax(180px,1.2fr)", v: n => n.lo ?? 1e9 },
   { k: "rtt", l: "Latency", w: "80px", v: n => n.role === "host" ? -1 : n.rtt_ms ?? 1e9 },
   { k: "mem", l: "Memory", w: "minmax(120px,1fr)", v: n => n.mem?.active_gb ?? -1 },
   { k: "tokens", l: "Tokens", w: "90px", v: n => n.stats?.tokens ?? -1 },
@@ -42,7 +42,7 @@ export default {
       const sp = sparkline("row-spark", 100, 24);
       const el = h("div.tr", { role: "row", tabIndex: 0 },
         h("div.row.cell-name", h("span.statedot"), h("b.ellipsis.nm"), h("span.badge.you", "You"), h("span.faint.small.rl")),
-        h("div.small.st"), h("div.num.ly"), h("div.num.rt"),
+        h("div.small.st"), h("div.num.ellipsis.ly"), h("div.num.rt"),
         h("div.col.mm", { style: { gap: "4px" } }, h("span.small.num.mt"), h("div.progress", h("i"))),
         h("div.num.tk"), h("div.ac", sp), h("div.small.muted.ellipsis.ch"));
       el.addEventListener("click", () => peerSheet(el.dataset.name));
