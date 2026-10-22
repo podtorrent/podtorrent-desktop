@@ -156,8 +156,9 @@ fn start_engine(app: AppHandle, state: State<Engine>, mode: String, name: Option
         .stdout(log.try_clone().map_err(|e| e.to_string())?)
         .stderr(log);
     #[cfg(unix)]
-    cmd.env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default()))
-        .process_group(0);
+    cmd.process_group(0);
+    #[cfg(target_os = "macos")]
+    cmd.env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_default()));
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
     // Off Apple Silicon the first run downloads CUDA PyTorch (~3 GB). A cache of our own lets
@@ -375,7 +376,28 @@ fn power_status() -> (&'static str, Option<u32>, bool) {
     let pct = (p.BatteryFlag & 128 == 0 && p.BatteryLifePercent != 255).then_some(p.BatteryLifePercent as u32);
     (power, pct, p.SystemStatusFlag == 1)
 }
-#[cfg(not(any(windows, target_os = "macos")))]
+/// Linux: from /sys/class/power_supply, and power-profiles-daemon's "power-saver" as Battery Saver.
+#[cfg(target_os = "linux")]
+fn power_status() -> (&'static str, Option<u32>, bool) {
+    let read = |p: PathBuf| std::fs::read_to_string(p).map(|s| s.trim().to_string()).unwrap_or_default();
+    let (mut ac, mut pct) = (None, None);
+    for e in std::fs::read_dir("/sys/class/power_supply").into_iter().flatten().flatten() {
+        let p = e.path();
+        match read(p.join("type")).as_str() {
+            "Mains" => ac = Some(ac.unwrap_or(false) || read(p.join("online")) == "1"),
+            "Battery" if read(p.join("scope")) != "Device" => {
+                pct = pct.or_else(|| read(p.join("capacity")).parse::<u32>().ok());
+            }
+            _ => {}
+        }
+    }
+    // A desktop has no battery: on AC even when no Mains supply is listed.
+    let power = match (ac, pct) { (Some(true), _) | (None, None) => "ac", (Some(false), _) => "battery", (None, Some(_)) => "unknown" };
+    let saver = Command::new("powerprofilesctl").arg("get").output().ok()
+        .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "power-saver");
+    (power, pct, saver)
+}
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn power_status() -> (&'static str, Option<u32>, bool) { ("unknown", None, false) }
 
 /// The first NVIDIA GPU's name, temperature, load and memory from nvidia-smi, or None.
@@ -529,6 +551,13 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 }
 
 fn main() {
+    // WebKitGTK's DMA-BUF renderer often draws a blank or flickering window on NVIDIA drivers.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
+        && std::path::Path::new("/proc/driver/nvidia").exists()
+    {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -559,6 +588,7 @@ fn main() {
                 .tooltip("PodTorrent")
                 .menu(&tray_menu)
                 // macOS opens tray menus on click; on Windows left-click opens the window, right-click the menu.
+                // Linux trays send no click events and always open the menu, so "Open PodTorrent" is the way back.
                 .show_menu_on_left_click(cfg!(target_os = "macos"))
                 .on_tray_icon_event(|tray, e| {
                     if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
