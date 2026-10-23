@@ -9,6 +9,7 @@ the torch device (default: cuda if available, else cpu).
 """
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +17,8 @@ from pathlib import Path
 import numpy as np
 
 GB = 2**30
+# CUDA 12.8 PyTorch (cu128) needs this NVIDIA driver or newer.
+MIN_NVIDIA_DRIVER = 570
 APPLE_SILICON = sys.platform == "darwin" and platform.machine() == "arm64"
 NAME = os.environ.get("PODTORRENT_BACKEND") or ("mlx" if APPLE_SILICON else "torch")
 
@@ -102,6 +105,10 @@ else:
     DEVICE = os.environ.get("PODTORRENT_DEVICE") or default_device()
     CUDA = DEVICE.startswith("cuda")
     CHIP = torch.cuda.get_device_name(torch.device(DEVICE)) if CUDA else _cpu_name()
+    if not CUDA and not os.environ.get("PODTORRENT_DEVICE") and shutil.which("nvidia-smi"):
+        # An NVIDIA GPU that PyTorch can't use: almost always a driver too old for CUDA 12.8.
+        print(f"PodTorrent: NVIDIA GPU found but CUDA is unavailable; running on the CPU. "
+              f"Update the NVIDIA driver to {MIN_NVIDIA_DRIVER} or newer.", file=sys.stderr)
     # CUDA context, kernels and allocator slack aren't in memory_allocated(); keep this much spare.
     CUDA_OVERHEAD_GB = 1.5
 

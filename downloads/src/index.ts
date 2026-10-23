@@ -1,6 +1,6 @@
 // podtorrent.com/download — serves builds from R2.
-//   /download                    page with the latest Mac + Windows links and notes
-//   /download/mac | /windows     latest installer for that platform
+//   /download                    page with the latest Mac, Windows and Linux links and notes
+//   /download/mac|windows|linux latest installer for that platform
 //   /download/latest.json        manifest (also for in-app update checks)
 //   /download/v/<ver>/<platform> a specific older build
 
@@ -9,9 +9,9 @@ interface Env {
 }
 
 type Build = { key: string; file: string; sha256: string; size: number };
-type Release = { version: string; date: string; notes: string; mac?: Build; windows?: Build };
+type Release = { version: string; date: string; notes: string; mac?: Build; windows?: Build; linux?: Build };
 
-const PLATFORMS = ["mac", "windows"] as const;
+const PLATFORMS = ["mac", "windows", "linux"] as const;
 type Platform = (typeof PLATFORMS)[number];
 
 export default {
@@ -27,7 +27,7 @@ export default {
       });
     }
 
-    const latest = path.match(/^\/download\/(mac|windows)$/);
+    const latest = path.match(/^\/download\/(mac|windows|linux)$/);
     if (latest) {
       const rel = await latestRelease(env);
       const build = rel?.[latest[1] as Platform];
@@ -35,7 +35,7 @@ export default {
       return serveBuild(env, req, build.key, build.file, false);
     }
 
-    const pinned = path.match(/^\/download\/v\/([\w.-]+)\/(mac|windows)$/);
+    const pinned = path.match(/^\/download\/v\/([\w.-]+)\/(mac|windows|linux)$/);
     if (pinned) {
       const obj = await env.RELEASES.get(`releases/v${pinned[1]}/release.json`);
       if (!obj) return new Response("Unknown version", { status: 404 });
@@ -75,7 +75,7 @@ function page(rel: Release | null): Response {
     rel?.[p] ? `<a class="btn" href="/download/${p}">${label}<small>${mb(rel[p]!)}</small></a>` : "";
   const body = rel
     ? `<h1>Download PodTorrent</h1><p class="v">v${esc(rel.version)} · ${esc(rel.date)}</p>
-       <div class="row">${link("mac", "macOS (Apple Silicon)")}${link("windows", "Windows (x64)")}</div>
+       <div class="row">${link("mac", "macOS (Apple Silicon)")}${link("windows", "Windows (x64)")}${link("linux", "Linux (x64, AppImage)")}</div>
        ${rel.notes ? `<h2>What's new</h2><pre>${esc(rel.notes)}</pre>` : ""}`
     : `<h1>Download PodTorrent</h1><p>No build published yet.</p>`;
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">

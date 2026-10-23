@@ -1,0 +1,66 @@
+# Build the Linux AppImage and .deb on Ubuntu 22.04, so they run on 22.04 and newer (glibc).
+name: Linux build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      # uv is bundled into the app; it installs Python and CUDA PyTorch on first launch.
+      - uses: astral-sh/setup-uv@v6
+
+      - run: npm ci
+
+      # Not `npm run build`: that bumps the version in tauri.conf.json, which CI shouldn't do.
+      - run: node scripts/bundle-backend.js
+
+      - run: npx tauri build --bundles appimage,deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: podtorrent-linux
+          path: |
+            app/src-tauri/target/release/bundle/appimage/*.AppImage
+            app/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+      # On a v* tag, upload the AppImage to R2 and make it the latest at podtorrent.com/download/linux.
+      - if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: downloads
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm ci
+          node scripts/publish.js linux ../app/src-tauri/target/release/bundle/appimage/*.AppImage

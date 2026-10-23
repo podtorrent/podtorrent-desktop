@@ -130,12 +130,26 @@ def ram_gb() -> float:
         return 0.0
 
 
+_inhibit: subprocess.Popen | None = None
+
+
 def keep_awake(on: bool):
-    """Stop Windows sleeping mid-render (a sleeping PC stalled one step for 50 minutes)."""
+    """Stop the machine sleeping mid-render (a sleeping PC stalled one step for 50 minutes).
+    Windows: SetThreadExecutionState. Linux: hold a systemd-inhibit sleep lock while rendering."""
+    global _inhibit
     if WIN:
         import ctypes
         ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
         ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0))
+    elif sys.platform == "linux":
+        if on and _inhibit is None and shutil.which("systemd-inhibit"):
+            _inhibit = subprocess.Popen(
+                ["systemd-inhibit", "--what=sleep:idle", "--who=PodTorrent", "--why=Rendering a video",
+                 "--mode=block", "sleep", "infinity"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif not on and _inhibit is not None:
+            _inhibit.terminate()
+            _inhibit = None
 
 
 class VideoService:
