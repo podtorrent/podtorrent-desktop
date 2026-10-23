@@ -400,11 +400,11 @@ fn power_status() -> (&'static str, Option<u32>, bool) {
 #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn power_status() -> (&'static str, Option<u32>, bool) { ("unknown", None, false) }
 
-/// The first NVIDIA GPU's name, temperature, load and memory from nvidia-smi, or None.
+/// The first NVIDIA GPU's name, temperature, load, memory and driver version from nvidia-smi, or None.
 #[cfg(not(target_os = "macos"))]
 fn nvidia_gpu() -> Option<serde_json::Value> {
     let mut cmd = Command::new("nvidia-smi");
-    cmd.args(["--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"]);
+    cmd.args(["--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,driver_version", "--format=csv,noheader,nounits"]);
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flashes every poll
     let out = cmd.output().ok().filter(|o| o.status.success())?;
@@ -414,6 +414,7 @@ fn nvidia_gpu() -> Option<serde_json::Value> {
     Some(serde_json::json!({
         "name": f.first()?, "temp_c": num(1), "util_pct": num(2),
         "mem_used_gb": num(3).map(|m| m / 1024.0), "mem_total_gb": num(4).map(|m| m / 1024.0),
+        "driver": f.get(5),
     }))
 }
 

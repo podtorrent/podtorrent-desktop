@@ -11,6 +11,10 @@ import { openServe } from "../serve.js";
 import { isTauri } from "../native.js";
 import { setDemo, go } from "../actions.js";
 
+// CUDA 12.8 PyTorch needs this NVIDIA driver or newer (backend.MIN_NVIDIA_DRIVER).
+const MIN_NVIDIA_DRIVER = 570;
+const oldDriver = hl => parseInt(hl?.gpu?.driver) < MIN_NVIDIA_DRIVER;
+
 function gauge() {
   const ns = "http://www.w3.org/2000/svg", R = 52, C = 2 * Math.PI * R;
   const svg = document.createElementNS(ns, "svg");
@@ -196,7 +200,7 @@ export default {
         if (off) sliceList.dataset.off = "1"; else delete sliceList.dataset.off;
         if (show === "setup") {
           startBtn.disabled = !isTauri;
-          text(machine, hl ? `This machine: ${hl.chip || "Unknown chip"} · ${fmt.gb(hl.mem_total_gb)} memory · ${hl.os}. Half of Qwen3-30B-A3B (4-bit) needs about 8 GB plus KV cache; serve fewer layers on a smaller machine.` : "");
+          text(machine, hl ? `This machine: ${hl.chip || "Unknown chip"} · ${fmt.gb(hl.mem_total_gb)} memory · ${hl.os}. Half of Qwen3-30B-A3B (4-bit) needs about 8 GB plus KV cache; serve fewer layers on a smaller machine.${oldDriver(hl) ? ` The NVIDIA driver (${hl.gpu.driver}) is too old for the GPU to be used: update it to ${MIN_NVIDIA_DRIVER} or newer, or this machine runs on the CPU.` : ""}` : "");
           errBox.hidden = !s.engine.error;
           if (s.engine.error) errBox.replaceChildren(icon("alert"), h("div.grow", h("b", "The engine stopped"), h("div.mono.small", s.engine.error.split("\n").slice(-3).join("\n"))));
           return;

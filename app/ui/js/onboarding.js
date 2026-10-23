@@ -26,8 +26,11 @@ export function openOnboarding() {
     { id: "b", t: "Layers 24–47", d: `Second half · about ${fmt.gb(24 * GB_PER_LAYER)}`, lo: 24, hi: 48 },
     { id: "q", t: "Layers 0–11", d: `A quarter, for a smaller machine · about ${fmt.gb(12 * GB_PER_LAYER)}`, lo: 0, hi: 12 },
   ];
-  // Fits comfortably: macOS lets the GPU use about 75% of RAM, minus ~1 GB for the requester's head.
-  const fits = c => !c.hi || !mem || (c.hi - c.lo) * GB_PER_LAYER + 1 <= mem * 0.75 - 2;
+  // Room for layers: with an NVIDIA GPU its memory less ~1.5 GB CUDA overhead; otherwise about 75% of
+  // RAM less 2 GB (what macOS lets the GPU use). Plus ~1 GB for the requester's head.
+  const gpuMem = state.health?.gpu?.mem_total_gb;
+  const room = gpuMem ? gpuMem - 1.5 : mem * 0.75 - 2;
+  const fits = c => !c.hi || !(gpuMem || mem) || (c.hi - c.lo) * GB_PER_LAYER + 1 <= room;
   let pick = settings.pendingServe ? CHOICES.find(c => c.lo === settings.pendingServe.lo && c.hi === settings.pendingServe.hi)?.id || "none"
     : fits(CHOICES[1]) ? "a" : "q";
 
