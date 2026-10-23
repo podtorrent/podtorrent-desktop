@@ -6,7 +6,10 @@ on:
   push:
     branches: [main, windows-app]
     tags: ['v*']
+    # The app doesn't change with the downloads site or docs. Tag pushes always build (GitHub skips path filters for tags).
+    paths-ignore: ['downloads/**', 'docs/**']
   pull_request:
+    paths-ignore: ['downloads/**', 'docs/**']
   workflow_dispatch:
 
 concurrency:
