@@ -51,6 +51,23 @@ Peers appear in each other's swarm within seconds. Click **Load model** on any M
 
 The local API binds to 127.0.0.1 only; other Macs talk to this one over QUIC on a UDP port (random; pin it with `PODTORRENT_UDP_PORT`). QUIC is encrypted and both ends prove their peer IDs, but the swarm is open: any PodTorrent peer can send work to yours.
 
+## Serving the PodTorrent network
+
+A peer can offer the models its swarm fully covers to PodTorrent network clients. The app bundles
+[podtorrent-agent](https://github.com/Munerate/podtorrent-agent); in **Settings → PodTorrent Network**
+enter an approved node id and node token (saved as `node-token` in the data folder, readable by your user only) and click **Join Network**.
+This Mac becomes the head of each route: the agent forwards network requests to the peer's loopback
+`POST /v1/chat/completions` and `GET /v1/models`, and the peer runs them through the swarm's slices.
+
+- The peer writes `network-manifest.json` in the data folder (from `network.json`, which the app
+  saves): one entry per fully covered model, with `slots: 1` and the current route as `pipeline`.
+  The agent picks up changes as routes change.
+- Generation is greedy; sampling parameters are accepted and ignored.
+- This node's operator is paid for each request. Every machine on the route sees the model's
+  intermediate state for it.
+- Building the app stages the agent: `PODTORRENT_AGENT_BIN=/path/to/podtorrent-agent`, or a
+  `podtorrent-agent` checkout next to this repo and Go 1.24+ (`PODTORRENT_GO` to pick a `go`).
+
 ## Options
 
 | Command | Flag | Default |

@@ -23,6 +23,7 @@ from aiohttp import WSMsgType, web
 
 from . import backend as B
 from . import catalog
+from . import openai_api
 from . import pipeline_pb2 as pb
 from .cli import default_dir
 from .backend import CHIP, GB, from_wire, load_tokenizer, mem_free_gb, mem_total_gb, to_wire
@@ -97,10 +98,15 @@ class Served:
         self.model, self.lo, self.hi, self.n_layers = model, lo, hi, n_layers
         self.shard: Shard | None = None
         self.phase, self.done, self.total, self.message = "checking", 0, 0, ""
+        self.cancel = threading.Event()   # set by unserve: stop the download at the next chunk
 
     def record(self) -> dict:
         return {"model": self.model, "lo": self.lo, "hi": self.hi, "loaded": self.shard is not None,
-                "n_layers": self.n_layers, "phase": self.phase}
+                "n_layers": self.n_layers, "phase": self.phase, "done": self.done, "total": self.total}
+
+
+class Cancelled(Exception):
+    """A slice was unserved while it was still downloading."""
 
 
 class Slices:
@@ -223,6 +229,8 @@ class Slices:
             s = self.items[(model, lo, hi)] = Served(model, lo, hi, n)
 
             def emit(phase, done=0, total=0, msg=""):
+                if s.cancel.is_set():
+                    raise Cancelled(f"{model} layers [{lo},{hi})")
                 s.phase, s.done, s.total, s.message = phase, done, total, msg
                 progress(phase, done, total, msg)
 
@@ -238,9 +246,19 @@ class Slices:
                     s.shard = Shard(d, lo, hi)
                 emit("ready", 1, 1)
                 return s
-            except Exception:
-                self.items.pop((model, lo, hi), None)
+            except Exception as e:
+                if self.items.get((model, lo, hi)) is s:
+                    self.items.pop((model, lo, hi), None)
+                if isinstance(e, Cancelled):  # a partial download is of no use: drop it
+                    (d / f"layers-{lo}-{hi}.data.tmp").unlink(missing_ok=True)
                 raise
+
+    def wait_idle(self, timeout: float) -> bool:
+        """Wait until no slice is being downloaded or loaded."""
+        if self._load_lock.acquire(timeout=timeout):
+            self._load_lock.release()
+            return True
+        return False
 
     def unserve(self, model: str, lo: int | None = None, hi: int | None = None) -> list[Served]:
         """Stop serving `model` layers [lo, hi) exactly, or every slice of `model` without a range."""
@@ -248,6 +266,7 @@ class Slices:
             gone = [s for s in list(self.items.values())
                     if s.model == model and (lo is None or (s.lo, s.hi) == (lo, hi))]
             for s in gone:
+                s.cancel.set()
                 s.shard = None
                 self.items.pop((s.model, s.lo, s.hi), None)
             # Sessions through layers nobody here serves any more get an error on their next token and re-route.
@@ -526,9 +545,14 @@ class PeerApp:
         await asyncio.gather(task, return_exceptions=True)
 
     def _load_local(self, model, lo, hi, progress=lambda *a: None):
+        last = [None]
+
         def report(phase, done=0, total=0, msg=""):
             self.emit("load_progress", node=NAME, model=model, lo=lo, hi=hi, phase=phase, done=done, total=total,
                       message=msg)
+            if phase != last[0]:  # the replayed slice list (UI reloads, window reopens) shows each new phase
+                last[0] = phase
+                self.emit("slices", key="slices", slices=self.slices.slices(), mem_free_gb=self.free_for_models())
             progress(phase, done, total, msg)
 
         if model == self.repo and not self.route()[0]:
@@ -537,6 +561,13 @@ class PeerApp:
         self._announce()  # the new slice shows up as "checking" / "downloading"
         try:
             s = self.slices.load(model, lo, hi, report)
+        except Cancelled:
+            # The UI gets "cancelled"; a requesting peer gets "error", which every version understands.
+            self.emit("load_progress", node=NAME, model=model, lo=lo, hi=hi, phase="cancelled", done=0, total=0,
+                      message="download cancelled")
+            progress("error", 0, 0, "download cancelled")
+            self._announce()
+            raise
         except Exception as e:
             report("error", msg=str(e))
             self._announce()
@@ -905,9 +936,11 @@ class PeerApp:
     async def catalog_local(self, _):
         known = [self.repo, *{s.model for s in self.slices.items.values()}]
         items = await asyncio.to_thread(catalog.local, known)
-        served = {(s.model, s.lo, s.hi) for s in self.slices.items.values()}
-        for it in items:
-            it["serving"] = [[lo, hi] for m, lo, hi in served if m == it["repo"]]
+        slices = list(self.slices.items.values())
+        for it in items:  # serving = loaded; anything still on its way is downloading, not serving
+            it["serving"] = [[s.lo, s.hi] for s in slices if s.model == it["repo"] and s.shard is not None]
+            it["downloading"] = [{"lo": s.lo, "hi": s.hi, "phase": s.phase, "done": s.done, "total": s.total}
+                                 for s in slices if s.model == it["repo"] and s.shard is None]
         return web.json_response({"models": items})
 
     async def catalog_delete(self, request):
@@ -916,6 +949,8 @@ class PeerApp:
         repo, d = str(b.get("repo") or ""), str(b.get("dir") or "")
         if repo and any(s.model == repo for s in self.slices.items.values()):
             await asyncio.to_thread(self._unserve_local, repo)
+            # A cancelled download stops at its next chunk; wait for it before removing the folder.
+            await asyncio.to_thread(self.slices.wait_idle, 60)
         try:
             await asyncio.to_thread(catalog.delete, d)
         except (ValueError, OSError) as e:
@@ -1020,6 +1055,7 @@ class PeerApp:
             await asyncio.sleep(2)
             self.slices.evict_idle()
             self.self_events()
+            openai_api.write_network_manifest(self, home())
 
 
 def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[tuple[str | None, int, int]] | None,
@@ -1063,6 +1099,7 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
         ni.roles.extend(app_state.video_swarm.roles())
         return ni
     app_state.net.info = node_info
+    app.add_routes(openai_api.routes(app_state))
     app.add_routes(video_api.routes(app_state.video, enc, app_state.video_swarm))
     app.on_cleanup.append(lambda _: asyncio.to_thread(app_state.video.stop))
 

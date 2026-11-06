@@ -13,8 +13,9 @@ import node from "./views/node.js";
 import peers from "./views/peers.js";
 import activity, { unseen } from "./views/activity.js";
 import settingsView from "./views/settings.js";
+import networkView, { networkState } from "./views/network.js";
 
-const VIEWS = { swarm, models: modelsView, playground, node, peers, activity, settings: settingsView };
+const VIEWS = { swarm, models: modelsView, playground, node, peers, activity, network: networkView, settings: settingsView };
 const NAV = [
   ["swarm", "Swarm", "swarm", "⌘1"], ["models", "Models", "models", "⌘2"], ["playground", "Playground", "playground", "⌘3"],
   ["node", "My Node", "node", "⌘4"], ["peers", "Peers", "peers", "⌘5"], ["activity", "Activity", "activity", "⌘6"],
@@ -34,7 +35,7 @@ export function mountShell() {
   const sidebar = h("aside.sidebar", { "aria-label": "Sidebar" },
     h("div.sidebar-top", { "data-tauri-drag-region": "" }, demoPill),
     h("div.brand", { "data-tauri-drag-region": "" }, h("div.logo", h("img", { src: "favicon.svg", alt: "" })), h("div", h("b", "PodTorrent"), h("div.sub", "Many machines, one swarm"))),
-    h("nav.nav", NAV.map(navItem), h("div.sect", " "), navItem(["settings", "Settings", "settings", "⌘,"])),
+    h("nav.nav", NAV.map(navItem), h("div.sect", " "), navItem(["network", "Network", "link", ""]), navItem(["settings", "Settings", "settings", "⌘,"])),
     nodeCard);
 
   const title = h("h1"), subtitle = h("span.muted");
@@ -77,16 +78,21 @@ export function mountShell() {
     // sidebar badges
     const st = swarmStats(s), ms = models(s), m = ms[0];
     const me = selfNode(s), meSt = me ? nodeState(me, s) : null;
-    const dot = c => `<span class="statedot ${c}"></span>`;
-    const setNb = (id, html) => { if (items[id].nb.innerHTML !== html) items[id].nb.innerHTML = html; };
-    setNb("swarm", st.total ? `${dot(st.online < st.total ? "degraded" : "serving")}${st.online}` : "");
-    setNb("models", m ? dot(m.runnable ? "serving" : m.verdict.level === "gap" ? "gap" : m.verdict.level === "degraded" ? "degraded" : "off") : "");
+    // One badge per row, flush with the right edge: a label (tinted by the state, if any) or a dot.
+    const setNb = (id, label = "", cls = "") => {
+      const html = label !== "" ? `<span class="nbl ${cls}">${label}</span>` : cls ? `<span class="statedot ${cls}"></span>` : "";
+      if (items[id].nb.innerHTML !== html) items[id].nb.innerHTML = html;
+    };
+    setNb("swarm", st.total ? st.online : "", st.online < st.total ? "degraded" : "");
+    setNb("models", "", m ? (m.runnable ? "serving" : m.verdict.level === "gap" ? "gap" : m.verdict.level === "degraded" ? "degraded" : "off") : "");
     const vj = Object.values(s.video.jobs);
-    setNb("playground", s.chat.busy || vj.some(j => !["done", "failed", "cancelled"].includes(j.state)) ? dot("active") : "");
-    setNb("node", s.engine.phase === "starting" ? dot("active") : me ? dot(meSt === "idle" ? "off" : meSt) : s.engine.error ? dot("gap") : "");
+    setNb("playground", "", s.chat.busy || vj.some(j => !["done", "failed", "cancelled"].includes(j.state)) ? "active" : "");
+    setNb("node", "", s.engine.phase === "starting" ? "active" : me ? (meSt === "idle" ? "off" : meSt) : s.engine.error ? "gap" : "");
     setNb("peers", st.total ? String(st.total) : "");
     const fresh = curId === "activity" ? 0 : s.feed.length - unseen.at;
     setNb("activity", fresh > 0 ? String(Math.min(99, fresh)) : "");
+    const net = networkState();
+    setNb("network", net === "online" ? "Online" : "", net === "online" ? "serving" : net === "connecting" ? "degraded" : "");
     // node card
     nodeCard.hidden = !s.role && s.source !== "demo";
     if (!nodeCard.hidden) {

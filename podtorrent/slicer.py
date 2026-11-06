@@ -48,13 +48,20 @@ def _headers() -> dict:
     return {"Authorization": f"Bearer {tok}"} if tok else {}
 
 
-def _fetch(client: httpx.Client, url: str, start: int, end: int) -> bytes:
-    """Inclusive byte range [start, end]."""
-    r = client.get(url, headers={**_headers(), "Range": f"bytes={start}-{end}"})
-    r.raise_for_status()
-    if r.status_code != 206:
-        raise RuntimeError(f"server ignored Range request for {url}")
-    return r.content
+def _fetch(client: httpx.Client, url: str, start: int, end: int,
+           on_bytes: Optional[Callable[[int], None]] = None) -> bytes:
+    """Inclusive byte range [start, end]. on_bytes(bytes so far) after each streamed chunk, so
+    large ranges report progress (and a callback that raises stops the download) as they arrive."""
+    with client.stream("GET", url, headers={**_headers(), "Range": f"bytes={start}-{end}"}) as r:
+        r.raise_for_status()
+        if r.status_code != 206:
+            raise RuntimeError(f"server ignored Range request for {url}")
+        buf = bytearray()
+        for chunk in r.iter_bytes(4 * 2**20):
+            buf += chunk
+            if on_bytes:
+                on_bytes(len(buf))
+        return bytes(buf)
 
 
 META_FILES = ("config.json", "model.safetensors.index.json", "tokenizer.json",
@@ -167,7 +174,9 @@ def download_slice(
                 while j + 1 < len(items) and items[j + 1][2] == items[j][3] + 1 \
                         and items[j + 1][3] - items[i][2] < 256 * 2**20:
                     j += 1
-                blob = _fetch(client, url, items[i][2], items[j][3])
+                base = done
+                blob = _fetch(client, url, items[i][2], items[j][3],
+                              (lambda n: on_progress(base + n, total)) if on_progress else None)
                 for n, meta, s, e in items[i:j + 1]:
                     chunk = blob[s - items[i][2]: e - items[i][2] + 1]
                     data.write(chunk)

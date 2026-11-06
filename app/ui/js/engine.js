@@ -271,6 +271,17 @@ export async function catalogLocal() {
   try { const r = await get("/api/catalog/local", 15000); return r.ok ? r.body.models : []; }
   catch { return []; }
 }
+/** Stop a slice that is still downloading; the peer drops the partial file. */
+export async function cancelDownload(model, lo, hi) {
+  const what = `${shortModel(model)} ${fmt.layers(lo, hi)}`;
+  try {
+    const r = await post("/api/unserve", { model, lo, hi });
+    if (!r.ok) return toast(`Couldn't cancel ${what}`, "gap", r.body?.error || `HTTP ${r.status}`);
+    toast(`Cancelled downloading ${what}`, "info", "The partial download was removed.");
+    return true;
+  } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
+}
+
 export async function catalogDelete(m) {
   try {
     const r = await post("/api/catalog/delete", { repo: m.repo, dir: m.dir }, 30000);

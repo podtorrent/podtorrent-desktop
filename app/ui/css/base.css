@@ -43,6 +43,8 @@ input, textarea, .selectable, .msg-body, pre, code, .mono { -webkit-user-select:
 
 :focus { outline: none; }
 :focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 80%, transparent); outline-offset: 2px; border-radius: var(--r-sm); }
+/* Text fields show focus with their own accent border (components.css), not a second ring. */
+input:not([type=checkbox]):not([type=radio]):focus-visible, textarea:focus-visible, select:focus-visible { outline: none; }
 
 /* scrollbars: thin, overlay-like */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

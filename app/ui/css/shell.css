@@ -22,9 +22,11 @@
 .nav-item:hover { background: var(--bg-hover); }
 .nav-item[aria-current="page"] { background: var(--bg-selected); font-weight: 500; }
 .nav-item[aria-current="page"] svg { color: var(--accent); }
-.nav-item .nb { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-1); color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.nav-item .nb { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-1); color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.nav-item .nb .nbl.serving { color: var(--c-serving); } .nav-item .nb .nbl.degraded { color: var(--c-degraded); }
 .nav-item .nb .statedot { width: 6px; height: 6px; box-shadow: none; }
-.nav-item .nk { margin-left: auto; opacity: 0; transition: opacity var(--d-fast); font-size: var(--t-1); color: var(--fg-3); }
+/* Overlaid, so its varying width (⌘1, ⌘,, none) doesn't shift the badges. */
+.nav-item .nk { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); opacity: 0; transition: opacity var(--d-fast); font-size: var(--t-1); color: var(--fg-3); }
 .nav-item:hover .nk { opacity: 1; } .nav-item:hover .nb { display: none; }
 
 .node-card { display: block; width: calc(100% - 20px); border: 0; color: inherit; font: inherit; text-align: left; margin: 10px; padding: 10px 12px; border-radius: 10px; background: var(--bg-hover); box-shadow: inset 0 0 0 1px var(--line-1); white-space: nowrap; }
