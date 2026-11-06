@@ -126,14 +126,15 @@ export function applyEvent(ev) {
       const what = ev.model ? `${shortModel(ev.model)} ${fmt.layers(ev.lo, ev.hi)}` : n.lo != null ? `Layers ${fmt.layers(n.lo, n.hi)}` : "";
       if (ev.model && ev.node === state.self) {
         let sl = state.slices.find(x => x.model === ev.model && x.lo === ev.lo && x.hi === ev.hi);
-        if (!sl && ev.phase !== "error") state.slices.push(sl = { model: ev.model, lo: ev.lo, hi: ev.hi, loaded: false });
+        if (!sl && ev.phase !== "error" && ev.phase !== "cancelled") state.slices.push(sl = { model: ev.model, lo: ev.lo, hi: ev.hi, loaded: false });
         if (sl) Object.assign(sl, { phase: ev.phase, done: ev.done, total: ev.total, loaded: ev.phase === "ready" || sl.loaded });
-        if (ev.phase === "error") state.slices = state.slices.filter(x => x.loaded || x !== sl);
+        if (ev.phase === "error" || ev.phase === "cancelled") state.slices = state.slices.filter(x => x.loaded || x !== sl);
       }
       if (ev.phase !== was) {
         if (ev.phase === "downloading" && !was) feed("load", `${ev.node} is downloading ${what || "its layers"}`, "", "info", ts);
         if (ev.phase === "loading") feed("load", `${ev.node} is loading ${what || "layers"} into memory`, "", "info", ts);
         if (ev.phase === "ready") feed("load", `${ev.node} is serving ${what || "its layers"}`, "", "success", ts);
+        if (ev.phase === "cancelled") feed("load", `${ev.node} cancelled the download of ${what || "its layers"}`, "", "info", ts);
         if (ev.phase === "error") feed("load", `${ev.node} couldn't serve ${what || "its layers"}`, ev.message || "", "error", ts);
       }
       break;

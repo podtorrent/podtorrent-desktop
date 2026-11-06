@@ -454,3 +454,6 @@ canvas.chart { width: 100%; height: 180px; display: block; }
 .net-actions { display: flex; gap: var(--s-2); justify-content: flex-end; margin-top: var(--s-4); }
 .net-log { max-height: 160px; overflow: auto; white-space: pre-wrap; margin: 0; }
 @media (max-width: 640px) { .net-grid { grid-template-columns: 1fr; } }
+.lbar i.dl, .lbar-key i.dl { background: repeating-linear-gradient(135deg, var(--c-active) 0 3px, color-mix(in srgb, var(--c-active) 35%, transparent) 3px 6px); }
+.cat-dl { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.cat-dl > .row > svg { width: 14px; height: 14px; flex: none; color: var(--c-active); }

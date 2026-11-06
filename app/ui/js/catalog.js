@@ -8,7 +8,7 @@ import { actions } from "./actions.js";
 const GB = 2 ** 30;
 import { button, badge, armedButton, sheet } from "./ui.js";
 import { icon } from "./icons.js";
-import { serveSlice, catalogSearch, catalogInfo, catalogLocal, catalogDelete } from "./engine.js";
+import { serveSlice, catalogSearch, catalogInfo, catalogLocal, catalogDelete, cancelDownload } from "./engine.js";
 
 let local = [];          // this Mac's model folders, from /api/catalog/local
 let onLocal = () => {};  // re-render hook set by the section
@@ -19,14 +19,42 @@ const rangesText = rs => rs.map(([a, b]) => fmt.layers(a, b)).join(", ");
 const localOf = repo => local.find(m => m.repo === repo);
 const swarmOf = repo => models(state).find(m => m.model === repo);
 
-/** One cell per layer: serving here, on disk, or absent. */
-function layerBar(n, onDisk, serving) {
+/** One cell per layer: serving here, downloading, on disk, or absent. */
+function layerBar(n, onDisk, serving, fetching = []) {
   if (!n) return null;
   const inR = (rs, i) => rs.some(([a, b]) => a <= i && i < b);
   return h("div.lbar-wrap",
     h("div.lbar", { role: "img", "aria-label": `${n} layers` },
-      ...Array.from({ length: n }, (_, i) => h(`i${inR(serving, i) ? ".srv" : inR(onDisk, i) ? ".disk" : ""}`))),
-    h("div.lbar-key.small.faint", h("span", h("i.srv"), "Serving"), h("span", h("i.disk"), "Downloaded"), h("span", h("i"), "Not here")));
+      ...Array.from({ length: n }, (_, i) => h(`i${inR(serving, i) ? ".srv" : inR(fetching, i) ? ".dl" : inR(onDisk, i) ? ".disk" : ""}`))),
+    h("div.lbar-key.small.faint", h("span", h("i.srv"), "Serving"), fetching.length ? h("span", h("i.dl"), "Downloading") : null,
+      h("span", h("i.disk"), "Downloaded"), h("span", h("i"), "Not here")));
+}
+
+/** Slices of `repo` this machine is still fetching or loading (live, from load_progress). */
+const pendingOf = repo => state.slices.filter(s => s.model === repo && !s.loaded);
+const pct = s => s.total ? Math.min(100, Math.round(100 * s.done / s.total)) : null;
+function progressText(s) {
+  const what = `Layers ${fmt.layers(s.lo, s.hi)}`;
+  if (s.phase === "downloading" && s.total) return `Downloading ${what} · ${fmt.bytes(s.done)} of ${fmt.bytes(s.total)} (${pct(s)}%)`;
+  if (s.phase === "downloading") return `Downloading ${what}…`;
+  if (s.phase === "loading") return `Loading ${what} into memory…`;
+  return `Preparing ${what}…`;
+}
+
+/** One in-progress slice: what, how far, and Cancel while it is still downloading. */
+function pendingRow(s, bars) {
+  const label = h("span.grow.small"), bar = h("div.progress", h("i"));
+  const cancel = button("Cancel", { size: "sm", icon: "x", onclick: async () => { cancel.disabled = true; if (!await cancelDownload(s.model, s.lo, s.hi)) cancel.disabled = false; } });
+  const set = x => {
+    text(label, progressText(x));
+    const p = x.phase === "downloading" ? pct(x) : null;
+    bar.classList.toggle("indeterminate", p == null);
+    bar.firstChild.style.width = p == null ? "" : p + "%";
+    cancel.hidden = x.phase === "loading";   // loading into memory can't be interrupted
+  };
+  set(s);
+  bars.set(`${s.model}:${s.lo}:${s.hi}`, set);
+  return h("div.cat-dl", h("div.row", { style: { gap: "8px", alignItems: "center" } }, icon("download"), label, cancel), bar);
 }
 
 /** Section heading: icon, title, live count on the right. */
@@ -142,15 +170,29 @@ export function catalogSection() {
       statusBadges(it.repo),
       [button(localOf(it.repo)?.complete ? "Serve…" : "Get…", { icon: "download", size: "cat-get", onclick: () => openGet(it.repo) })])));
   }
+  const bars = new Map();   // "model:lo:hi" -> update fn for that slice's progress line
   function renderLocal() {
+    bars.clear();
+    // A model whose first slice is still starting may have no folder on disk yet: show it anyway.
+    const rows = [...local];
+    for (const s of state.slices) if (!s.loaded && !rows.some(m => m.repo === s.model))
+      rows.push({ repo: s.model, dir: null, layers: [], n_layers: s.n_layers, disk_bytes: 0, serving: [], complete: false });
     text(mine.querySelector(".disk"), local.length ? `${fmt.bytes(local.reduce((a, m) => a + m.disk_bytes, 0))} on disk` : "");
-    mine.hidden = !local.length;
-    localList.replaceChildren(...local.map(m => row(m.repo,
-      `${m.complete ? "Every layer" : m.layers.length ? "Layers " + rangesText(m.layers) : "No layers yet"}${m.n_layers ? ` of ${m.n_layers}` : ""} · ${fmt.bytes(m.disk_bytes)}`,
-      [m.serving.length ? badge(`Serving ${rangesText(m.serving)}`, "serving", { dot: true }) : badge("Not serving", "neutral")],
-      [m.serving.length || !m.repo.includes("/") ? null : button("Serve…", { size: "sm", icon: "play", onclick: () => openGet(m.repo) }),
-        running && armedButton("Delete", "Delete files?", async () => { if (await catalogDelete(m)) refreshLocal(); }, { size: "sm" })].filter(Boolean),
-      layerBar(m.n_layers, m.layers, m.serving))));
+    mine.hidden = !rows.length;
+    localList.replaceChildren(...rows.map(m => {
+      const pend = running ? pendingOf(m.repo) : [];
+      const fetching = pend.map(s => [s.lo, s.hi]);
+      const r = row(m.repo,
+        `${m.complete ? "Every layer" : m.layers.length ? "Layers " + rangesText(m.layers) : "No layers yet"}${m.n_layers ? ` of ${m.n_layers}` : ""} · ${fmt.bytes(m.disk_bytes)}`,
+        [m.serving.length ? badge(`Serving ${rangesText(m.serving)}`, "serving", { dot: true }) : null,
+          pend.length ? badge(`Downloading ${rangesText(fetching)}`, "active", { dot: true }) : null,
+          !m.serving.length && !pend.length ? badge("Not serving", "neutral") : null].filter(Boolean),
+        [m.serving.length || pend.length || !m.repo.includes("/") ? null : button("Serve…", { size: "sm", icon: "play", onclick: () => openGet(m.repo) }),
+          running && m.dir && armedButton("Delete", pend.length ? "Cancel and delete files?" : "Delete files?", async () => { if (await catalogDelete(m)) refreshLocal(); }, { size: "sm" })].filter(Boolean),
+        layerBar(m.n_layers, m.layers, m.serving, fetching));
+      if (pend.length) r.querySelector(".grow").append(...pend.map(s => pendingRow(s, bars)));
+      return r;
+    }));
   }
   onLocal = () => { renderLocal(); renderResults(); };
 
@@ -164,8 +206,11 @@ export function catalogSection() {
       if (s.source !== "live") { mine.hidden = true; return; }
       if (running !== was) { slicesKey = null; if (!running) refreshLocal(); }   // stopped: read the disk natively
       if (!running) return;
-      const k = JSON.stringify(s.slices);   // served slices changed: re-scan the disk
+      // Slices added, removed, loaded or moved to another phase: re-scan the disk. Byte counts only move
+      // the progress bars in place.
+      const k = JSON.stringify(s.slices.map(x => [x.model, x.lo, x.hi, x.loaded, x.phase]));
       if (k !== slicesKey) { slicesKey = k; refreshLocal(); }
+      else for (const x of s.slices) bars.get(`${x.model}:${x.lo}:${x.hi}`)?.(x);
       const sk = models(s).map(m => m.model + m.state + m.gaps).join("|");
       if (sk !== swarmKey) { swarmKey = sk; renderResults(); }
     },

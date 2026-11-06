@@ -6,7 +6,7 @@ import { valuation, valuationError, bases, basis, usdFor, kwh, usd } from "../va
 import { button, armedButton, toggle, badge, setBadge, ticker } from "../ui.js";
 import { icon } from "../icons.js";
 import { areaChart, barChart } from "../viz/chart.js";
-import { startHost, stopNode, unserveSlice, encoderStatus, videoStatus } from "../engine.js";
+import { startHost, stopNode, unserveSlice, cancelDownload, encoderStatus, videoStatus } from "../engine.js";
 import { openServe } from "../serve.js";
 import { isTauri } from "../native.js";
 import { setDemo, go } from "../actions.js";
@@ -180,7 +180,8 @@ export default {
             h("div.d", pc != null ? `${fmt.bytes(x.done)} of ${fmt.bytes(x.total)}` : x.model),
             pc != null ? h("div.progress", { style: { marginTop: "6px" } }, h("i", { style: { width: pc * 100 + "%" } })) : null),
           badge(pc != null ? `${label} ${fmt.pct(pc)}` : label, kind, { dot: true, pulse: !x.loaded }),
-          armedButton("Stop serving", "Click to confirm", () => unserveSlice(x.model, x.lo, x.hi), { size: "sm", icon: "stop", disabled: !x.loaded }));
+          x.loaded ? armedButton("Stop serving", "Click to confirm", () => unserveSlice(x.model, x.lo, x.hi), { size: "sm", icon: "stop" })
+            : armedButton("Cancel download", "Click to confirm", () => cancelDownload(x.model, x.lo, x.hi), { size: "sm", icon: "x", disabled: x.phase === "loading" }));
       }));
     }
 
