@@ -10,8 +10,9 @@ Connecting to a peer (the smaller peer_id initiates, so each pair dials once):
   1. ask the rendezvous to `punch` the target; it hands each side the other's record;
   2. both sides spray probes at every candidate endpoint of the other for PUNCH_S;
   3. the initiator dials QUIC to the first address that answers a probe;
-  4. the server proves its peer_id with its TLS certificate (self-signed with the identity key), the
-     client proves its own with a signed `auth` frame. No path within PUNCH_S: `unreachable`.
+  4. the server proves its peer_id with its TLS certificate (self-signed with the identity key, or a
+     P-256 key vouched for by the identity key; see `cert_peer_id`), the client proves its own with a
+     signed `auth` frame. No path within PUNCH_S: `unreachable`.
 
 RPC: each call is one bidirectional stream that opens with [method u8], then carries frames of
 [len u32][protobuf] both ways. Unary calls send one frame each way; `Load` streams progress back;
@@ -31,7 +32,12 @@ from aioquic.buffer import Buffer
 from aioquic.quic import events
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.connection import QuicConnection
-from aioquic.quic.packet import QuicPacketType, pull_quic_header
+from aioquic.quic.packet import (
+    QuicPacketType,
+    pull_quic_header,
+    pull_quic_transport_parameters,
+    push_quic_transport_parameters,
+)
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -53,6 +59,12 @@ RPC_TIMEOUT_S = 5
 IDLE_TIMEOUT_S = 30
 MAX_FRAME = 256 << 20
 WINDOW = 64 << 20
+# aioquic can't decrypt a packet over 1500 bytes (PACKET_LENGTH_MAX in its _crypto.c) yet never says so;
+# a peer that probes the path MTU (Apple's QUIC) would grow its packets past that and stall every stream.
+MAX_UDP_PAYLOAD = 1500
+# Apple's TLS can't sign with Ed25519, so an iOS peer's certificate has a P-256 key and carries its identity
+# here: ed25519 public key (32 bytes) || that key's signature (64) over b"podtorrent-tls|" + the P-256 point.
+IDENTITY_EXT = x509.ObjectIdentifier("1.3.6.1.4.1.53594.77.1")
 
 M_AUTH, M_HEARTBEAT, M_INFO, M_FORWARD, M_LOAD, M_VIDEO, M_BLOB = 0, 1, 2, 3, 4, 5, 6
 # A streaming handler gets the first request frame and the stream; it writes response frames.
@@ -66,6 +78,33 @@ def _cert(ident: Identity) -> x509.Certificate:
             .public_key(ident.key.public_key()).serial_number(x509.random_serial_number())
             .not_valid_before(now - datetime.timedelta(days=1)).not_valid_after(now + datetime.timedelta(days=3650))
             .sign(ident.key, None))
+
+
+def cert_peer_id(cert: x509.Certificate) -> str:
+    """The peer_id a server certificate proves: its own Ed25519 key, or the identity in IDENTITY_EXT."""
+    pub = cert.public_key()
+    if isinstance(pub, Ed25519PublicKey):
+        return peer_id_of(pub.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw))
+    try:
+        proof = cert.extensions.get_extension_for_oid(IDENTITY_EXT).value.value
+        point = pub.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+        if len(proof) != 96:
+            return ""
+        Ed25519PublicKey.from_public_bytes(proof[:32]).verify(proof[32:], b"podtorrent-tls|" + point)
+    except (x509.ExtensionNotFound, ValueError, InvalidSignature):
+        return ""
+    return peer_id_of(proof[:32])
+
+
+class _QuicConnection(QuicConnection):
+    """Advertises MAX_UDP_PAYLOAD, which aioquic leaves unset."""
+
+    def _serialize_transport_parameters(self) -> bytes:
+        params = pull_quic_transport_parameters(Buffer(data=super()._serialize_transport_parameters()))
+        params.max_udp_payload_size = MAX_UDP_PAYLOAD
+        buf = Buffer(capacity=3 * self._max_datagram_size)
+        push_quic_transport_parameters(buf, params)
+        return buf.data
 
 
 def _auth_payload(server_id: str, client_id: str) -> bytes:
@@ -101,10 +140,7 @@ class Conn(QuicConnectionProtocol):
 
     def server_peer_id(self) -> str:
         cert = self._quic.tls._peer_certificate
-        if cert is None:
-            return ""
-        raw = cert.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-        return peer_id_of(raw)
+        return cert_peer_id(cert) if cert is not None else ""
 
     async def call(self, method: int, body: bytes, timeout: float = RPC_TIMEOUT_S) -> bytes:
         reader, writer = await self.create_stream()
@@ -225,8 +261,8 @@ class PeerNet(asyncio.DatagramProtocol):
                 return
             if header.packet_type != QuicPacketType.INITIAL or len(data) < 1200:
                 return
-            quic = QuicConnection(configuration=self.server_cfg,
-                                  original_destination_connection_id=header.destination_cid)
+            quic = _QuicConnection(configuration=self.server_cfg,
+                                   original_destination_connection_id=header.destination_cid)
             conn = Conn(self, quic, addr, is_client=False)
             conn.connection_made(self.transport)
             self.conns[addr] = conn
@@ -388,7 +424,7 @@ class PeerNet(asyncio.DatagramProtocol):
         old = self.conns.pop(l.addr, None)
         if old:
             old.close()
-        conn = Conn(self, QuicConnection(configuration=self.client_cfg), l.addr, is_client=True)
+        conn = Conn(self, _QuicConnection(configuration=self.client_cfg), l.addr, is_client=True)
         conn.connection_made(self.transport)
         self.conns[l.addr] = conn
         conn.connect(l.addr)
