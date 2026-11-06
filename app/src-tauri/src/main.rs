@@ -185,11 +185,26 @@ fn start_engine(app: AppHandle, state: State<Engine>, mode: String, name: Option
 // ---- PodTorrent network (the bundled agent) ----
 
 const AGENT: &str = if cfg!(windows) { "podtorrent-agent.exe" } else { "podtorrent-agent" };
-const KEYRING_SERVICE: &str = "podtorrent pipeline node";
-const KEYRING_USER: &str = "node-token";
 
-fn keyring_entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())
+/// The node token lives in the data folder, readable by this user only.
+fn token_path() -> PathBuf {
+    data_dir().join("node-token")
+}
+
+fn saved_token() -> Option<String> {
+    std::fs::read_to_string(token_path()).ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+}
+
+fn save_token(token: &str) -> std::io::Result<()> {
+    let p = token_path();
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    std::io::Write::write_all(&mut o.open(&p)?, token.as_bytes())?;
+    #[cfg(unix)]
+    std::fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    Ok(())
 }
 
 /// The network to join, by the name the UI shows. The token must come from the same one.
@@ -207,13 +222,13 @@ fn engine_port() -> String {
 
 /// Put this peer on the network as `node`. The peer writes network-manifest.json (the models
 /// the swarm fully covers, with their routes) from network.json; the agent serves them through
-/// the peer's /v1 API. An empty token means the one saved in the OS credential store.
+/// the peer's /v1 API. An empty token means the one saved in the data folder.
 /// `network` is "production" (default) or "staging"; a node token works on one of them only.
 #[tauri::command]
 fn network_join(app: AppHandle, state: State<Agent>, node: String, token: String,
                 price_in: f64, price_out: f64, network: Option<String>) -> Result<(), String> {
     let network = network.unwrap_or_else(|| "production".into());
-    let url = network_url(&network)?;
+    network_url(&network)?;
     let node = node.trim().to_lowercase();
     if node.is_empty() || !node.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err("node id: letters, digits, - and _ only".into());
@@ -221,20 +236,29 @@ fn network_join(app: AppHandle, state: State<Agent>, node: String, token: String
     if !(price_in >= 0.0 && price_out >= 0.0) {
         return Err("prices must not be negative".into());
     }
-    let entry = keyring_entry()?;
-    let token = match token.trim() {
-        "" => entry.get_password().map_err(|_| "no saved node token: paste the one you were given".to_string())?,
-        t => { entry.set_password(t).map_err(|e| format!("couldn't save the token: {e}"))?; t.to_string() }
-    };
-    let dir = backend_dir(&app);
-    let bin = dir.join(AGENT);
-    if !bin.exists() {
+    match token.trim() {
+        "" if saved_token().is_none() => return Err("no saved node token: paste the one you were given".into()),
+        "" => {}
+        t => save_token(t).map_err(|e| format!("couldn't save the token: {e}"))?,
+    }
+    if !backend_dir(&app).join(AGENT).exists() {
         return Err("this build doesn't include the network agent".into());
     }
-    let data = data_dir();
     let base = serde_json::json!({ "node": node, "network": network, "tiers": ["interactive", "batch"],
         "price": { "per_mtok_in": price_in, "per_mtok_out": price_out } });
-    std::fs::write(data.join("network.json"), serde_json::to_vec_pretty(&base).unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(data_dir().join("network.json"), serde_json::to_vec_pretty(&base).unwrap()).map_err(|e| e.to_string())?;
+    start_agent(&app, &state)
+}
+
+/// Start the agent from the saved network.json and token, replacing a running one (and any left
+/// over from an earlier run of the app). Fails until the swarm fully covers a model.
+fn start_agent(app: &AppHandle, state: &Agent) -> Result<(), String> {
+    let data = data_dir();
+    let config: serde_json::Value = std::fs::read_to_string(data.join("network.json")).ok()
+        .and_then(|t| serde_json::from_str(&t).ok()).ok_or("not joined")?;
+    let url = network_url(config.get("network").and_then(|v| v.as_str()).unwrap_or("production"))?;
+    let token = saved_token().ok_or("no saved node token: paste the one you were given")?;
+    let bin = backend_dir(app).join(AGENT);
     let manifest = data.join("network-manifest.json");
     let covered = std::fs::read_to_string(&manifest).ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
@@ -247,6 +271,7 @@ fn network_join(app: AppHandle, state: State<Agent>, node: String, token: String
     if let Some(mut old) = slot.take() {
         kill_group(&mut old);
     }
+    kill_stray_agents(&bin);
     let log = std::fs::File::create(data.join("agent.log")).map_err(|e| e.to_string())?;
     let mut cmd = Command::new(bin);
     cmd.arg("-manifest").arg(&manifest)
@@ -264,6 +289,58 @@ fn network_join(app: AppHandle, state: State<Agent>, node: String, token: String
     Ok(())
 }
 
+/// Agents this app started that outlived it (a crash, or a dev rebuild): same binary, not ours.
+/// Left running they keep dialing with old settings and write into the new agent.log.
+fn kill_stray_agents(bin: &std::path::Path) {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true,
+        ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet));
+    for p in sys.processes().values() {
+        if p.exe() == Some(bin) {
+            p.kill();
+            p.wait();
+        }
+    }
+}
+
+/// Keeps a joined node on the network: once the app starts, and whenever the agent has exited,
+/// start it again when network.json says this Mac joined and the swarm covers a model.
+fn supervise_agent(app: AppHandle) {
+    std::thread::spawn(move || {
+        kill_stray_agents(&backend_dir(&app).join(AGENT));
+        let mut last: Option<std::time::Instant> = None;
+        loop {
+            let state = app.state::<Agent>();
+            let running = state.0.lock().unwrap().as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_none());
+            let joined = data_dir().join("network.json").exists();
+            // At most every 30 s, so an agent that exits at once doesn't restart in a tight loop.
+            if joined && !running && last.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(30))
+                && start_agent(&app, &state).is_ok() {
+                last = Some(std::time::Instant::now());
+            }
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+    });
+}
+
+/// Open the operator dashboard of `network` in the default browser.
+#[tauri::command]
+fn open_dashboard(network: String) -> Result<(), String> {
+    let url = match network.as_str() {
+        "production" => "https://dashboard.podtorrent.com/",
+        "staging" => "https://dashboard-staging.podtorrent.com/",
+        _ => return Err(format!("unknown network {network:?}")),
+    };
+    #[cfg(target_os = "macos")]
+    let r = Command::new("open").arg(url).status();
+    #[cfg(windows)]
+    let r = Command::new("explorer").arg(url).status();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let r = Command::new("xdg-open").arg(url).status();
+    r.map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// Take this peer off the network. `forget` also removes the saved node token.
 #[tauri::command]
 fn network_leave(state: State<Agent>, forget: Option<bool>) -> Result<(), String> {
@@ -272,9 +349,9 @@ fn network_leave(state: State<Agent>, forget: Option<bool>) -> Result<(), String
     }
     let _ = std::fs::remove_file(data_dir().join("network.json"));
     if forget.unwrap_or(false) {
-        match keyring_entry()?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => {}
-            Err(e) => return Err(e.to_string()),
+        match std::fs::remove_file(token_path()) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
+            _ => {}
         }
     }
     Ok(())
@@ -285,12 +362,15 @@ fn network_leave(state: State<Agent>, forget: Option<bool>) -> Result<(), String
 #[tauri::command]
 fn network_status(app: AppHandle, state: State<Agent>) -> serde_json::Value {
     let running = state.0.lock().unwrap().as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_none());
-    let saved = keyring_entry().and_then(|e| e.get_password().map_err(|e| e.to_string())).is_ok();
+    let saved = saved_token().is_some();
     let read = |f: &str| std::fs::read_to_string(data_dir().join(f)).ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
     let log = std::fs::read_to_string(data_dir().join("agent.log")).unwrap_or_default();
     let lines: Vec<&str> = log.lines().collect();
-    serde_json::json!({ "available": backend_dir(&app).join(AGENT).exists(), "running": running,
+    // The agent logs "connected" on each link up and "link down" on each drop; the last one wins.
+    let connected = running && lines.iter().rev().find(|l| l.contains("msg=connected") || l.contains("link down"))
+        .is_some_and(|l| l.contains("msg=connected"));
+    serde_json::json!({ "available": backend_dir(&app).join(AGENT).exists(), "running": running, "connected": connected,
         "token_saved": saved, "config": read("network.json"), "manifest": read("network-manifest.json"),
         "log": lines[lines.len().saturating_sub(20)..].join("\n") })
 }
@@ -686,7 +766,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             engine_log, engine_log_tail, engine_running, start_engine,
             stop_engine, quit_app, system_health, tray_update, notify, setup_progress, local_models,
-            data_location, pick_folder, set_data_location, network_join, network_leave, network_status
+            data_location, pick_folder, set_data_location, network_join, network_leave, network_status, open_dashboard
         ])
         .setup(|app| {
             let handle = app.handle();
@@ -718,6 +798,7 @@ fn main() {
                 })
                 .build(handle)?;
             app.manage(TrayStatus(status));
+            supervise_agent(handle.clone());
             Ok(())
         })
         .on_menu_event(|app, e| {

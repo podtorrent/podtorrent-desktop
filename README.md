@@ -55,7 +55,7 @@ The local API binds to 127.0.0.1 only; other Macs talk to this one over QUIC on 
 
 A peer can offer the models its swarm fully covers to PodTorrent network clients. The app bundles
 [podtorrent-agent](https://github.com/Munerate/podtorrent-agent); in **Settings → PodTorrent Network**
-enter an approved node id and node token (kept in the system keychain) and click **Join Network**.
+enter an approved node id and node token (saved as `node-token` in the data folder, readable by your user only) and click **Join Network**.
 This Mac becomes the head of each route: the agent forwards network requests to the peer's loopback
 `POST /v1/chat/completions` and `GET /v1/models`, and the peer runs them through the swarm's slices.
 

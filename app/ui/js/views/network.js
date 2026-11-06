@@ -5,13 +5,27 @@ import { h, text } from "../dom.js";
 import { button, toast, empty, segmented } from "../ui.js";
 import { invoke, isTauri } from "../native.js";
 
-let status = null; // last network_status, for the toolbar subtitle
+let status = null; // last network_status, for the toolbar subtitle and the sidebar
+
+async function poll() {
+  try { status = await invoke("network_status"); } catch { /* browser preview */ }
+  return status;
+}
+if (isTauri) { poll(); setInterval(poll, 3000); }
+
+/** "online" (agent connected), "connecting" (agent running, link down) or null. For the sidebar. */
+export function networkState() {
+  return status?.connected ? "online" : status?.running ? "connecting" : null;
+}
+
+const netName = s => s?.config?.network || "production";
 
 const field = (label, input, hint) => h("div.field", h("label", label), input, hint ? h("div.small.faint", hint) : null);
 
 export default {
   title: "Network",
-  subtitle: () => !isTauri ? "Desktop app only" : status?.running ? `Serving as ${status.config?.node} on ${status.config?.network || "production"}` : status?.config ? "Not connected" : "Not joined",
+  subtitle: () => !isTauri ? "Desktop app only" : status?.connected ? `Serving as ${status.config?.node} on ${netName(status)}`
+    : status?.running ? `Connecting to ${netName(status)}` : status?.config ? "Not connected" : "Not joined",
   mount(root) {
     if (!isTauri) {
       root.append(h("div.page.network", empty({ icon: "link", title: "Desktop app only",
@@ -25,14 +39,33 @@ export default {
     const state = h("span.badge");
     const routes = h("div");
     const log = h("pre.small.mono.faint.net-log");
-    let busy = false, filled = false, net = "production";
-    const which = segmented([{ value: "production", label: "Production" }, { value: "staging", label: "Staging" }], net, v => { net = v; }, "Network");
+    let busy = false, filled = false, net = "production", editToken = false;
+    const which = segmented([{ value: "production", label: "Production" }, { value: "staging", label: "Staging" }], net, v => { net = v; label(); }, "Network");
+    // With a token saved, the field stays hidden behind "Change token" so a join needs no paste.
+    const savedNote = h("span.small.faint", "Saved in the PodTorrent data folder.");
+    const changeToken = button("Change token", { variant: "ghost", size: "sm", onclick: () => { editToken = true; show(); token.focus(); } });
+    const cancelToken = button("Keep saved token", { variant: "ghost", size: "sm", onclick: () => { editToken = false; token.value = ""; show(); } });
+    const tokenSaved = h("div.net-token-saved", savedNote, changeToken);
+    const tokenHint = h("div.small.faint", "Saved in the PodTorrent data folder, readable by you only.");
+    const tokenField = h("div.field", h("label", "Node token"), tokenSaved, token, h("div.net-token-row", tokenHint, cancelToken));
+    function show() {
+      const saved = !!status?.token_saved;
+      tokenSaved.hidden = !saved || editToken;
+      token.hidden = saved && !editToken;
+      cancelToken.hidden = !saved || !editToken;
+      tokenHint.hidden = saved && !editToken;
+    }
+    const dashboard = button("Open Dashboard", { variant: "ghost", size: "sm", icon: "link",
+      onclick: () => invoke("open_dashboard", { network: dashNet() }).catch(e => toast("Couldn't open the dashboard", "degraded", String(e))) });
+    // The joined network's dashboard; before joining, the one picked above.
+    const dashNet = () => status?.config ? netName(status) : net;
+    const label = () => text(dashboard.querySelector("span"), dashNet() === "staging" ? "Staging Dashboard" : "Dashboard");
 
     const join = button("Join Network", { variant: "primary", icon: "link", onclick: async () => {
       if (busy) return; busy = true;
       try {
         await invoke("network_join", { node: node.value, token: token.value, priceIn: Number(pin.value || 0), priceOut: Number(pout.value || 0), network: net });
-        token.value = "";
+        token.value = ""; editToken = false;
         toast("Joined the PodTorrent network", "serving", "Covered models are offered to network clients through this Mac.");
       } catch (e) { toast("Couldn't join the network", "degraded", String(e)); }
       busy = false; refresh();
@@ -43,18 +76,19 @@ export default {
     } });
 
     async function refresh() {
-      let s;
-      try { s = await invoke("network_status"); } catch { return; }
-      status = s;
+      const s = await poll();
+      if (!s) return;
       if (s.config && !filled) {
         filled = true;
         node.value = s.config.node || "";
         pin.value = s.config.price?.per_mtok_in ?? ""; pout.value = s.config.price?.per_mtok_out ?? "";
         net = s.config.network || "production"; which.set(net);
       }
-      token.placeholder = s.token_saved ? "Saved in the keychain (paste to replace)" : "Paste your node token";
-      text(state, !s.available ? "Agent missing" : s.running ? `On ${s.config?.network || "production"}` : s.config ? "Not connected" : "Not joined");
-      state.className = `badge ${s.running ? "serving" : ""}`;
+      token.placeholder = s.token_saved ? "Paste the new node token" : "Paste your node token";
+      show();
+      label();
+      text(state, !s.available ? "Agent missing" : s.connected ? `Online · ${netName(s)}` : s.running ? "Connecting…" : s.config ? "Not connected" : "Not joined");
+      state.className = `badge dot ${s.connected ? "serving" : s.running ? "degraded pulse" : ""}`;
       join.hidden = s.running || !s.available; leave.hidden = !s.running && !s.config;
       const ms = s.manifest?.models || [];
       routes.replaceChildren(...(ms.length ? ms.map(m => h("div.list-row",
@@ -67,13 +101,13 @@ export default {
     const timer = setInterval(refresh, 3000);
 
     root.append(h("div.page.network",
-      h("section.card", h("div.card-h", h("h2", "Join the PodTorrent network"), h("span.spacer"), state),
+      h("section.card", h("div.card-h", h("h2", "Join the PodTorrent network"), h("span.spacer"), dashboard, state),
         h("div.card-b",
           h("p.small.muted", "Offer the models your swarm fully covers to network clients, with this Mac as the head of each route. Needs an approved node id and token."),
           h("div.net-grid",
             field("Network", which, "Where your node was approved. A staging token doesn't work on production."),
             field("Node id", node, "Lower case, as approved."),
-            field("Node token", token, "Kept in the system keychain."),
+            tokenField,
             field("Input price", pin, "USD per million tokens."),
             field("Output price", pout, "USD per million tokens.")),
           h("div.net-actions", join, leave))),
