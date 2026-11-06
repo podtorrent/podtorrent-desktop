@@ -23,6 +23,7 @@ from aiohttp import WSMsgType, web
 
 from . import backend as B
 from . import catalog
+from . import openai_api
 from . import pipeline_pb2 as pb
 from .cli import default_dir
 from .backend import CHIP, GB, from_wire, load_tokenizer, mem_free_gb, mem_total_gb, to_wire
@@ -1020,6 +1021,7 @@ class PeerApp:
             await asyncio.sleep(2)
             self.slices.evict_idle()
             self.self_events()
+            openai_api.write_network_manifest(self, home())
 
 
 def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[tuple[str | None, int, int]] | None,
@@ -1063,6 +1065,7 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
         ni.roles.extend(app_state.video_swarm.roles())
         return ni
     app_state.net.info = node_info
+    app.add_routes(openai_api.routes(app_state))
     app.add_routes(video_api.routes(app_state.video, enc, app_state.video_swarm))
     app.on_cleanup.append(lambda _: asyncio.to_thread(app_state.video.stop))
 

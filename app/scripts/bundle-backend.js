@@ -32,4 +32,22 @@ fs.cpSync(path.join(root, "podtorrent"), path.join(out, "podtorrent"), {
   recursive: true,
   filter: src => path.basename(src) !== "__pycache__",
 });
+// The network agent (podtorrent-agent): PODTORRENT_AGENT_BIN, else built from a podtorrent-agent
+// checkout next to this repo (Go 1.24+ as `go`, or PODTORRENT_GO). Without it the app runs
+// swarm-only and can't join the PodTorrent network.
+const agentName = process.platform === "win32" ? "podtorrent-agent.exe" : "podtorrent-agent";
+const agentSrc = path.resolve(root, "../podtorrent-agent");
+try {
+  if (process.env.PODTORRENT_AGENT_BIN) {
+    fs.copyFileSync(process.env.PODTORRENT_AGENT_BIN, path.join(out, agentName));
+  } else {
+    execFileSync(process.env.PODTORRENT_GO || "go",
+      ["build", "-trimpath", "-o", path.join(out, agentName), "./cmd/podtorrent-agent"],
+      { cwd: agentSrc, stdio: "inherit", env: { ...process.env, CGO_ENABLED: "0" } });
+  }
+  fs.chmodSync(path.join(out, agentName), 0o755);
+  console.log("staged network agent");
+} catch (e) {
+  console.warn(`network agent not staged (${e.message}); the app will run swarm-only`);
+}
 console.log(`staged backend in ${path.relative(app, out)}`);

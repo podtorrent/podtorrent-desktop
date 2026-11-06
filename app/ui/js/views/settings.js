@@ -7,6 +7,7 @@ import { presets } from "../demo.js";
 import { perf } from "../perf.js";
 import { isTauri, T } from "../native.js";
 import { storagePicker } from "../storage.js";
+import { networkPanel } from "../network.js";
 
 const row = (title, desc, control) => h("div.list-row", h("div.grow", h("div.t", title), desc ? h("div.d", desc) : null), control);
 
@@ -31,6 +32,8 @@ export default {
         h("div.list-row", h("div.grow", h("div.t", "Animation budget"), perfLine))),
       isTauri ? h("section.card", h("div.card-h", h("h2", "Storage")),
         h("div.list-row", h("div.grow", h("div.t", "Data folder"), h("div.d", "Models, the Python environment and logs. Change it if this drive is full; stop your node first. Downloaded models aren't moved."), storagePicker()))) : null,
+      isTauri ? h("section.card", h("div.card-h", h("h2", "PodTorrent Network")),
+        h("div.list-row", h("div.grow", h("div.t", "Serve network clients"), h("div.d", "Offer the models your swarm fully covers to PodTorrent network clients, with this Mac as the head of the route. Needs an approved node id and token."), networkPanel()))) : null,
       h("section.card", h("div.card-h", h("h2", "Notifications")),
         row("Swarm notifications", "Peer joined or left, model fully covered, contribution milestones. Only when PodTorrent isn't in front.", notif)),
       h("section.card", h("div.card-h", h("h2", "Developer"), h("span.spacer"), h("span.badge.demo", "Demo")),

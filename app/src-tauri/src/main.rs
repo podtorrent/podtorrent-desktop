@@ -15,6 +15,9 @@ use tauri_plugin_notification::NotificationExt;
 
 #[derive(Default)]
 struct Engine(Mutex<Option<Child>>);
+/// The bundled podtorrent-agent: links this peer to the PodTorrent network.
+#[derive(Default)]
+struct Agent(Mutex<Option<Child>>);
 /// Tray menu's status line, updated from the UI.
 struct TrayStatus(MenuItem<Wry>);
 
@@ -179,6 +182,109 @@ fn start_engine(app: AppHandle, state: State<Engine>, mode: String, name: Option
     Ok(())
 }
 
+// ---- PodTorrent network (the bundled agent) ----
+
+const AGENT: &str = if cfg!(windows) { "podtorrent-agent.exe" } else { "podtorrent-agent" };
+const KEYRING_SERVICE: &str = "podtorrent pipeline node";
+const KEYRING_USER: &str = "node-token";
+
+fn keyring_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())
+}
+
+fn engine_port() -> String {
+    std::env::var("PODTORRENT_PORT").ok().filter(|p| !p.is_empty()).unwrap_or_else(|| "27183".into())
+}
+
+/// Put this peer on the network as `node`. The peer writes network-manifest.json (the models
+/// the swarm fully covers, with their routes) from network.json; the agent serves them through
+/// the peer's /v1 API. An empty token means the one saved in the OS credential store.
+#[tauri::command]
+fn network_join(app: AppHandle, state: State<Agent>, node: String, token: String,
+                price_in: f64, price_out: f64, network: Option<String>) -> Result<(), String> {
+    let node = node.trim().to_lowercase();
+    if node.is_empty() || !node.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("node id: letters, digits, - and _ only".into());
+    }
+    if !(price_in >= 0.0 && price_out >= 0.0) {
+        return Err("prices must not be negative".into());
+    }
+    let entry = keyring_entry()?;
+    let token = match token.trim() {
+        "" => entry.get_password().map_err(|_| "no saved node token: paste the one you were given".to_string())?,
+        t => { entry.set_password(t).map_err(|e| format!("couldn't save the token: {e}"))?; t.to_string() }
+    };
+    let dir = backend_dir(&app);
+    let bin = dir.join(AGENT);
+    if !bin.exists() {
+        return Err("this build doesn't include the network agent".into());
+    }
+    let data = data_dir();
+    let base = serde_json::json!({ "node": node, "tiers": ["interactive", "batch"],
+        "price": { "per_mtok_in": price_in, "per_mtok_out": price_out } });
+    std::fs::write(data.join("network.json"), serde_json::to_vec_pretty(&base).unwrap()).map_err(|e| e.to_string())?;
+    let manifest = data.join("network-manifest.json");
+    let covered = std::fs::read_to_string(&manifest).ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|m| m.get("models").and_then(|v| v.as_array()).map(|a| !a.is_empty()))
+        .unwrap_or(false);
+    if !covered {
+        return Err("no model is fully covered by reachable peers yet; try again once the chat box unlocks".into());
+    }
+    let mut slot = state.0.lock().unwrap();
+    if let Some(mut old) = slot.take() {
+        kill_group(&mut old);
+    }
+    let log = std::fs::File::create(data.join("agent.log")).map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(bin);
+    cmd.arg("-manifest").arg(&manifest)
+        .env("PODTORRENT_ENGINE", format!("http://127.0.0.1:{}", engine_port()))
+        .env("PODTORRENT_NODE_TOKEN", token)
+        .stdin(Stdio::null())
+        .stdout(log.try_clone().map_err(|e| e.to_string())?)
+        .stderr(log);
+    if let Some(n) = network.filter(|n| n.starts_with("wss://") || n.starts_with("ws://127.0.0.1")) {
+        cmd.env("PODTORRENT_NETWORK", n);
+    }
+    #[cfg(unix)]
+    cmd.process_group(0);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    *slot = Some(cmd.spawn().map_err(|e| format!("failed to start the network agent: {e}"))?);
+    Ok(())
+}
+
+/// Take this peer off the network. `forget` also removes the saved node token.
+#[tauri::command]
+fn network_leave(state: State<Agent>, forget: Option<bool>) -> Result<(), String> {
+    if let Some(mut c) = state.0.lock().unwrap().take() {
+        kill_group(&mut c);
+    }
+    let _ = std::fs::remove_file(data_dir().join("network.json"));
+    if forget.unwrap_or(false) {
+        match keyring_entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(())
+}
+
+/// Whether the agent runs, whether a token is saved, the saved node settings, and the agent's
+/// last log lines (it logs connection state, never request content).
+#[tauri::command]
+fn network_status(app: AppHandle, state: State<Agent>) -> serde_json::Value {
+    let running = state.0.lock().unwrap().as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_none());
+    let saved = keyring_entry().and_then(|e| e.get_password().map_err(|e| e.to_string())).is_ok();
+    let read = |f: &str| std::fs::read_to_string(data_dir().join(f)).ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    let log = std::fs::read_to_string(data_dir().join("agent.log")).unwrap_or_default();
+    let lines: Vec<&str> = log.lines().collect();
+    serde_json::json!({ "available": backend_dir(&app).join(AGENT).exists(), "running": running,
+        "token_saved": saved, "config": read("network.json"), "manifest": read("network-manifest.json"),
+        "log": lines[lines.len().saturating_sub(20)..].join("\n") })
+}
+
 #[tauri::command]
 fn engine_log() -> String {
     let t = std::fs::read_to_string(data_dir().join("engine.log")).unwrap_or_default();
@@ -278,6 +384,9 @@ fn quit_app(app: AppHandle) {
 }
 
 fn stop_children(app: &AppHandle) {
+    if let Some(mut c) = app.state::<Agent>().0.lock().unwrap().take() {
+        kill_group(&mut c);
+    }
     if let Some(mut c) = app.state::<Engine>().0.lock().unwrap().take() {
         kill_group(&mut c);
     }
@@ -563,10 +672,11 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Engine::default())
+        .manage(Agent::default())
         .invoke_handler(tauri::generate_handler![
             engine_log, engine_log_tail, engine_running, start_engine,
             stop_engine, quit_app, system_health, tray_update, notify, setup_progress, local_models,
-            data_location, pick_folder, set_data_location
+            data_location, pick_folder, set_data_location, network_join, network_leave, network_status
         ])
         .setup(|app| {
             let handle = app.handle();
