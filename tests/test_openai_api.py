@@ -113,3 +113,11 @@ def test_network_manifest(tmp_path):
         "id": "example/model", "slots": 1,
         "pipeline": {"layers": 48, "hops": [{"peer": "mac-a", "lo": 0, "hi": 24},
                                              {"peer": "win-b", "lo": 24, "hi": 48}]}}]}
+
+
+def test_network_manifest_leaves_out_network_choice(tmp_path):
+    peer = FakePeer()
+    peer.models = lambda: []
+    (tmp_path / "network.json").write_text(json.dumps({"node": "example-node-01", "network": "staging"}))
+    openai_api.write_network_manifest(peer, tmp_path)
+    assert json.loads((tmp_path / "network-manifest.json").read_text()) == {"node": "example-node-01", "models": []}

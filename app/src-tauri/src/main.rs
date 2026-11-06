@@ -192,6 +192,15 @@ fn keyring_entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())
 }
 
+/// The network to join, by the name the UI shows. The token must come from the same one.
+fn network_url(name: &str) -> Result<&'static str, String> {
+    match name {
+        "production" => Ok("wss://api.podtorrent.com/v0/node/connect"),
+        "staging" => Ok("wss://staging-api.podtorrent.com/v0/node/connect"),
+        _ => Err(format!("unknown network {name:?}")),
+    }
+}
+
 fn engine_port() -> String {
     std::env::var("PODTORRENT_PORT").ok().filter(|p| !p.is_empty()).unwrap_or_else(|| "27183".into())
 }
@@ -199,9 +208,12 @@ fn engine_port() -> String {
 /// Put this peer on the network as `node`. The peer writes network-manifest.json (the models
 /// the swarm fully covers, with their routes) from network.json; the agent serves them through
 /// the peer's /v1 API. An empty token means the one saved in the OS credential store.
+/// `network` is "production" (default) or "staging"; a node token works on one of them only.
 #[tauri::command]
 fn network_join(app: AppHandle, state: State<Agent>, node: String, token: String,
                 price_in: f64, price_out: f64, network: Option<String>) -> Result<(), String> {
+    let network = network.unwrap_or_else(|| "production".into());
+    let url = network_url(&network)?;
     let node = node.trim().to_lowercase();
     if node.is_empty() || !node.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err("node id: letters, digits, - and _ only".into());
@@ -220,7 +232,7 @@ fn network_join(app: AppHandle, state: State<Agent>, node: String, token: String
         return Err("this build doesn't include the network agent".into());
     }
     let data = data_dir();
-    let base = serde_json::json!({ "node": node, "tiers": ["interactive", "batch"],
+    let base = serde_json::json!({ "node": node, "network": network, "tiers": ["interactive", "batch"],
         "price": { "per_mtok_in": price_in, "per_mtok_out": price_out } });
     std::fs::write(data.join("network.json"), serde_json::to_vec_pretty(&base).unwrap()).map_err(|e| e.to_string())?;
     let manifest = data.join("network-manifest.json");
@@ -240,12 +252,10 @@ fn network_join(app: AppHandle, state: State<Agent>, node: String, token: String
     cmd.arg("-manifest").arg(&manifest)
         .env("PODTORRENT_ENGINE", format!("http://127.0.0.1:{}", engine_port()))
         .env("PODTORRENT_NODE_TOKEN", token)
+        .env("PODTORRENT_NETWORK", url)
         .stdin(Stdio::null())
         .stdout(log.try_clone().map_err(|e| e.to_string())?)
         .stderr(log);
-    if let Some(n) = network.filter(|n| n.starts_with("wss://") || n.starts_with("ws://127.0.0.1")) {
-        cmd.env("PODTORRENT_NETWORK", n);
-    }
     #[cfg(unix)]
     cmd.process_group(0);
     #[cfg(windows)]

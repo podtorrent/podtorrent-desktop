@@ -147,6 +147,7 @@ def network_manifest(app, base: dict) -> dict:
         models.append({"id": m["model"], "slots": 1,
                        "pipeline": {"layers": m["n_layers"],
                                     "hops": [{"peer": h.name, "lo": h.lo, "hi": h.hi} for h in hops]}})
+    base = {k: v for k, v in base.items() if k != "network"}  # which gateway the app dials, not manifest
     return {**base, "models": models}
 
 

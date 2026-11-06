@@ -2,7 +2,7 @@
 // the swarm fully covers to network clients, with this Mac as the head of each route. Revenue goes
 // to this node's operator. Needs a node id and node token from an approved registration.
 import { h, text } from "../dom.js";
-import { button, toast, empty } from "../ui.js";
+import { button, toast, empty, segmented } from "../ui.js";
 import { invoke, isTauri } from "../native.js";
 
 let status = null; // last network_status, for the toolbar subtitle
@@ -11,7 +11,7 @@ const field = (label, input, hint) => h("div.field", h("label", label), input, h
 
 export default {
   title: "Network",
-  subtitle: () => !isTauri ? "Desktop app only" : status?.running ? `Serving as ${status.config?.node}` : status?.config ? "Not connected" : "Not joined",
+  subtitle: () => !isTauri ? "Desktop app only" : status?.running ? `Serving as ${status.config?.node} on ${status.config?.network || "production"}` : status?.config ? "Not connected" : "Not joined",
   mount(root) {
     if (!isTauri) {
       root.append(h("div.page.network", empty({ icon: "link", title: "Desktop app only",
@@ -25,12 +25,13 @@ export default {
     const state = h("span.badge");
     const routes = h("div");
     const log = h("pre.small.mono.faint.net-log");
-    let busy = false, filled = false;
+    let busy = false, filled = false, net = "production";
+    const which = segmented([{ value: "production", label: "Production" }, { value: "staging", label: "Staging" }], net, v => { net = v; }, "Network");
 
     const join = button("Join Network", { variant: "primary", icon: "link", onclick: async () => {
       if (busy) return; busy = true;
       try {
-        await invoke("network_join", { node: node.value, token: token.value, priceIn: Number(pin.value || 0), priceOut: Number(pout.value || 0) });
+        await invoke("network_join", { node: node.value, token: token.value, priceIn: Number(pin.value || 0), priceOut: Number(pout.value || 0), network: net });
         token.value = "";
         toast("Joined the PodTorrent network", "serving", "Covered models are offered to network clients through this Mac.");
       } catch (e) { toast("Couldn't join the network", "degraded", String(e)); }
@@ -49,9 +50,10 @@ export default {
         filled = true;
         node.value = s.config.node || "";
         pin.value = s.config.price?.per_mtok_in ?? ""; pout.value = s.config.price?.per_mtok_out ?? "";
+        net = s.config.network || "production"; which.set(net);
       }
       token.placeholder = s.token_saved ? "Saved in the keychain (paste to replace)" : "Paste your node token";
-      text(state, !s.available ? "Agent missing" : s.running ? "On the network" : s.config ? "Not connected" : "Not joined");
+      text(state, !s.available ? "Agent missing" : s.running ? `On ${s.config?.network || "production"}` : s.config ? "Not connected" : "Not joined");
       state.className = `badge ${s.running ? "serving" : ""}`;
       join.hidden = s.running || !s.available; leave.hidden = !s.running && !s.config;
       const ms = s.manifest?.models || [];
@@ -69,6 +71,7 @@ export default {
         h("div.card-b",
           h("p.small.muted", "Offer the models your swarm fully covers to network clients, with this Mac as the head of each route. Needs an approved node id and token."),
           h("div.net-grid",
+            field("Network", which, "Where your node was approved. A staging token doesn't work on production."),
             field("Node id", node, "Lower case, as approved."),
             field("Node token", token, "Kept in the system keychain."),
             field("Input price", pin, "USD per million tokens."),
