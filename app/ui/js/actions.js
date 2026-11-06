@@ -5,7 +5,7 @@ import * as engine from "./engine.js";
 import { startDemo, stopDemo, presets } from "./demo.js";
 import { toast } from "./ui.js";
 
-export const VIEWS = ["swarm", "models", "playground", "node", "peers", "activity", "settings"];
+export const VIEWS = ["swarm", "models", "playground", "node", "peers", "activity", "network", "settings"];
 let route = "swarm";
 export const currentRoute = () => route;
 /** Open a view; `tab` picks its sub-tab (Models: "text" | "video", Playground: "text" | "video"). */
