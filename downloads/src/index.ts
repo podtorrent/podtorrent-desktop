@@ -3,6 +3,7 @@
 //   /download/mac|windows|linux latest installer for that platform
 //   /download/latest.json        manifest (also for in-app update checks)
 //   /download/v/<ver>/<platform> a specific older build
+//   /download/guide              how to use the app, with screenshots
 
 interface Env {
   RELEASES: R2Bucket;
@@ -45,6 +46,15 @@ export default {
     }
 
     if (path === "/download") return page(await latestRelease(env));
+    if (path === "/download/guide") return guide();
+
+    // Guide screenshots live in R2 under guide/.
+    const shot = path.match(/^\/download\/guide\/([\w-]+\.jpg)$/);
+    if (shot) {
+      const obj = await env.RELEASES.get(`guide/${shot[1]}`);
+      if (!obj) return new Response("Not found", { status: 404 });
+      return new Response(obj.body, { headers: { "content-type": "image/jpeg", etag: obj.httpEtag, "cache-control": "public, max-age=3600" } });
+    }
     return new Response("Not found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
@@ -74,7 +84,9 @@ const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: 
     name: "macOS", arch: "Apple Silicon (M1 or later)",
     icon: `<path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.7.9-.8 0-1.9-.9-3.2-.8-1.6 0-3.1 1-4 2.4-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3 2.4 1.2 0 1.7-.8 3.1-.8 1.5 0 1.9.8 3.2.8 1.3 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.3-2.8-.1 0-2.5-1-2.5-3.9zM14 5.4c.7-.8 1.1-1.9 1-3-1 0-2.1.7-2.8 1.5-.6.7-1.2 1.8-1 2.9 1.1.1 2.1-.6 2.8-1.4z"/>`,
     needs: ["Apple Silicon Mac", "16 GB memory or more recommended"],
-    first: "Open the .dmg and drag PodTorrent to Applications. The first time, right-click the app and choose Open.",
+    // The app isn't notarized, so Gatekeeper reports a downloaded copy as "damaged" until the quarantine flag is cleared.
+    first: `Open the .dmg and drag PodTorrent to Applications. Then open Terminal and run this once, or macOS will say the app is damaged:
+      <code class="cmd">xattr -dr com.apple.quarantine /Applications/PodTorrent.app</code>`,
   },
   windows: {
     name: "Windows", arch: "x64",
@@ -90,31 +102,8 @@ const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: 
   },
 };
 
-function page(rel: Release | null): Response {
-  const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
-  const mb = (b: Build) => `${(b.size / 1e6).toFixed(0)} MB`;
-  // A platform's latest build can be older than the release (Mac builds aren't made in CI).
-  const ver = (b: Build) => b.key.match(/^releases\/v([^/]+)\//)?.[1] ?? rel!.version;
-  const svg = (d: string, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${d}</svg>`;
-  const dl = `<path d="M12 3a1 1 0 0 1 1 1v9.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.4l3.3 3.3V4a1 1 0 0 1 1-1zM5 19h14a1 1 0 1 1 0 2H5a1 1 0 1 1 0-2z"/>`;
-  const card = (p: Platform) => {
-    const i = INFO[p], b = rel?.[p];
-    const action = b
-      ? `<a class="btn" href="/download/${p}">${svg(dl, "ic")}<span>Download for ${i.name}</span></a>
-         <p class="meta">v${esc(ver(b))} · ${mb(b)} · <span title="SHA-256: ${b.sha256}">SHA-256 ${b.sha256.slice(0, 12)}…</span></p>`
-      : `<span class="btn off">Coming soon</span><p class="meta">No ${i.name} build yet</p>`;
-    return `<section class="card" data-os="${p}">
-      <div class="head">${svg(i.icon, "os")}<div><h2>${i.name}</h2><p class="arch">${i.arch}</p></div><span class="tag">Your system</span></div>
-      ${action}
-      <ul>${i.needs.map((n) => `<li>${n}</li>`).join("")}</ul>
-      <p class="first"><b>First run:</b> ${i.first}</p>
-    </section>`;
-  };
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Download PodTorrent</title>
-<meta name="description" content="Download PodTorrent for macOS, Windows and Linux.">
-<style>
-:root{color-scheme:light dark;--bg:#f6f8fa;--card:#fff;--fg:#0b0f14;--mut:#5b6573;--line:#dde3ea;--acc:#0097b2;--accfg:#fff;--soft:#e6f7fa}
+// Shared by the download page and the guide.
+const STYLE = `:root{color-scheme:light dark;--bg:#f6f8fa;--card:#fff;--fg:#0b0f14;--mut:#5b6573;--line:#dde3ea;--acc:#0097b2;--accfg:#fff;--soft:#e6f7fa}
 @media (prefers-color-scheme:dark){:root{--bg:#05070b;--card:#0d1117;--fg:#e8eef4;--mut:#8b96a3;--line:#1e2630;--acc:#3ee8ff;--accfg:#05070b;--soft:#0b2a31}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -141,19 +130,64 @@ ul{margin:0;padding-left:18px;color:var(--mut);font-size:14px}
 .first{margin:auto 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:14px;color:var(--mut)}
 .first b{color:var(--fg)}
 code{font:13px ui-monospace,Menlo,monospace;background:var(--soft);padding:1px 5px;border-radius:5px;word-break:break-all}
+code.cmd{display:block;margin-top:8px;padding:8px 10px;color:var(--fg);word-break:normal;overflow-wrap:anywhere;user-select:all}
 h3{font-size:18px;margin:0 0 8px}
 pre{white-space:pre-wrap;font:inherit;color:var(--mut);margin:0}
 .notes,.how{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;margin-top:16px}
 .how p{margin:0;color:var(--mut)}
 footer{margin-top:40px;color:var(--mut);font-size:13px}
-</style></head><body><main>
-<div class="hero"><svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><defs><radialGradient id="g"><stop offset="0" stop-color="#fff"/><stop offset=".25" stop-color="#3ee8ff"/><stop offset=".6" stop-color="#3ee8ff" stop-opacity=".35"/><stop offset="1" stop-color="#3ee8ff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="14" fill="#05070b"/><circle cx="32" cy="32" r="21" fill="none" stroke="#3ee8ff" stroke-opacity=".45" stroke-width="2"/><circle cx="32" cy="32" r="16" fill="url(#g)"/><circle cx="32" cy="32" r="5" fill="#eaffff"/></svg>
+a{color:var(--acc)}
+.guide-link{display:flex;align-items:center;gap:16px;color:inherit;text-decoration:none}
+.guide-link:hover{border-color:var(--acc)}.guide-link:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
+.go{margin-left:auto;font-size:24px;color:var(--acc)}
+.back{display:inline-block;margin-bottom:24px;font-size:14px;text-decoration:none}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:24px 0 8px;padding:0;list-style:none}
+.toc a{display:block;padding:4px 12px;border:1px solid var(--line);border-radius:999px;font-size:14px;text-decoration:none;color:var(--mut)}
+.toc a:hover{color:var(--acc);border-color:var(--acc)}
+.step{margin-top:48px;scroll-margin-top:16px}
+.step h2{font-size:24px;letter-spacing:-.01em;margin-bottom:8px}
+.step p,.step li{color:var(--mut);max-width:720px}.step b{color:var(--fg)}
+.step ul,.step ol{font-size:16px;padding-left:22px;margin:8px 0}
+figure{margin:20px 0 0}
+figure img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:12px}
+figcaption{margin-top:8px;color:var(--mut);font-size:13px}
+.tip{border-left:3px solid var(--acc);background:var(--card);padding:10px 14px;border-radius:0 8px 8px 0;margin:16px 0 0;font-size:14px;color:var(--mut);max-width:720px}
+`;
+const LOGO = `<svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><defs><radialGradient id="g"><stop offset="0" stop-color="#fff"/><stop offset=".25" stop-color="#3ee8ff"/><stop offset=".6" stop-color="#3ee8ff" stop-opacity=".35"/><stop offset="1" stop-color="#3ee8ff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="14" fill="#05070b"/><circle cx="32" cy="32" r="21" fill="none" stroke="#3ee8ff" stroke-opacity=".45" stroke-width="2"/><circle cx="32" cy="32" r="16" fill="url(#g)"/><circle cx="32" cy="32" r="5" fill="#eaffff"/></svg>`;
+
+function page(rel: Release | null): Response {
+  const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const mb = (b: Build) => `${(b.size / 1e6).toFixed(0)} MB`;
+  // A platform's latest build can be older than the release (Mac builds aren't made in CI).
+  const ver = (b: Build) => b.key.match(/^releases\/v([^/]+)\//)?.[1] ?? rel!.version;
+  const svg = (d: string, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${d}</svg>`;
+  const dl = `<path d="M12 3a1 1 0 0 1 1 1v9.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.4l3.3 3.3V4a1 1 0 0 1 1-1zM5 19h14a1 1 0 1 1 0 2H5a1 1 0 1 1 0-2z"/>`;
+  const card = (p: Platform) => {
+    const i = INFO[p], b = rel?.[p];
+    const action = b
+      ? `<a class="btn" href="/download/${p}">${svg(dl, "ic")}<span>Download for ${i.name}</span></a>
+         <p class="meta">v${esc(ver(b))} · ${mb(b)} · <span title="SHA-256: ${b.sha256}">SHA-256 ${b.sha256.slice(0, 12)}…</span></p>`
+      : `<span class="btn off">Coming soon</span><p class="meta">No ${i.name} build yet</p>`;
+    return `<section class="card" data-os="${p}">
+      <div class="head">${svg(i.icon, "os")}<div><h2>${i.name}</h2><p class="arch">${i.arch}</p></div><span class="tag">Your system</span></div>
+      ${action}
+      <ul>${i.needs.map((n) => `<li>${n}</li>`).join("")}</ul>
+      <p class="first"><b>First run:</b> ${i.first}</p>
+    </section>`;
+  };
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Download PodTorrent</title>
+<meta name="description" content="Download PodTorrent for macOS, Windows and Linux.">
+<style>
+${STYLE}</style></head><body><main>
+<div class="hero">${LOGO}
 <h1>Download PodTorrent</h1></div>
 <p class="lead">Run large language models together. Each machine holds a slice of the model's layers, and peers on macOS, Windows and Linux join the same chains over the internet.</p>
 ${rel ? `<span class="rel">Latest release v${esc(rel.version)} · ${esc(rel.date)}</span>` : ""}
 <div class="grid">${PLATFORMS.map(card).join("")}</div>
 ${rel?.notes ? `<div class="notes"><h3>What's new</h3><pre>${esc(rel.notes)}</pre></div>` : ""}
 <div class="how"><h3>Setting up</h3><p>The first launch downloads the inference engine and its dependencies (a few GB on Windows and Linux) into your home folder. After that, pick which layers to serve and your machine joins the swarm.</p></div>
+<a class="how guide-link" href="/download/guide"><div><h3>How to use PodTorrent</h3><p>A short tour with screenshots: name your machine, choose which layers it serves, see your peers, check which models can run, and chat with a model the whole swarm serves together. It also covers serving the PodTorrent network and fixing common problems.</p></div><span class="go" aria-hidden="true">→</span></a>
 <footer>Hover a checksum to see the full SHA-256. Older builds: <code>/download/v/&lt;version&gt;/&lt;platform&gt;</code>.</footer>
 </main>
 <script>
@@ -161,5 +195,80 @@ const ua = navigator.userAgent, os = /Windows/.test(ua) ? "windows" : /Mac/.test
 const el = os && document.querySelector('.card[data-os="' + os + '"]');
 if (el) { el.classList.add("me"); el.parentNode.prepend(el); }
 </script></body></html>`;
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } });
+}
+
+// The usage guide. Screenshots are from the app's Demo Mode (simulated swarm), uploaded to R2 under guide/.
+function guide(): Response {
+  const fig = (file: string, alt: string, cap: string) =>
+    `<figure><img src="/download/guide/${file}" alt="${alt}" width="1600" height="1000" loading="lazy"><figcaption>${cap}</figcaption></figure>`;
+  const steps: [string, string, string][] = [
+    ["install", "1. Install", `
+      <p>Get the installer for your system from the <a href="/download">download page</a>.</p>
+      <ul>
+        <li><b>macOS (Apple Silicon):</b> open the .dmg and drag PodTorrent to Applications. The app isn't notarized yet, so open Terminal and run this once, or macOS will say the app is damaged:
+          <code class="cmd">xattr -dr com.apple.quarantine /Applications/PodTorrent.app</code></li>
+        <li><b>Windows:</b> run the installer. If SmartScreen appears, choose <b>More info</b>, then <b>Run anyway</b>. When Windows asks, allow PodTorrent through the firewall so peers can reach this machine.</li>
+        <li><b>Linux:</b> run <code>chmod +x PodTorrent*.AppImage</code>, then start the AppImage.</li>
+      </ul>
+      <p>The first launch downloads the inference engine into your home folder (a few GB on Windows and Linux), so give it a few minutes.</p>`],
+    ["name", "2. Name this machine", `
+      <p>On first launch, PodTorrent asks for a name. Other machines in the swarm see this name, so pick something you'll recognise, like <code>studio</code> or <code>logesh-air</code>. Leave it empty to use the hostname.</p>
+      ${fig("01-name.jpg", "Welcome screen asking for a name for this machine", "The first screen: a name for this machine.")}`],
+    ["serve", "3. Choose what to serve", `
+      <p>A large model is split into layers, and each machine serves a slice. Pick a slice that fits this machine's memory. PodTorrent downloads only those layers, and warns you if a choice may not fit.</p>
+      <ul>
+        <li><b>Layers 0–23</b> or <b>24–47</b>: half of Qwen3-30B-A3B, about 8 GB. Two machines with one half each can run the whole model.</li>
+        <li><b>Layers 0–11</b>: a quarter, for a smaller machine.</li>
+        <li><b>Nothing for now</b>: join the swarm and chat with models other machines serve. You can serve layers later from Models.</li>
+      </ul>
+      <p>You can also choose where models are stored. On the last screen, click <b>Start My Node</b>.</p>
+      ${fig("02-serve.jpg", "Choosing which layers this machine serves", "Pick a slice. You can change it any time.")}
+      <p class="tip">Want to look around first? Click <b>Explore Demo first</b>, or press <b>⌥⌘D</b> any time. Demo Mode shows a simulated swarm and is always marked <b>Demo</b>.</p>`],
+    ["swarm", "4. See the swarm", `
+      <p>The <b>Swarm</b> view shows every machine or peer online, across any network. They find each other and connect directly: there's no address to type and no VPN. Each circle shows the layers that machine serves, and arrows show tokens moving between them.</p>
+      <p>A red circle is a peer that's online but can't be reached from here, for example one behind a strict NAT. Its layers don't count until it's reachable.</p>
+      ${fig("03-swarm.jpg", "Swarm view with a graph of connected peers", "Peers online, pooled memory and throughput, and the network graph.")}`],
+    ["models", "5. Check which models can run", `
+      <p><b>Models</b> lists each model in the swarm with a bar of its layers. A model is <b>Ready to use</b> once every layer has a reachable machine serving it. A gap shows which layers still need a peer.</p>
+      <p>To fill a gap, serve those layers on this machine, or ask another machine to. <b>Find models</b> at the bottom lets you add other supported models.</p>
+      ${fig("04-models.jpg", "Models view showing layer coverage for two models", "Each layer range and who serves it. Green means served.")}`],
+    ["chat", "6. Chat with the swarm", `
+      <p>Open <b>Playground</b>, pick a ready model, and type a message. Your prompt passes through each machine's layers in turn, and the answer streams back to you.</p>
+      <p>Under each reply you'll see its speed, time to first token, and the <b>route</b> it took. <b>Token trace</b> shows how long each hop took. Replies use greedy decoding, so the same prompt gives the same answer.</p>
+      ${fig("05-playground.jpg", "Playground with a chat reply and its route", "A reply with its route through the swarm. The sidebar shows which peers serve each layer.")}`],
+    ["node", "7. Manage your machine", `
+      <p><b>My Node</b> shows what this machine contributes: memory in use, layers served, tokens processed and requests helped. Use <b>Serve text layers…</b> to add a slice, <b>Stop serving</b> to drop one, or <b>Stop node</b> to leave the swarm.</p>
+      ${fig("06-node.jpg", "My Node view showing this machine's contribution", "This machine's slices and stats.")}`],
+    ["network", "8. Serve the PodTorrent network (optional)", `
+      <p>Once your swarm covers a whole model, it can answer requests from the PodTorrent network, and this machine's operator is paid for each one. In <b>Network</b>:</p>
+      <ol>
+        <li>Choose <b>Production</b> or <b>Staging</b>.</li>
+        <li>Enter your approved <b>node id</b> and <b>node token</b>.</li>
+        <li>Set your price per million input and output tokens.</li>
+        <li>Click <b>Join Network</b>. PodTorrent stays joined across restarts, and <b>Dashboard</b> opens your node's page.</li>
+      </ol>
+      <p>Every machine on a request's route sees that request's intermediate model state.</p>`],
+    ["help", "Troubleshooting", `
+      <ul>
+        <li><b>macOS says PodTorrent is damaged:</b> run the <code>xattr</code> command from step 1.</li>
+        <li><b>A peer shows as not reachable:</b> its network blocks direct connections (often a strict NAT or firewall). On Windows, make sure PodTorrent is allowed through the firewall. Try another network if it persists.</li>
+        <li><b>A model never becomes ready:</b> open Models and look for the gap. Some machine has to serve those layers.</li>
+        <li><b>A slice won't download:</b> it was too big for this machine's memory. Choose a smaller range.</li>
+        <li><b>Keep machines awake</b> while serving, or their layers drop out of the swarm.</li>
+      </ul>`],
+  ];
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Using PodTorrent</title>
+<meta name="description" content="How to install PodTorrent, serve layers of a model, and chat with the swarm.">
+<style>
+${STYLE}</style></head><body><main>
+<a class="back" href="/download">← Download PodTorrent</a>
+<div class="hero">${LOGO}<h1>Using PodTorrent</h1></div>
+<p class="lead">PodTorrent lets machines on different networks run one large language model together. Each machine serves a slice of the model's layers, and every token hops between them. Here's how to get set up and start chatting.</p>
+<ul class="toc">${steps.map(([id, t]) => `<li><a href="#${id}">${t.replace(/^\d+\. /, "")}</a></li>`).join("")}</ul>
+${steps.map(([id, t, body]) => `<section class="step" id="${id}"><h2>${t}</h2>${body}</section>`).join("\n")}
+<footer>Screenshots are from Demo Mode, so the machines and numbers in them are simulated.</footer>
+</main></body></html>`;
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } });
 }
