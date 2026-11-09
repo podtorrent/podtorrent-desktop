@@ -211,6 +211,15 @@ def is_member(roster: dict | None, peer_id: str) -> bool:
     return bool(roster) and any(m["peer_id"] == peer_id for m in roster["members"])
 
 
+def owner_id(roster: dict) -> str | None:
+    """The owner machine's peer_id; None for a public pod, whose signer is the matchmaker."""
+    return None if roster["kind"] == "public" else peer_id_of(bytes.fromhex(roster["signer"]))
+
+
+def plan_for(roster: dict | None, model: str) -> dict | None:
+    return next((p for p in roster["plans"] if p["model"] == model), None) if roster else None
+
+
 # ---- invites ----
 
 def new_invite(pod_id: str) -> tuple[str, str]:

@@ -1,6 +1,6 @@
 # Pods: who serves with whom
 
-Status: phase 1 built (roster core), phases 2–6 not started · 2026-11-09
+Status: phases 1–2 built (roster core, peer enforcement), phases 3–6 not started · 2026-11-09
 
 ## Problem
 
@@ -133,7 +133,8 @@ everyone":
 - `M_FORWARD` checks membership per call. `M_LOAD` comes only from the roster signer's decision: each
   member loads its own hop from the plan, and nobody pushes layers onto another machine.
   `pick_helper` is replaced by the plan.
-- `route()` plans over members' offers only. Bump the wire `protocol` to 3.
+- `route()` plans over members' offers only. The wire `protocol` goes to 3 with the per-pod rooms (phase 3):
+  until then, members still find each other in the global room.
 
 ### 6. Joining the PodTorrent network
 
@@ -186,9 +187,13 @@ the whole supply and usage of PodTorrent.
 
 1. **Roster core** (built): `podtorrent/pod.py` (canonical JSON, sign and verify, revisions, invite code
    and proof, `~/.podtorrent/pod.json`), `tests/pod_vectors.json`, `tests/test_pod.py`. No behaviour change.
-2. **Peer enforcement on a roster**: roster-filtered dialing, membership checks in QUIC and handlers,
-   `route()` over members, plan-driven loading. Until the matchmaker exists, the global room keeps
-   working by treating it as one implicit public pod, so nothing breaks in between.
+2. **Peer enforcement on a roster** (built): `PeerNet.allowed` gates dialing, punch replies, auth and
+   every stream. `prune()` drops removed members. The peer reloads `pod.json` every 2 s, plans and
+   offers routes over members only, loads its own plan hops (and the head) itself, and in a pod
+   accepts `M_LOAD` only from the owner. With no `pod.json`, nothing changes: the global room is the
+   implicit public pod. `podtorrent pod show|new|add|remove|plan|export|import|leave` edits the roster by
+   hand. Rosters move between machines as files until invites exist. Tests: `tests/test_pod_peer.py`,
+   plus membership tests in `tests/test_quic.py`.
 3. **Private pods end to end**: per-pod rendezvous room with socket auth, invites, Pod tab, network join on
    the head only.
 4. **Matchmaker**: public lobby, pod formation, head choice, repair, expiring rosters. Then the global room

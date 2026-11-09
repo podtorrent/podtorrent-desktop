@@ -24,6 +24,7 @@ from aiohttp import WSMsgType, web
 from . import backend as B
 from . import catalog
 from . import openai_api
+from . import pod
 from . import pipeline_pb2 as pb
 from .cli import default_dir
 from .backend import CHIP, GB, from_wire, load_tokenizer, mem_free_gb, mem_total_gb, to_wire
@@ -48,6 +49,7 @@ MAX_REROUTES = 3
 DECODE_HOP_TIMEOUT_S = 10  # one token's hop; a dead peer sends no close, so don't wait for the QUIC idle timeout
 LOAD_TIMEOUT_S = 3600
 SUPPORTED = {"qwen3_moe"}  # architectures Shard can run
+PLAN_RETRY_S = 60          # a plan hop that failed to load is tried again after this long
 MEM_HEADROOM_GB = 1.0      # keep this much of the GPU budget free after loading a slice
 HEAD_ROLES = ["tokenizer", "embeddings", "lm_head"]
 
@@ -294,6 +296,17 @@ class Slices:
 # ---------------------------------------------------------------- the peer
 
 
+def pod_summary(r: dict | None) -> dict | None:
+    """What the UI and CLI show about a roster (no keys or signature)."""
+    if not r:
+        return None
+    return {"pod_id": r["pod_id"], "name": r["name"], "kind": r["kind"], "version": r["version"],
+            "owner": pod.owner_id(r),
+            "members": [{"peer_id": m["peer_id"], "name": m["name"], "public": m.get("public", False)}
+                        for m in r["members"]],
+            "plans": r["plans"], "expires": r["expires"]}
+
+
 class HopFailed(Exception):
     def __init__(self, hop: Hop, reason: str):
         super().__init__(reason)
@@ -309,6 +322,10 @@ class PeerApp:
         self.me = self.ident.peer_id
         self.slices = Slices(self.model_dir)
         self.net = PeerNet(self.ident, info=self.slices.info)
+        self.net.allowed = self.allows
+        self.pod: dict | None = pod.load_roster()   # None: no pod, every peer is fair game (the public swarm)
+        self._pod_mtime = self._roster_mtime()
+        self._plan_tries: dict[tuple[str, int, int], float] = {}   # plan hop -> when this Mac last started it
         self.net.handlers[M_FORWARD] = self._serve_forward
         self.net.handlers[M_LOAD] = self._serve_load
         self.swarm: SwarmClient | None = None
@@ -325,6 +342,54 @@ class PeerApp:
         self._known: set[str] = set()
         self._names: dict[str, str] = {}   # peer_id -> display name, for peers that vanish
         self.peers: list[dict] = []   # swarm records, each with this Mac's `link` to it
+
+    # ---- pod ----
+    def allows(self, peer_id: str) -> bool:
+        """Whether this Mac links with and serves `peer_id`: its pod's members, or anyone outside a pod."""
+        return self.pod is None or pod.is_member(self.pod, peer_id)
+
+    @staticmethod
+    def _roster_mtime() -> float:
+        try:
+            return pod.roster_path().stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def reload_pod(self):
+        """Pick up a changed pod.json: drop links to machines no longer in the pod, dial new members."""
+        mtime = self._roster_mtime()
+        if mtime == self._pod_mtime and not (self.pod and self.pod["expires"] and time.time() >= self.pod["expires"]):
+            return
+        self._pod_mtime = mtime
+        new = pod.load_roster()
+        if new == self.pod:
+            return
+        self.pod = new
+        print(f"pod: {new['name']} v{new['version']}, {len(new['members'])} machines" if new else "pod: none", flush=True)
+        self.net.prune()
+        self._announce()
+
+    def apply_plan(self):
+        """Load this Mac's hops of every plan in its pod (and the head for plans it heads). Each member
+        loads its own share; nobody pushes layers onto another machine."""
+        if not self.pod:
+            return
+        now = time.time()
+        for p in self.pod["plans"]:
+            model = p["model"]
+            for h in p["hops"]:
+                key = (model, h["lo"], h["hi"])
+                if h["peer"] != self.me or key in self.slices.items or self.slices.find(*key):
+                    continue
+                if now - self._plan_tries.get(key, 0.0) < PLAN_RETRY_S:
+                    continue
+                self._plan_tries[key] = now
+                print(f"pod plan: loading {model} layers [{h['lo']},{h['hi']})", flush=True)
+                threading.Thread(target=self._try, args=([], "pod plan", self._load_local, *key), daemon=True).start()
+            hkey = (model, -1, -1)
+            if p["head"] == self.me and model not in self.heads and now - self._plan_tries.get(hkey, 0.0) >= PLAN_RETRY_S:
+                self._plan_tries[hkey] = now
+                threading.Thread(target=self._try, args=([], "pod plan", self.ensure_head, model), daemon=True).start()
 
     def free_for_models(self) -> float:
         """Room for more text-model layers: free GPU budget minus what video encoder layers will need."""
@@ -446,7 +511,7 @@ class PeerApp:
         out = [Offer(self.me, NAME, s.lo, s.hi, 0.0) for s in self.slices.loaded(model)]
         for p in self.peers:
             link = p.get("link") or {}
-            if p["peer_id"] == self.me or (reachable and link.get("state") != "direct"):
+            if p["peer_id"] == self.me or not self.allows(p["peer_id"]) or (reachable and link.get("state") != "direct"):
                 continue
             for s in self.peer_slices(p):
                 if s.get("loaded") and s.get("model") == model:
@@ -522,6 +587,11 @@ class PeerApp:
     async def _serve_load(self, conn, body, reader, writer):
         req = pb.LoadRequest.FromString(body)
         model = req.repo or self.repo
+        if self.pod and conn.peer_id != pod.owner_id(self.pod):
+            # In a pod, layers come from the plan; only the owner may ask for more directly.
+            msg = "this machine is in a pod: only its owner can ask it to load layers"
+            writer.write(_frame(pb.LoadProgress(phase="error", message=msg).SerializeToString()))
+            return
         q: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
@@ -749,6 +819,11 @@ class PeerApp:
         body = await request.json() if request.can_read_body else {}
         if self.starting:
             return web.json_response({"error": "already starting"}, status=409)
+        if pod.plan_for(self.pod, self.repo):
+            # The pod's plan decides who serves what: load this Mac's share now, the others load theirs.
+            self._plan_tries = {k: v for k, v in self._plan_tries.items() if k[0] != self.repo}
+            self.apply_plan()
+            return web.json_response({"ok": True, "plan": True})
         n = self.n_layers
         k = int(body.get("split") or n // 2)
         if not 1 <= k < n:
@@ -810,7 +885,7 @@ class PeerApp:
         cands = []
         for p in self.peers:
             link = p.get("link") or {}
-            if p["peer_id"] in exclude or link.get("state") != "direct":
+            if p["peer_id"] in exclude or not self.allows(p["peer_id"]) or link.get("state") != "direct":
                 continue
             free = (link.get("info") or {}).get("mem_free_gb", p.get("mem_free_gb"))
             if free is not None and free < need_gb + MEM_HEADROOM_GB:
@@ -1040,7 +1115,8 @@ class PeerApp:
             "head_loaded": self.repo in self.heads, "route": [[h.name, h.lo, h.hi] for h in hops], "gaps": gaps,
             "links": {self.net._name(k): {kk: v[kk] for kk in ("state", "rtt_ms", "via", "addr", "error")}
                       for k, v in self.net.snapshot().items()},
-            "served": s.served, "tokens": s.tokens, "active_requests": len(s.caches)})
+            "served": s.served, "tokens": s.tokens, "active_requests": len(s.caches),
+            "pod": pod_summary(self.pod)})
 
     async def shutdown(self, _):
         self.video.stop()  # os._exit would orphan ComfyUI
@@ -1054,6 +1130,8 @@ class PeerApp:
         while True:
             await asyncio.sleep(2)
             self.slices.evict_idle()
+            self.reload_pod()
+            self.apply_plan()
             self.self_events()
             openai_api.write_network_manifest(self, home())
 

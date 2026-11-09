@@ -205,13 +205,16 @@ def udp_port() -> int:
 class PeerNet(asyncio.DatagramProtocol):
     """`signal(msg)` sends a message to the rendezvous (set by SwarmClient).
     `on_change()` runs whenever a link changes state or RTT.
-    `info()` returns this node's pb.NodeInfo for the Info RPC."""
+    `info()` returns this node's pb.NodeInfo for the Info RPC.
+    `allowed(peer_id)` says whether this peer may link with that one (its pod's members; everyone
+    when it's in no pod). Others are never dialed, and are refused at auth and on every stream."""
 
     def __init__(self, ident: Identity, port: int | None = None, info: Callable[[], pb.NodeInfo] | None = None):
         self.ident, self.port = ident, udp_port() if port is None else port
         self.info = info or (lambda: pb.NodeInfo())
         self.signal: Callable[[dict], Awaitable[None] | None] = lambda msg: None
         self.on_change: Callable[[], None] = lambda: None
+        self.allowed: Callable[[str], bool] = lambda peer_id: True
         self.links: dict[str, Link] = {}
         self.conns: dict[tuple, Conn] = {}
         self.records: dict[str, dict] = {}
@@ -329,11 +332,23 @@ class PeerNet(asyncio.DatagramProtocol):
         self._dial_due()
         self.on_change()
 
+    def prune(self):
+        """Drop links to peers no longer allowed (the pod changed), then dial newly allowed ones."""
+        for pid in [p for p in self.links if not self.allowed(p)]:
+            l = self.links.pop(pid)
+            if l.punch_task:
+                l.punch_task.cancel()
+            if l.conn:
+                l.conn.close()
+            print(f"p2p: {self._name(pid)} dropped (not in this pod)", flush=True)
+        self._dial_due()
+        self.on_change()
+
     def _dial_due(self):
         now = time.time()
         for pid, rec in self.records.items():
-            if rec.get("protocol", 1) < 2 or self.ident.peer_id > pid:
-                continue  # old client without QUIC, or the other side initiates
+            if rec.get("protocol", 1) < 2 or self.ident.peer_id > pid or not self.allowed(pid):
+                continue  # old client without QUIC, the other side initiates, or not in this pod
             l = self.link(pid)
             if l.state == "idle" or (l.state == "unreachable" and now - l.since > RETRY_S):
                 self._set(l, "connecting")
@@ -348,8 +363,8 @@ class PeerNet(asyncio.DatagramProtocol):
             return
         rec = msg.get("peer") or {}
         pid = rec.get("peer_id") or msg.get("from") or msg.get("to")
-        if not pid or pid == self.ident.peer_id:
-            return
+        if not pid or pid == self.ident.peer_id or not self.allowed(pid):
+            return  # a peer outside this pod asking to punch: let its attempt time out
         self.records[pid] = rec
         l = self.link(pid)
         if l.state == "direct":
@@ -433,6 +448,9 @@ class PeerNet(asyncio.DatagramProtocol):
         if got != l.peer_id:
             conn.close()
             raise ConnectionError(f"certificate is for {got[:8] or 'nobody'}, expected {l.peer_id[:8]}")
+        if not self.allowed(got):
+            conn.close()
+            raise ConnectionError("not-a-member")
         sig = self.ident.key.sign(_auth_payload(l.peer_id, self.ident.peer_id))
         reply = await conn.call(M_AUTH, json.dumps({"peer_id": self.ident.peer_id, "pub": self.ident.public.hex(),
                                                     "sig": sig.hex()}).encode())
@@ -468,6 +486,8 @@ class PeerNet(asyncio.DatagramProtocol):
                 out = self._auth(conn, body)
             elif not conn.peer_id:
                 out = b"unauthenticated"
+            elif not self.allowed(conn.peer_id):
+                out = b"not-a-member"  # the pod changed under an open connection; prune() closes it
             elif method == M_HEARTBEAT:
                 out = body  # echo: the caller's sent_ns comes back unchanged
             elif method == M_INFO:
@@ -493,6 +513,8 @@ class PeerNet(asyncio.DatagramProtocol):
                                                            _auth_payload(self.ident.peer_id, a["peer_id"]))
         except (ValueError, KeyError, InvalidSignature) as e:
             return f"bad auth: {type(e).__name__}".encode()
+        if not self.allowed(a["peer_id"]):
+            return b"not-a-member"
         conn.peer_id = a["peer_id"]
         l = self.link(conn.peer_id)
         if l.punch_task and not l.punch_task.done():
