@@ -1,6 +1,6 @@
 # Pods: who serves with whom
 
-Status: phases 1–4 built (roster core, peer enforcement, private pods end to end, matchmaker and census; Worker deployed 2026-11-09), phases 5–6 not started · 2026-11-09
+Status: phases 1–5 built (roster core, peer enforcement, private pods end to end, matchmaker and census, the iOS core; Worker deployed 2026-11-09), phase 6 not started · 2026-11-09
 
 ## Problem
 
@@ -226,8 +226,11 @@ the whole supply and usage of PodTorrent.
    from 0.1.24 and earlier. Not yet: reachability and RTT in pod formation, chatting through a public pod without
    serving, models wanted but not on disk yet, the census stat strip, hiding a private pod from the census,
    and video machines (the video swarm used the global room, so unpodded machines no longer link).
-5. **iOS**: the same roster validation and room protocol in `ios/` (CryptoKit Ed25519), against the test
-   vectors.
+5. **iOS** (built): `ios/PodTorrentKit`, a Swift package (CryptoKit Ed25519, no other dependencies) with
+   canonical JSON, roster checks, invites, the room handshake, joining with a code and waiting in the
+   public lobby. It passes every shared vector, and its room tests pass against `wrangler dev` (two Swift
+   machines get one public pod and enter its room). Not yet: an app that uses it, and the QUIC side
+   (membership checks on links), which comes with the iOS peer itself.
 6. **Test on different networks**: a private A+B pod at 50/50, with C and D online in public mode serving
    the same model. A and B never route through C or D. C and D get their own public pod. The network sees
    one node per pod.
