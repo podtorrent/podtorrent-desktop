@@ -1,0 +1,547 @@
+{
+  "now": 1800000000,
+  "matchmakers": [
+    "6959cedf3aac2fe0d49c1f8202e09303a65b491aabcf6359f5cc51b94a6fbe2e"
+  ],
+  "keys": {
+    "owner": {
+      "seed": "0222eda5854f1f2f2765f1b6bc4498d1be4d71c1fe88447c97cb26ad8bc08994",
+      "pubkey": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+      "peer_id": "6c2f0f91bbff832e6f5d536cebab104f"
+    },
+    "laptop": {
+      "seed": "48830432a69ed79c2e1b7b4c8d5e726ec29421a45703ee1f4f02ffaf00ca36d6",
+      "pubkey": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+      "peer_id": "d46fcff066e339ad385e56f16376bf3f"
+    },
+    "stranger": {
+      "seed": "78b8fd069431746c36e33a3605486893dd0032c5d3e97a1d1ae3cca9dbc76f95",
+      "pubkey": "ca31e9510d962dace97b0de6258c1cf0d08c418d5c8faf9d3653aac5cf439afe",
+      "peer_id": "fe594b3e7dce2938b23799df36fd5d18"
+    },
+    "matchmaker": {
+      "seed": "d9c789df77e6bbaf53c34d9ddc743e89a060c5bcd8a0f6a70fb1086a7a8d5700",
+      "pubkey": "6959cedf3aac2fe0d49c1f8202e09303a65b491aabcf6359f5cc51b94a6fbe2e",
+      "peer_id": "8b2753123834f27354faf40b57017899"
+    }
+  },
+  "canonical": [
+    {
+      "value": {
+        "b": 1,
+        "a": [
+          true,
+          null,
+          "x"
+        ]
+      },
+      "utf8": "{\"a\":[true,null,\"x\"],\"b\":1}"
+    },
+    {
+      "value": {
+        "model": "mlx-community/Qwen3-30B-A3B-4bit",
+        "name": "Café ☕",
+        "n": -3
+      },
+      "utf8": "{\"model\":\"mlx-community/Qwen3-30B-A3B-4bit\",\"n\":-3,\"name\":\"Café ☕\"}"
+    },
+    {
+      "value": {
+        "q": "a\"b\\c\n"
+      },
+      "utf8": "{\"q\":\"a\\\"b\\\\c\\n\"}"
+    }
+  ],
+  "signing_input_prefix": "podtorrent-roster|",
+  "rosters": [
+    {
+      "case": "private pod, two machines at 50/50",
+      "roster": {
+        "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+        "salt": "00000000000000000000000000000000",
+        "kind": "private",
+        "name": "home",
+        "version": 3,
+        "signer": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+        "members": [
+          {
+            "peer_id": "6c2f0f91bbff832e6f5d536cebab104f",
+            "pubkey": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+            "name": "studio"
+          },
+          {
+            "peer_id": "d46fcff066e339ad385e56f16376bf3f",
+            "pubkey": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+            "name": "air"
+          }
+        ],
+        "plans": [
+          {
+            "model": "mlx-community/Qwen3-30B-A3B-4bit",
+            "layers": 48,
+            "head": "6c2f0f91bbff832e6f5d536cebab104f",
+            "hops": [
+              {
+                "peer": "6c2f0f91bbff832e6f5d536cebab104f",
+                "lo": 0,
+                "hi": 24
+              },
+              {
+                "peer": "d46fcff066e339ad385e56f16376bf3f",
+                "lo": 24,
+                "hi": 48
+              }
+            ]
+          }
+        ],
+        "expires": 0,
+        "sig": "e2c409498bfca83516d3424dc267dee33001afabcbc6b7a6d5030145e581dc042676c23416961871a5902ac89934eeb5c8466cc4afb6d85f1c4a1b7b66cab309"
+      },
+      "error": null
+    },
+    {
+      "case": "alone: a pod of one",
+      "roster": {
+        "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+        "salt": "00000000000000000000000000000000",
+        "kind": "alone",
+        "name": "home",
+        "version": 1,
+        "signer": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+        "members": [
+          {
+            "peer_id": "6c2f0f91bbff832e6f5d536cebab104f",
+            "pubkey": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+            "name": "studio"
+          }
+        ],
+        "plans": [
+          {
+            "model": "mlx-community/Qwen3-30B-A3B-4bit",
+            "layers": 48,
+            "head": "6c2f0f91bbff832e6f5d536cebab104f",
+            "hops": [
+              {
+                "peer": "6c2f0f91bbff832e6f5d536cebab104f",
+                "lo": 0,
+                "hi": 48
+              }
+            ]
+          }
+        ],
+        "expires": 0,
+        "sig": "c645778e5ede029c363a65353e16ced56d7f6e85c4e3213ee90b5d548bcefc1787523382d3b05222d640207da8c6400984925a307ce87d71a96f700a4530440b"
+      },
+      "error": null
+    },
+    {
+      "case": "public pod signed by the matchmaker",
+      "roster": {
+        "pod_id": "edda45d10ec96b2036627caaa72514b9",
+        "salt": "00000000000000000000000000000000",
+        "kind": "public",
+        "name": "home",
+        "version": 1,
+        "signer": "6959cedf3aac2fe0d49c1f8202e09303a65b491aabcf6359f5cc51b94a6fbe2e",
+        "members": [
+          {
+            "peer_id": "d46fcff066e339ad385e56f16376bf3f",
+            "pubkey": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+            "name": "air"
+          },
+          {
+            "peer_id": "fe594b3e7dce2938b23799df36fd5d18",
+            "pubkey": "ca31e9510d962dace97b0de6258c1cf0d08c418d5c8faf9d3653aac5cf439afe",
+            "name": "box"
+          }
+        ],
+        "plans": [],
+        "expires": 1800000600,
+        "sig": "37ad4bf6050f3c9c2bb2cedf3783618ca764e0089906ce3d81a5f9f43167bbeb351e791c29d699b04439814fd5e4b79476257be6757883852b17bbc8ae8e9609"
+      },
+      "error": null
+    },
+    {
+      "case": "private pod with a public machine filling a gap",
+      "roster": {
+        "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+        "salt": "00000000000000000000000000000000",
+        "kind": "private",
+        "name": "home",
+        "version": 1,
+        "signer": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+        "members": [
+          {
+            "peer_id": "6c2f0f91bbff832e6f5d536cebab104f",
+            "pubkey": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+            "name": "studio"
+          },
+          {
+            "peer_id": "fe594b3e7dce2938b23799df36fd5d18",
+            "pubkey": "ca31e9510d962dace97b0de6258c1cf0d08c418d5c8faf9d3653aac5cf439afe",
+            "name": "box",
+            "public": true
+          }
+        ],
+        "plans": [],
+        "expires": 0,
+        "sig": "c0dca47900601dd008ab2f9393bbe2e25714bd84881dad2156d7ac1d066e26f5692fbbbe7cd68601a40e676e726da0f86e5fcd709fbf87a5a86824c64539530c"
+      },
+      "error": null
+    },
+    {
+      "case": "name changed after signing",
+      "roster": {
+        "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+        "salt": "00000000000000000000000000000000",
+        "kind": "private",
+        "name": "other",
+        "version": 3,
+        "signer": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+        "members": [
+          {
+            "peer_id": "6c2f0f91bbff832e6f5d536cebab104f",
+            "pubkey": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+            "name": "studio"
+          },
+          {
+            "peer_id": "d46fcff066e339ad385e56f16376bf3f",
+            "pubkey": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+            "name": "air"
+          }
+        ],
+        "plans": [
+          {
+            "model": "mlx-community/Qwen3-30B-A3B-4bit",
+            "layers": 48,
+            "head": "6c2f0f91bbff832e6f5d536cebab104f",
+            "hops": [
+              {
+                "peer": "6c2f0f91bbff832e6f5d536cebab104f",
+                "lo": 0,
+                "hi": 24
+              },
+              {
+                "peer": "d46fcff066e339ad385e56f16376bf3f",
+                "lo": 24,
+                "hi": 48
+              }
+            ]
+          }
+        ],
+        "expires": 0,
+        "sig": "e2c409498bfca83516d3424dc267dee33001afabcbc6b7a6d5030145e581dc042676c23416961871a5902ac89934eeb5c8466cc4afb6d85f1c4a1b7b66cab309"
+      },
+      "error": "bad-signature"
+    },
+    {
+      "case": "member added after signing",
+      "roster": {
+        "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+        "salt": "00000000000000000000000000000000",
+        "kind": "private",
+        "name": "home",
+        "version": 3,
+        "signer": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+        "members": [
+          {
+            "peer_id": "6c2f0f91bbff832e6f5d536cebab104f",
+            "pubkey": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+            "name": "studio"
+          },
+          {
+            "peer_id": "d46fcff066e339ad385e56f16376bf3f",
+            "pubkey": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+            "name": "air"
+          },
+          {
+            "peer_id": "fe594b3e7dce2938b23799df36fd5d18",
+            "pubkey": "ca31e9510d962dace97b0de6258c1cf0d08c418d5c8faf9d3653aac5cf439afe",
+            "name": "box"
+          }
+        ],
+        "plans": [
+          {
+            "model": "mlx-community/Qwen3-30B-A3B-4bit",
+            "layers": 48,
+            "head": "6c2f0f91bbff832e6f5d536cebab104f",
+            "hops": [
+              {
+                "peer": "6c2f0f91bbff832e6f5d536cebab104f",
+                "lo": 0,
+                "hi": 24
+              },
+              {
+                "peer": "d46fcff066e339ad385e56f16376bf3f",
+                "lo": 24,
+                "hi": 48
+              }
+            ]
+          }
+        ],
+        "expires": 0,
+        "sig": "e2c409498bfca83516d3424dc267dee33001afabcbc6b7a6d5030145e581dc042676c23416961871a5902ac89934eeb5c8466cc4afb6d85f1c4a1b7b66cab309"
+      },
+      "error": "bad-signature"
+    },
+    {
+      "case": "signed by a member that is not the owner",
+      "roster": {
+        "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+        "salt": "00000000000000000000000000000000",
+        "kind": "private",
+        "name": "home",
+        "version": 3,
+        "signer": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+        "members": [
+          {
+            "peer_id": "6c2f0f91bbff832e6f5d536cebab104f",
+            "pubkey": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+            "name": "studio"
+          },
+          {
+            "peer_id": "d46fcff066e339ad385e56f16376bf3f",
+            "pubkey": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+            "name": "air"
+          }
+        ],
+        "plans": [
+          {
+            "model": "mlx-community/Qwen3-30B-A3B-4bit",
+            "layers": 48,
+            "head": "6c2f0f91bbff832e6f5d536cebab104f",
+            "hops": [
+              {
+                "peer": "6c2f0f91bbff832e6f5d536cebab104f",
+                "lo": 0,
+                "hi": 24
+              },
+              {
+                "peer": "d46fcff066e339ad385e56f16376bf3f",
+                "lo": 24,
+                "hi": 48
+              }
+            ]
+          }
+        ],
+        "expires": 0,
+        "sig": "c5b808a80202d0f22b77d2514cc9437a5cda404197916bc13ac04b0ed7099dd1ed73ba926527145bb21c6dc69eebf3be241cf5ae8820973e3ed02c6e5e6a4f06"
+      },
+      "error": "pod-id-mismatch"
+    },
+    {
+      "case": "owner not a member",
+      "roster": {
+        "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+        "salt": "00000000000000000000000000000000",
+        "kind": "private",
+        "name": "home",
+        "version": 1,
+        "signer": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+        "members": [
+          {
+            "peer_id": "d46fcff066e339ad385e56f16376bf3f",
+            "pubkey": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+            "name": "air"
+          }
+        ],
+        "plans": [],
+        "expires": 0,
+        "sig": "bf78f9d0ba9e2314d02afcb9fd3a8076213ca8627d83e16698eed63e42bba929e9b2b552ce4dd3ab0c026318086f2baec64887a9c99ab72bff4d992a39378201"
+      },
+      "error": "untrusted-signer"
+    },
+    {
+      "case": "public pod signed by an owner",
+      "roster": {
+        "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+        "salt": "00000000000000000000000000000000",
+        "kind": "public",
+        "name": "home",
+        "version": 1,
+        "signer": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+        "members": [
+          {
+            "peer_id": "6c2f0f91bbff832e6f5d536cebab104f",
+            "pubkey": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+            "name": "studio"
+          }
+        ],
+        "plans": [],
+        "expires": 1800000600,
+        "sig": "433380ddfdaa7c89cbe8f6d3a8adcee7bbbe41ee72ec43438af52c1362e83d5a3678577f69db532199e0ba7bb0e5ffadf6fa3a3ce8ba6ee893cd66f7c96ad00b"
+      },
+      "error": "untrusted-signer"
+    },
+    {
+      "case": "public pod past its expiry",
+      "roster": {
+        "pod_id": "edda45d10ec96b2036627caaa72514b9",
+        "salt": "00000000000000000000000000000000",
+        "kind": "public",
+        "name": "home",
+        "version": 1,
+        "signer": "6959cedf3aac2fe0d49c1f8202e09303a65b491aabcf6359f5cc51b94a6fbe2e",
+        "members": [
+          {
+            "peer_id": "d46fcff066e339ad385e56f16376bf3f",
+            "pubkey": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+            "name": "air"
+          }
+        ],
+        "plans": [],
+        "expires": 1799999999,
+        "sig": "23ae7f22fc5a17df2d8d15d74310ff040e768dc66ddbf94f5562da2fba4ef02099c9e4f072911128833005486bd0305f73711624295966f490a4093ab49b0002"
+      },
+      "error": "expired"
+    },
+    {
+      "case": "alone with two members",
+      "roster": {
+        "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+        "salt": "00000000000000000000000000000000",
+        "kind": "alone",
+        "name": "home",
+        "version": 1,
+        "signer": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+        "members": [
+          {
+            "peer_id": "6c2f0f91bbff832e6f5d536cebab104f",
+            "pubkey": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+            "name": "studio"
+          },
+          {
+            "peer_id": "d46fcff066e339ad385e56f16376bf3f",
+            "pubkey": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+            "name": "air"
+          }
+        ],
+        "plans": [],
+        "expires": 0,
+        "sig": "26608c84013825a67086cd7c693e1a78776f20658e476158cf1c0145cc9f3eb8f09fa5d0378eff77986dcdd6cf2d5d54919a3067ea0e01f775db37edc94e6304"
+      },
+      "error": "bad-members"
+    },
+    {
+      "case": "hops leave a gap",
+      "roster": {
+        "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+        "salt": "00000000000000000000000000000000",
+        "kind": "private",
+        "name": "home",
+        "version": 1,
+        "signer": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+        "members": [
+          {
+            "peer_id": "6c2f0f91bbff832e6f5d536cebab104f",
+            "pubkey": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+            "name": "studio"
+          },
+          {
+            "peer_id": "d46fcff066e339ad385e56f16376bf3f",
+            "pubkey": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+            "name": "air"
+          }
+        ],
+        "plans": [
+          {
+            "model": "mlx-community/Qwen3-30B-A3B-4bit",
+            "layers": 48,
+            "head": "6c2f0f91bbff832e6f5d536cebab104f",
+            "hops": [
+              {
+                "peer": "6c2f0f91bbff832e6f5d536cebab104f",
+                "lo": 0,
+                "hi": 20
+              },
+              {
+                "peer": "d46fcff066e339ad385e56f16376bf3f",
+                "lo": 24,
+                "hi": 48
+              }
+            ]
+          }
+        ],
+        "expires": 0,
+        "sig": "f31ffaf260cf02ec985a50e5e00f5c7972ce32643b6aae146aa471d7f0151d19bef95add2055f37c2499b62125c9ab2e4be7e0a7d96c3aff29d4c459163a8709"
+      },
+      "error": "bad-plan"
+    },
+    {
+      "case": "hop on a machine outside the pod",
+      "roster": {
+        "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+        "salt": "00000000000000000000000000000000",
+        "kind": "private",
+        "name": "home",
+        "version": 1,
+        "signer": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+        "members": [
+          {
+            "peer_id": "6c2f0f91bbff832e6f5d536cebab104f",
+            "pubkey": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+            "name": "studio"
+          }
+        ],
+        "plans": [
+          {
+            "model": "mlx-community/Qwen3-30B-A3B-4bit",
+            "layers": 48,
+            "head": "6c2f0f91bbff832e6f5d536cebab104f",
+            "hops": [
+              {
+                "peer": "6c2f0f91bbff832e6f5d536cebab104f",
+                "lo": 0,
+                "hi": 24
+              },
+              {
+                "peer": "d46fcff066e339ad385e56f16376bf3f",
+                "lo": 24,
+                "hi": 48
+              }
+            ]
+          }
+        ],
+        "expires": 0,
+        "sig": "04c123e72f58e28a29b34ecd6e1fab06502b2c5cafa1e02ffb256bea3b3468ac7756b6c0ccc3136def8e49e16eb2ba2deda05837431398437fe94909b0eb6006"
+      },
+      "error": "bad-plan"
+    },
+    {
+      "case": "member peer_id does not match its key",
+      "roster": {
+        "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+        "salt": "00000000000000000000000000000000",
+        "kind": "private",
+        "name": "home",
+        "version": 1,
+        "signer": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+        "members": [
+          {
+            "peer_id": "6c2f0f91bbff832e6f5d536cebab104f",
+            "pubkey": "d06807e9d05fd6015fc247963e05edfe414a3274ae9f732b245375d6238488a2",
+            "name": "studio"
+          },
+          {
+            "peer_id": "fe594b3e7dce2938b23799df36fd5d18",
+            "pubkey": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+            "name": "air"
+          }
+        ],
+        "plans": [],
+        "expires": 0,
+        "sig": "8cdf4d64ec4b633c3eb663710e3ca382ea9a9979da5e8386c73de2ca9f45e2996bb6a7474e257d64ef4d64b174470b2e57d0e84b77b1c602c6e6cceff44af209"
+      },
+      "error": "bad-members"
+    }
+  ],
+  "invites": [
+    {
+      "code": "pod1-065d71d1e0308a583d51bd60257f9bda-qwsydwrhpz6w5rgiqt65mflb54",
+      "pod_id": "065d71d1e0308a583d51bd60257f9bda",
+      "secret": "85a581da277e7d6ec4c884fdd61561ef",
+      "pubkey": "8d0ee1291441fa0cf0870c9d8dd548f6fa3058276843111e41d7a081fa1b8d1b",
+      "proof": "99ebc2917613fab76820b94081902fd50fe480271801a0d61d127b4d27715c49"
+    }
+  ]
+}
