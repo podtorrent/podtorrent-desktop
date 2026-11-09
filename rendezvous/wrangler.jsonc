@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "podtorrent-rendezvous",
+  "account_id": "854dc4c06088f9aebd22bc213e46a8ae",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "durable_objects": {
