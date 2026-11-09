@@ -22,7 +22,7 @@ const shortModel = m => (m || "").split("/").pop();
 
 export default {
   title: "Pod",
-  subtitle: () => !view ? "Start your node first" : !view.pod ? "Public swarm"
+  subtitle: () => !view ? "Start your node first" : !view.pod ? "Waiting for a public pod"
     : `${view.pod.name} · ${view.pod.kind === "alone" ? "alone" : `${view.pod.members.length} machines`}`,
   mount(root) {
     const page = h("div.page.pod");
@@ -44,7 +44,7 @@ export default {
       const soloName = h("input.input", { placeholder: "solo", "aria-label": "Pod name", maxLength: 64 });
       return [
         h("section.card", h("div.card-h", h("h2", "Public swarm"), h("span.spacer"), badge("This machine", "serving")),
-          h("div.card-b.small.muted", "This machine is in no pod: it connects to any PodTorrent machine and pools layers with them to cover a model. Pick a private pod or alone below to serve only with machines you choose.")),
+          h("div.card-b.small.muted", "This machine is in no pod yet. The matchmaker puts it in a public pod with other machines that have the same model on disk, once together they cover all its layers. Pick a private pod or alone below to serve only with machines you choose.")),
         h("section.card", h("div.card-h", h("h2", "Private pod")),
           h("div.card-b",
             h("p.small.muted", "Serve with machines you invite. You split each model's layers between them, and nobody else can connect to them."),
@@ -118,15 +118,18 @@ export default {
       const p = v.pod;
       return [
         h("section.card", h("div.card-h", h("h2", p.name), h("span.spacer"),
-          badge(p.kind === "alone" ? "Alone" : "Private pod", "active"),
-          armedButton(v.owner && p.kind !== "alone" ? "Disband pod" : "Leave pod", v.owner && p.kind !== "alone" ? "Disband?" : "Leave?",
+          badge(p.kind === "alone" ? "Alone" : p.kind === "public" ? "Public pod" : "Private pod", "active"),
+          // A public pod is the matchmaker's: leaving it would only put this machine back in the lobby.
+          p.kind === "public" ? null : armedButton(v.owner && p.kind !== "alone" ? "Disband pod" : "Leave pod", v.owner && p.kind !== "alone" ? "Disband?" : "Leave?",
             () => act(() => podApi("/leave", {}), "Back in the public swarm"), { size: "sm" })),
           h("div.card-b.small.muted", p.kind === "alone" ? "This machine serves whole models by itself and links with no other machine."
+            : p.kind === "public" ? "The matchmaker put this machine in a public pod with these machines. Only they connect to each other, each serving its share of the layers. Create a private pod or serve alone to leave it."
             : v.owner ? "You own this pod: you invite and remove machines and split the models. Only these machines can connect to each other. Disbanding sends every machine back to the public swarm."
             : "Only this pod's machines can connect to this one. The owner decides which layers it serves.",
             v.heads?.length ? ` This machine is the head of ${v.heads.map(shortModel).join(", ")}: join the network from the Network page.` : "")),
         p.kind === "alone" ? null : members(v),
         plans(v),
+        ...(p.kind === "public" ? choose().slice(1) : []),   // private pod or alone, to leave the public pod
       ];
     }
 

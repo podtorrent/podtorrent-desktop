@@ -1,6 +1,6 @@
 # Pods: who serves with whom
 
-Status: phases 1–3 built (roster core, peer enforcement, private pods end to end; the Worker isn't deployed yet), phases 4–6 not started · 2026-11-09
+Status: phases 1–4 built (roster core, peer enforcement, private pods end to end, matchmaker and census; Worker deployed 2026-11-09), phases 5–6 not started · 2026-11-09
 
 ## Problem
 
@@ -200,7 +200,7 @@ the whole supply and usage of PodTorrent.
    implicit public pod. `podtorrent pod show|new|add|remove|plan|export|import|leave` edits the roster by
    hand. Rosters move between machines as files until invites exist. Tests: `tests/test_pod_peer.py`,
    plus membership tests in `tests/test_quic.py`.
-3. **Private pods end to end** (built, Worker not deployed): the `Pod` Durable Object (`rendezvous/src/index.ts`,
+3. **Private pods end to end** (built and deployed): the `Pod` Durable Object (`rendezvous/src/index.ts`,
    roster check in `rendezvous/src/roster.ts`, tested against the vectors by `npm test`). The peer moves
    between the public room and its pod's room as its pod changes, adopts newer rosters, and goes back
    to public when removed. As owner it admits valid invites (`~/.podtorrent/pod-invites.json`) and
@@ -209,8 +209,23 @@ the whole supply and usage of PodTorrent.
    disband). Only plan heads write models into the network manifest, and the Network page hides Join on
    other members. Tested locally with `wrangler dev` and three peers (two in a pod, one public). Not yet:
    the wire `protocol` bump, and unloading layers a new plan no longer gives this machine.
-4. **Matchmaker**: public lobby, pod formation, head choice, repair, expiring rosters. Then the global room
-   is retired, after `/v1/census` and the head-with-satellites graph replace the lobby's read of it.
+4. **Matchmaker** (built and deployed): the `Matchmaker` Durable Object (`/v1/public` lobby and
+   `/v1/census`, `rendezvous/src/index.ts`); its decisions are pure functions in `rendezvous/src/match.ts`,
+   tested by `test/match.test.ts`. A machine in no pod proves its key in the lobby (`podtorrent-room|public|<nonce>`)
+   and sends `supply` (models complete on disk with their size and the layers it already serves, free
+   memory, whether it has a node token). The matchmaker covers each model greedily (holders of a layer
+   first, then most room), picks the head (a tokened member, else layer 0's), signs a public roster that
+   expires in 10 min, installs it in the pod's room (Durable Object RPC) and sends `assign` to the members,
+   who move there. Pod rooms report members online and a census summary on every change and sweep; the
+   matchmaker renews healthy rosters at half-life, replaces a member missing for 60 s from the lobby's idle
+   machines, and otherwise dissolves the pod (`dissolved` sends members back to the lobby). The census
+   lists pods (chips, memory, layers, `on_network`, never names or keys) and idle machines; the app's
+   lobby and swarm graph draw it as heads with satellites. The key's seed is the Worker secret
+   `MATCHMAKER_SEED`; its public half is `MATCHMAKERS` in `pod.py` and `roster.ts`. Peers fall back to the
+   global room when the rendezvous has no lobby (before the deploy); the `Swarm` class stays for machines
+   from 0.1.24 and earlier. Not yet: reachability and RTT in pod formation, chatting through a public pod without
+   serving, models wanted but not on disk yet, the census stat strip, hiding a private pod from the census,
+   and video machines (the video swarm used the global room, so unpodded machines no longer link).
 5. **iOS**: the same roster validation and room protocol in `ios/` (CryptoKit Ed25519), against the test
    vectors.
 6. **Test on different networks**: a private A+B pod at 50/50, with C and D online in public mode serving

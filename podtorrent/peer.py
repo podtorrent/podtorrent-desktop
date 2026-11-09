@@ -51,6 +51,7 @@ DECODE_HOP_TIMEOUT_S = 10  # one token's hop; a dead peer sends no close, so don
 LOAD_TIMEOUT_S = 3600
 SUPPORTED = {"qwen3_moe"}  # architectures Shard can run
 PLAN_RETRY_S = 60          # a plan hop that failed to load is tried again after this long
+SUPPLY_REFRESH_S = 60      # how often the lobby supply rescans the models on disk
 MEM_HEADROOM_GB = 1.0      # keep this much of the GPU budget free after loading a slice
 HEAD_ROLES = ["tokenizer", "embeddings", "lm_head"]
 
@@ -327,6 +328,8 @@ class PeerApp:
         self.pod: dict | None = pod.load_roster()   # None: no pod, every peer is fair game (the public swarm)
         self._pod_mtime = self._roster_mtime()
         self._plan_tries: dict[tuple[str, int, int], float] = {}   # plan hop -> when this Mac last started it
+        self._on_disk: list[dict] = []   # catalog.local's complete models, for the matchmaker
+        self._supply_ts = 0.0
         self.net.handlers[M_FORWARD] = self._serve_forward
         self.net.handlers[M_LOAD] = self._serve_load
         self.swarm: SwarmClient | None = None
@@ -388,6 +391,25 @@ class PeerApp:
         pod.roster_path().unlink(missing_ok=True)
         self._pod_mtime = 0.0
         self._set_pod(None)
+
+    def on_dissolved(self):
+        """The matchmaker gave up on this machine's public pod: back to the lobby."""
+        if self.pod and self.pod["kind"] == "public":
+            print(f"pod: {self.pod['name']} dissolved", flush=True)
+            self._forget_pod()
+
+    def supply(self) -> dict:
+        """What this machine offers the matchmaker from the lobby: every model it has on disk in full,
+        with the layers it already serves, and its free memory (docs/PODS_PLAN.md, 3)."""
+        if time.time() - self._supply_ts > SUPPLY_REFRESH_S:
+            known = [self.repo, *{s.model for s in self.slices.items.values()}]
+            self._on_disk = [m for m in catalog.local(known) if m["complete"] and m["n_layers"]]
+            self._supply_ts = time.time()
+        models = [{"model": m["repo"], "layers": m["n_layers"], "gb": round(m["disk_bytes"] / 1e9, 1),
+                   "held": [[s.lo, s.hi] for s in self.slices.loaded(m["repo"])]} for m in self._on_disk]
+        return {"name": NAME, "chip": CHIP, "mem_total_gb": round(mem_total_gb(), 1),
+                "mem_free_gb": round(self.free_for_models() * 2) / 2, "node": (home() / "network.json").exists(),
+                "models": models}
 
     def _room_send(self, msg: dict):
         if self.swarm and self.loop:
@@ -519,7 +541,10 @@ class PeerApp:
         return {"name": NAME, "chip": CHIP, "mem_total_gb": round(mem_total_gb(), 1),
                 "mem_free_gb": round(mem_free_gb() * 2) / 2,  # half-GB steps, so idle drift doesn't republish
                 "slices": [{k: v for k, v in r.items() if k != "phase"} for r in self.slices.slices()],
-                "has_head": {m: True for m in self.heads}}
+                "has_head": {m: True for m in self.heads},
+                # For the census: this machine heads a plan and serves it on the network.
+                "on_network": bool(self.pod) and (home() / "network.json").exists()
+                and any(p["head"] == self.me for p in self.pod["plans"])}
 
     def on_swarm(self, peers: list[dict], status: str):
         self.peers = peers
@@ -1383,7 +1408,8 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
         await app_state.net.start()
         app_state.swarm = SwarmClient(app_state.ident, app_state.swarm_record, app_state.on_swarm, net=app_state.net,
                                       room=lambda: app_state.pod, on_roster=app_state.on_roster,
-                                      on_owner_request=app_state.on_owner_request)
+                                      on_owner_request=app_state.on_owner_request,
+                                      supply=app_state.supply, on_dissolved=app_state.on_dissolved)
         app_state.emit("node_joined", key=f"node:{NAME}", node=NAME, address=f"udp/{app_state.net.port}", role="host")
         app_state.emit("host_info", key="host_info", addresses=[], port=port, repo=repo,
                        n_layers=app_state.n_layers, chip=CHIP, name=NAME, peer_id=app_state.me)

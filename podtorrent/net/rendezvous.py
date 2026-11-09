@@ -1,8 +1,10 @@
 """Client for the rendezvous (rendezvous/ in this repo, a Cloudflare Worker).
 
 Keeps one WebSocket open, publishes this peer's record, and reports every online peer. A machine in
-no pod uses the public swarm room; a machine in a pod uses that pod's room, proving its key and
-exchanging the pod's signed roster there (docs/PODS_PLAN.md)."""
+a pod uses that pod's room, proving its key and exchanging the pod's signed roster there. A machine in
+no pod waits in the matchmaker's public lobby, offering what it can serve, until the matchmaker puts it
+in a public pod (docs/PODS_PLAN.md). A rendezvous without the lobby (before the matchmaker deploy) gets the
+global swarm room instead."""
 import asyncio
 import json
 import os
@@ -53,14 +55,20 @@ class SwarmClient:
     With a `net`, STUN runs on its QUIC socket, punch signals reach it, and each peer gets a `link`.
     `room()` returns this machine's pod roster, or None for the public swarm; `reconnect()` after it
     changes pods. In a pod room, `on_roster(roster)` gets every roster the room sends (unchecked) and
-    `on_owner_request(msg)` every join or leave request relayed to this machine (as the owner)."""
+    `on_owner_request(msg)` every join or leave request relayed to this machine (as the owner).
+    In the lobby, `supply()` is what this machine offers the matchmaker, the roster of an assignment
+    goes to `on_roster`, and `on_dissolved()` runs when the matchmaker gives up on its public pod."""
 
     def __init__(self, ident: Identity, record: Callable[[], dict],
                  on_peers: Callable[[list[dict], str], None], url: str | None = None, net: "PeerNet | None" = None,
                  room: Callable[[], dict | None] = lambda: None, on_roster: Callable[[dict], None] = lambda r: None,
-                 on_owner_request: Callable[[dict], None] = lambda m: None):
+                 on_owner_request: Callable[[dict], None] = lambda m: None,
+                 supply: Callable[[], dict] | None = None, on_dissolved: Callable[[], None] = lambda: None):
         self.ident, self.record, self.on_peers, self.net = ident, record, on_peers, net
         self.room, self.on_roster, self.on_owner_request = room, on_roster, on_owner_request
+        self.supply, self.on_dissolved = supply, on_dissolved
+        self.legacy = supply is None   # the global swarm room instead of the lobby
+        self.in_lobby = False
         self.url = url or rendezvous_url()
         self.status = "connecting"   # connecting | online | offline
         self.peers: list[dict] = []
@@ -105,6 +113,9 @@ class SwarmClient:
     async def _full_record(self) -> dict:
         return {**self.record(), "endpoints": await self._endpoints(), "protocol": 2 if self.net else 1}
 
+    def _supply_msg(self) -> str:
+        return json.dumps({"type": "supply", "supply": self.supply()}, sort_keys=True)
+
     async def send(self, msg: dict) -> bool:
         if self._ws is None or self._ws.closed:
             return False
@@ -120,7 +131,8 @@ class SwarmClient:
         backoff = 1
         while True:
             roster = self.room()
-            url = (f"{self.url}/v1/pod/{roster['pod_id']}" if roster
+            lobby = not roster and not self.legacy
+            url = (f"{self.url}/v1/pod/{roster['pod_id']}" if roster else f"{self.url}/v1/public" if lobby
                    else f"{self.url}/v1/swarm?peer_id={self.ident.peer_id}")
             try:
                 async with aiohttp.ClientSession() as http:
@@ -128,16 +140,34 @@ class SwarmClient:
                                                timeout=aiohttp.ClientWSTimeout(ws_close=5)) as ws:
                         backoff = 1
                         self._ws = ws
+                        self.in_lobby = lobby
                         if roster:
                             welcome = await room_auth(ws, self.ident, roster["pod_id"], roster)
                             self._room_welcome(welcome)
-                        rec = await self._full_record()
-                        self._sent = json.dumps(rec, sort_keys=True)
-                        await ws.send_str(json.dumps({"type": "hello", "peer": rec}))
+                        if lobby:
+                            # Linked to nobody until the matchmaker assigns a pod.
+                            welcome = await room_auth(ws, self.ident, "public")
+                            self.observed_ip = welcome.get("observed_ip", "")
+                            self._set("online", [])
+                            self._sent = self._supply_msg()
+                            await ws.send_str(self._sent)
+                        else:
+                            rec = await self._full_record()
+                            self._sent = json.dumps(rec, sort_keys=True)
+                            await ws.send_str(json.dumps({"type": "hello", "peer": rec}))
                         await self._session(ws)
+            except aiohttp.WSServerHandshakeError as e:
+                if lobby and e.status == 404:
+                    print("rendezvous has no public lobby yet: using the global swarm room", flush=True)
+                    self.legacy = True
+                    continue
+                print(f"rendezvous {url.split('?')[0]}: {e}", flush=True)
             except (aiohttp.ClientError, OSError, asyncio.TimeoutError, RoomError) as e:
                 print(f"rendezvous {url.split('?')[0]}: {e}", flush=True)
             self._ws = None
+            self.in_lobby = False
+            if self.room() != roster:   # assigned to, or dropped from, a pod: go to the right room now
+                continue
             self._set("offline", [])
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)
@@ -153,6 +183,12 @@ class SwarmClient:
         """Send this peer's record now if it changed (e.g. a slice finished loading)."""
         if self._ws is None or self._ws.closed:
             return
+        if self.in_lobby:
+            blob = self._supply_msg()
+            if blob != self._sent:
+                self._sent = blob
+                await self._ws.send_str(blob)
+            return
         rec = await self._full_record()
         blob = json.dumps(rec, sort_keys=True)
         if blob != self._sent:
@@ -166,7 +202,9 @@ class SwarmClient:
                 await asyncio.sleep(PING_S)
                 await ws.send_str("ping")
                 n += 1
-                if n % 2 == 0:  # every other ping, and only if something changed
+                if n % 2 == 0 and self.in_lobby:
+                    await self.publish()
+                elif n % 2 == 0:  # every other ping, and only if something changed
                     rec = await self._full_record()
                     blob = json.dumps(rec, sort_keys=True)
                     if blob != self._sent:
@@ -186,8 +224,10 @@ class SwarmClient:
                     self._set(peers=ev.get("peers") or [])
                 elif ev.get("type") in ("punch", "punch_ack", "punch_failed") and self.net:
                     self.net.on_signal(ev)
-                elif ev.get("type") == "roster" and isinstance(ev.get("roster"), dict):
+                elif ev.get("type") in ("roster", "assign") and isinstance(ev.get("roster"), dict):
                     self.on_roster(ev["roster"])
+                elif ev.get("type") == "dissolved":
+                    self.on_dissolved()
                 elif ev.get("type") in ("join_request", "leave_request"):
                     self.on_owner_request(ev)
         finally:

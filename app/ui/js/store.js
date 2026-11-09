@@ -345,6 +345,7 @@ export const shortModel = repo => (repo || "").split("/").pop();
 /** The slices a node serves: this Mac's from the engine, others' from their swarm record. */
 export function nodeSlices(name, s = state) {
   if (name === s.self) return s.slices;
+  if (s.nodes[name]?.preview) return s.nodes[name].slices || [];
   const p = s.swarm.peers.find(x => (x.name || x.peer_id.slice(0, 8)) === name);
   return p ? peerSlices(p) : [];
 }

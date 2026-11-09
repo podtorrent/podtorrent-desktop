@@ -21,8 +21,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from .net.identity import Identity, home, peer_id_of
 
 KINDS = ("private", "public", "alone")
-# Public halves of the matchmaker keys allowed to sign public rosters; empty until the matchmaker exists.
-MATCHMAKERS: tuple[str, ...] = ()
+# Public halves of the matchmaker keys allowed to sign public rosters (the rendezvous Worker's MATCHMAKER_SEED secret).
+MATCHMAKERS: tuple[str, ...] = ("d7f12d1666718f8fcf288276033c8de6b61e2e7801a3abf5c5063660cee872cc",)
 INVITE_TTL_S = 24 * 3600
 ROSTER_DOMAIN = b"podtorrent-roster|"
 INVITE_DOMAIN = b"podtorrent-invite|"

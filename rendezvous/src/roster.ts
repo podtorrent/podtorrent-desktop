@@ -8,8 +8,8 @@ export type Roster = {
   signer: string; members: Member[]; plans: unknown[]; expires: number; sig: string;
 };
 
-// Public halves of the matchmaker keys allowed to sign public rosters; empty until the matchmaker exists.
-export const MATCHMAKERS: string[] = [];
+// Public halves of the matchmaker keys allowed to sign public rosters (the Worker's MATCHMAKER_SEED secret).
+export const MATCHMAKERS: string[] = ["d7f12d1666718f8fcf288276033c8de6b61e2e7801a3abf5c5063660cee872cc"];
 const ROSTER_DOMAIN = "podtorrent-roster|";
 
 /** Sorted keys, no whitespace: the same bytes as pod.canonical in Python. */
