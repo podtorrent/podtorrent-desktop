@@ -4,6 +4,8 @@
 import { h, text } from "../dom.js";
 import { button, toast, empty, segmented } from "../ui.js";
 import { invoke, isTauri } from "../native.js";
+import { podView } from "./pod.js";
+import { go } from "../actions.js";
 
 let status = null; // last network_status, for the toolbar subtitle and the sidebar
 
@@ -38,6 +40,8 @@ export default {
     const pout = h("input.input.num", { type: "number", min: "0", step: "0.01", placeholder: "0.40", "aria-label": "Price per million output tokens" });
     const state = h("span.badge");
     const routes = h("div");
+    // In a pod, only a plan's head joins the network: the pod is one node.
+    const podNote = h("div.card-b.small");
     const log = h("pre.small.mono.faint.net-log");
     let busy = false, filled = false, net = "production", editToken = false;
     const which = segmented([{ value: "production", label: "Production" }, { value: "staging", label: "Staging" }], net, v => { net = v; label(); }, "Network");
@@ -89,7 +93,15 @@ export default {
       label();
       text(state, !s.available ? "Agent missing" : s.connected ? `Online · ${netName(s)}` : s.running ? "Connecting…" : s.config ? "Not connected" : "Not joined");
       state.className = `badge dot ${s.connected ? "serving" : s.running ? "degraded pulse" : ""}`;
-      join.hidden = s.running || !s.available; leave.hidden = !s.running && !s.config;
+      const pv = podView(), inPod = !!pv?.pod, isHead = !!pv?.heads?.length;
+      const names = Object.fromEntries((pv?.members || []).map(m => [m.peer_id, m.name]));
+      const heads = [...new Set((pv?.pod?.plans || []).map(p => names[p.head] || p.head.slice(0, 8)))];
+      podNote.hidden = !inPod;
+      podNote.replaceChildren(!inPod ? "" : isHead
+        ? `This machine is the head of ${pv.heads.map(m => m.split("/").pop()).join(", ")} in the pod ${pv.pod.name}: it serves the pod on the network as one node.`
+        : h("span", `This machine is in the pod ${pv.pod.name}. `, heads.length ? `The pod is served on the network through ${heads.join(", ")}.` : "The pod has no model plan yet.", " ",
+          h("a", { href: "#", onclick: e => { e.preventDefault(); go("pod"); } }, "Open Pod")));
+      join.hidden = s.running || !s.available || (inPod && !isHead); leave.hidden = !s.running && !s.config;
       const ms = s.manifest?.models || [];
       routes.replaceChildren(...(ms.length ? ms.map(m => h("div.list-row",
         h("div.grow", h("div.t.mono", m.id),
@@ -103,7 +115,8 @@ export default {
     root.append(h("div.page.network",
       h("section.card", h("div.card-h", h("h2", "Join the PodTorrent network"), h("span.spacer"), dashboard, state),
         h("div.card-b",
-          h("p.small.muted", "Offer the models your swarm fully covers to network clients, with this Mac as the head of each route. Needs an approved node id and token."),
+          h("p.small.muted", "Offer the models your swarm fully covers to network clients, with this machine as the head of each route. Needs an approved node id and token."),
+          podNote,
           h("div.net-grid",
             field("Network", which, "Where your node was approved. A staging token doesn't work on production."),
             field("Node id", node, "Lower case, as approved."),

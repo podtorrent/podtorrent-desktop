@@ -4,9 +4,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "durable_objects": {
-    "bindings": [{ "name": "SWARM", "class_name": "Swarm" }]
+    "bindings": [{ "name": "SWARM", "class_name": "Swarm" }, { "name": "POD", "class_name": "Pod" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Swarm"] }],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Swarm"] }, { "tag": "v2", "new_sqlite_classes": ["Pod"] }],
   "routes": [{ "pattern": "rendezvous.podtorrent.com", "custom_domain": true }],
   "observability": { "enabled": true }
 }

@@ -273,3 +273,51 @@ def save_roster(roster: dict, path: Path | None = None):
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(roster, indent=2, sort_keys=True))
     os.replace(tmp, path)
+
+
+# ---- the owner's pending invites ----
+
+def invites_path() -> Path:
+    return home() / "pod-invites.json"
+
+
+def _pending(now: float) -> list[dict]:
+    try:
+        return [i for i in json.loads(invites_path().read_text()) if i["expires"] > now]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+
+
+def _write_pending(items: list[dict]):
+    path = invites_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)  # secrets: readable by this user only
+    with os.fdopen(fd, "w") as f:
+        json.dump(items, f)
+    os.replace(tmp, path)
+
+
+def create_invite(pod_id: str, ttl_s: int = INVITE_TTL_S) -> tuple[str, int]:
+    """A single-use invite code for `pod_id`, kept until used or expired; (code, expires)."""
+    now = time.time()
+    code, secret = new_invite(pod_id)
+    expires = int(now + ttl_s)
+    _write_pending([*_pending(now), {"pod_id": pod_id, "secret": secret, "expires": expires}])
+    return code, expires
+
+
+def take_invite(pod_id: str, pubkey: str, proof: str) -> bool:
+    """Whether `proof` answers one of this owner's pending invites for `pod_id`; that invite is used up."""
+    now = time.time()
+    items = _pending(now)
+    for i in items:
+        if i["pod_id"] == pod_id and check_proof(i["secret"], pod_id, pubkey, proof):
+            _write_pending([x for x in items if x is not i])
+            return True
+    _write_pending(items)
+    return False
+
+
+def pending_invites(pod_id: str) -> int:
+    return sum(i["pod_id"] == pod_id for i in _pending(time.time()))

@@ -365,3 +365,11 @@ export async function encoderTest(prompt) {
     return r.body;
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); return null; }
 }
+
+// ---------- pod ----------
+/** This machine's pod (GET with no body) or a pod action; resolves to the pod view, rejects with the peer's error. */
+export async function podApi(path = "", body = null, ms = 8000) {
+  const r = body === null ? await json(`${HOST}/api/pod${path}`) : await post(`/api/pod${path}`, body, ms);
+  if (!r.ok) throw new Error(r.body?.error || `HTTP ${r.status}`);
+  return r.body;
+}

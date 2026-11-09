@@ -1,6 +1,6 @@
 # Pods: who serves with whom
 
-Status: phases 1–2 built (roster core, peer enforcement), phases 3–6 not started · 2026-11-09
+Status: phases 1–3 built (roster core, peer enforcement, private pods end to end; the Worker isn't deployed yet), phases 4–6 not started · 2026-11-09
 
 ## Problem
 
@@ -120,8 +120,14 @@ everyone":
   only roster members, plus `join_request`s relayed to the owner.
 - `/v1/public`: the matchmaker's lobby, where public machines announce supply and receive their pod
   assignment.
-- **Authenticated sockets**: the room sends a nonce, the peer answers with `pubkey` and `sign(nonce)`,
-  and the room derives `peer_id` from the key.
+- **Authenticated sockets**: the room sends `challenge {nonce}`. The peer answers `auth {pubkey, sig,
+  roster?}`, where `sig` signs `"podtorrent-room|" + pod_id + "|" + nonce`, and the room derives `peer_id`
+  from the key. The welcome says whether the peer is a member and carries the stored roster.
+- **Room messages**: members send `hello`/`update`/`punch` as in the public room. Anyone may send
+  `roster` (stored only if valid, newer and for this pod). A non-member may send `join_request {name,
+  proof}`, which goes to the owner, or comes back as `join_failed {offline}` if the owner isn't there (the
+  joiner retries for about 12 s). A member may send `leave`, which goes to the owner as `leave_request`,
+  and the owner may send `join_failed {to, reason}`. A non-member is closed after 60 s.
 - The rooms verify rosters with WebCrypto Ed25519, store the latest one, and broadcast a newer one to
   every member, so removals propagate within seconds. The rendezvous is a filter and a convenience. QUIC
   is the security boundary.
@@ -194,8 +200,15 @@ the whole supply and usage of PodTorrent.
    implicit public pod. `podtorrent pod show|new|add|remove|plan|export|import|leave` edits the roster by
    hand. Rosters move between machines as files until invites exist. Tests: `tests/test_pod_peer.py`,
    plus membership tests in `tests/test_quic.py`.
-3. **Private pods end to end**: per-pod rendezvous room with socket auth, invites, Pod tab, network join on
-   the head only.
+3. **Private pods end to end** (built, Worker not deployed): the `Pod` Durable Object (`rendezvous/src/index.ts`,
+   roster check in `rendezvous/src/roster.ts`, tested against the vectors by `npm test`). The peer moves
+   between the public room and its pod's room as its pod changes, adopts newer rosters, and goes back
+   to public when removed. As owner it admits valid invites (`~/.podtorrent/pod-invites.json`) and
+   signs out members that leave, and disbanding sends every member back to public. `/api/pod*` endpoints
+   and the **Pod** tab (create, invite, join, members, remove, split by memory or by hand, head, leave or
+   disband). Only plan heads write models into the network manifest, and the Network page hides Join on
+   other members. Tested locally with `wrangler dev` and three peers (two in a pod, one public). Not yet:
+   the wire `protocol` bump, and unloading layers a new plan no longer gives this machine.
 4. **Matchmaker**: public lobby, pod formation, head choice, repair, expiring rosters. Then the global room
    is retired, after `/v1/census` and the head-with-satellites graph replace the lobby's read of it.
 5. **iOS**: the same roster validation and room protocol in `ios/` (CryptoKit Ed25519), against the test

@@ -140,3 +140,42 @@ def test_load_requests_only_from_the_owner(app):
 
     refused = asyncio.run(ask(other.peer_id))   # a member, but not the owner
     assert refused.phase == "error" and "owner" in refused.message
+
+
+def test_owner_admits_a_valid_invite_once(app, monkeypatch):
+    sent = []
+    monkeypatch.setattr(app, "_room_send", sent.append)
+    app._save_pod(pod.new_pod(app.ident, "home", "me"))
+    code, _ = pod.create_invite(app.pod["pod_id"])
+    pod_id, secret = pod.parse_invite(code)
+    joiner = machine()
+    req = {"type": "join_request", "from": joiner.peer_id, "pubkey": joiner.public.hex(), "name": "air",
+           "proof": pod.invite_proof(secret, pod_id, joiner.public.hex())}
+    app.on_owner_request(req)
+    assert pod.is_member(app.pod, joiner.peer_id) and sent[-1]["type"] == "roster"
+    other = machine()
+    app.on_owner_request({**req, "from": other.peer_id, "pubkey": other.public.hex(),
+                          "proof": pod.invite_proof(secret, pod_id, other.public.hex())})   # used up
+    assert not pod.is_member(app.pod, other.peer_id) and sent[-1]["type"] == "join_failed"
+    app.on_owner_request({"type": "leave_request", "from": joiner.peer_id})
+    assert not pod.is_member(app.pod, joiner.peer_id)
+
+
+def test_member_adopts_newer_rosters_and_leaves_when_removed(app):
+    owner = machine()
+    r = join(app, owner=owner)
+    later = pod.sign(pod.revise(r, name="renamed"), owner)
+    app.on_roster(later)
+    assert app.pod["name"] == "renamed" and pod.load_roster()["version"] == later["version"]
+    app.on_roster(r)                                            # an older one is ignored
+    assert app.pod["name"] == "renamed"
+    app.on_roster(pod.sign(pod.remove_member(later, app.me), owner))
+    assert app.pod is None and pod.load_roster() is None        # back in the public swarm
+
+
+def test_auto_split_is_proportional(app, monkeypatch):
+    big, small = machine(), machine()
+    join(app, members=[(big, "big"), (small, "small")])
+    mem = {app.me: 32, big.peer_id: 64, small.peer_id: 32}
+    monkeypatch.setattr(app, "pod_view", lambda: {"members": [{"peer_id": p, "mem_total_gb": g} for p, g in mem.items()]})
+    assert app.auto_split(48) == [(app.me, 0, 12), (big.peer_id, 12, 36), (small.peer_id, 36, 48)]
