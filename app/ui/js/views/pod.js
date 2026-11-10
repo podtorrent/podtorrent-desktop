@@ -103,10 +103,10 @@ export default {
             h("div.t.mono", p.model),
             h("div.d", p.hops.map(x => `${names[x.peer] || x.peer.slice(0, 8)} ${fmt.layers(x.lo, x.hi)}`).join("  →  "), ` · head ${names[p.head] || p.head.slice(0, 8)}`),
             v.owner && multi ? h("div.row.pod-split", h("span.small.faint", "Split at"), ...bounds, h("span.small.faint", "Head"), head, button("Save", { size: "sm", onclick: save })) : null),
-          v.owner ? armedButton("Remove", "Remove?", () => act(() => podApi("/unplan", { model: p.model }), "Plan removed"), { size: "sm" }) : null);
+          v.owner ? armedButton("Remove", "Remove?", () => act(() => podApi("/unplan", { model: p.model }), "Model removed: machines are unloading it"), { size: "sm" }) : null);
       });
       return h("section.card", h("div.card-h", h("h2", "Models")),
-        h("div.card-b.small.muted", "Each model's layers are split between the pod's machines. Every machine downloads and serves its own share; the head serves the model on the network."),
+        h("div.card-b.small.muted", "Which layers of each model every machine serves. Machines load their share on their own and unload what they are no longer given. The head runs the model's first and last steps and answers chat for it. Removing a model unloads it on every machine."),
         ...rows,
         v.owner ? h("div.card-b", h("div.row",
           h("div.grow", model),
@@ -128,7 +128,7 @@ export default {
             : "Only this pod's machines can connect to this one. The owner decides which layers it serves.",
             v.heads?.length ? ` This machine is the head of ${v.heads.map(shortModel).join(", ")}: join the network from the Network page.` : "")),
         p.kind === "alone" ? null : members(v),
-        plans(v),
+        // plans(v),  // Models section hidden for now: machines load models from the Models tab
         ...(p.kind === "public" ? choose().slice(1) : []),   // private pod or alone, to leave the public pod
       ];
     }

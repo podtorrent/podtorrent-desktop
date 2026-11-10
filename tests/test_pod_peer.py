@@ -76,7 +76,7 @@ def test_alone_links_with_nobody(app):
     assert app.pod["kind"] == "alone" and not app.allows(machine().peer_id)
 
 
-def test_apply_plan_loads_only_this_machines_hop(app, monkeypatch):
+def test_apply_plan_loads_only_the_head(app, monkeypatch):
     mate = machine()
     loads, heads = [], []
     monkeypatch.setattr(app, "_load_local", lambda m, lo, hi, *_: loads.append((m, lo, hi)))
@@ -84,12 +84,12 @@ def test_apply_plan_loads_only_this_machines_hop(app, monkeypatch):
     join(app, members=[(mate, "mate")], plan=[(app.me, 0, 24), (mate.peer_id, 24, 48)])
     app.apply_plan()
     for _ in range(50):
-        if loads and heads:
+        if heads:
             break
         time.sleep(0.01)
-    assert loads == [(MODEL, 0, 24)] and heads == [MODEL]
+    assert loads == [] and heads == [MODEL]                     # layers come from the Models tab
     app.apply_plan()                                            # not again until PLAN_RETRY_S passes
-    assert loads == [(MODEL, 0, 24)]
+    assert heads == [MODEL]
 
 
 def test_removed_member_is_dropped(app, monkeypatch):

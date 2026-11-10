@@ -454,23 +454,13 @@ class PeerApp:
         print(f"pod: {name} joined", flush=True)
 
     def apply_plan(self):
-        """Load this Mac's hops of every plan in its pod (and the head for plans it heads). Each member
-        loads its own share; nobody pushes layers onto another machine."""
+        """Load the head of every plan this Mac heads in its pod. Layers come from the Models tab for
+        now: a plan's hops don't load or unload anything."""
         if not self.pod:
             return
         now = time.time()
         for p in self.pod["plans"]:
-            model = p["model"]
-            for h in p["hops"]:
-                key = (model, h["lo"], h["hi"])
-                if h["peer"] != self.me or key in self.slices.items or self.slices.find(*key):
-                    continue
-                if now - self._plan_tries.get(key, 0.0) < PLAN_RETRY_S:
-                    continue
-                self._plan_tries[key] = now
-                print(f"pod plan: loading {model} layers [{h['lo']},{h['hi']})", flush=True)
-                threading.Thread(target=self._try, args=([], "pod plan", self._load_local, *key), daemon=True).start()
-            hkey = (model, -1, -1)
+            model, hkey = p["model"], (p["model"], -1, -1)
             if p["head"] == self.me and model not in self.heads and now - self._plan_tries.get(hkey, 0.0) >= PLAN_RETRY_S:
                 self._plan_tries[hkey] = now
                 threading.Thread(target=self._try, args=([], "pod plan", self.ensure_head, model), daemon=True).start()
@@ -906,11 +896,6 @@ class PeerApp:
         body = await request.json() if request.can_read_body else {}
         if self.starting:
             return web.json_response({"error": "already starting"}, status=409)
-        if pod.plan_for(self.pod, self.repo):
-            # The pod's plan decides who serves what: load this Mac's share now, the others load theirs.
-            self._plan_tries = {k: v for k, v in self._plan_tries.items() if k[0] != self.repo}
-            self.apply_plan()
-            return web.json_response({"ok": True, "plan": True})
         n = self.n_layers
         k = int(body.get("split") or n // 2)
         if not 1 <= k < n:
