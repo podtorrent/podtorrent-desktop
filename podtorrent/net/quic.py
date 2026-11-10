@@ -18,6 +18,7 @@ RPC: each call is one bidirectional stream that opens with [method u8], then car
 [len u32][protobuf] both ways. Unary calls send one frame each way; `Load` streams progress back;
 `Forward` keeps the stream open for a whole session (one request frame → one response frame)."""
 import asyncio
+import base64
 import datetime
 import json
 import os
@@ -53,6 +54,7 @@ PROBE = b"\x00PTP"
 PUNCH_S = 4.0
 PROBE_EVERY_S = 0.2
 RETRY_S = 60          # an unreachable pair is retried after this long
+RELAY = "relay."      # host part of a relayed peer's address: ("relay.<peer_id>", 0)
 HEARTBEAT_S = 2
 INFO_S = 10
 RPC_TIMEOUT_S = 5
@@ -183,7 +185,7 @@ class Link:
         self.state = "idle"     # idle | connecting | direct | unreachable
         self.error = ""
         self.addr: tuple[str, int] | None = None
-        self.via = ""           # lan | stun
+        self.via = ""           # lan | stun | relay
         self.rtt_ms: float | None = None
         self.info: dict = {}
         self.since = time.time()
@@ -193,7 +195,7 @@ class Link:
 
     def snapshot(self) -> dict:
         return {"state": self.state, "error": self.error, "rtt_ms": self.rtt_ms, "via": self.via,
-                "addr": f"{self.addr[0]}:{self.addr[1]}" if self.addr else "", "since": self.since,
+                "addr": "rendezvous" if self.via == "relay" else f"{self.addr[0]}:{self.addr[1]}" if self.addr else "", "since": self.since,
                 "info": self.info}
 
 
@@ -207,7 +209,10 @@ class PeerNet(asyncio.DatagramProtocol):
     `on_change()` runs whenever a link changes state or RTT.
     `info()` returns this node's pb.NodeInfo for the Info RPC.
     `allowed(peer_id)` says whether this peer may link with that one (its pod's members; everyone
-    when it's in no pod). Others are never dialed, and are refused at auth and on every stream."""
+    when it's in no pod). Others are never dialed, and are refused at auth and on every stream.
+    When hole punching fails (a symmetric NAT on one side), QUIC runs over the rendezvous instead:
+    packets for ("relay.<peer_id>", 0) go out as `relay` signals, and `relay_in` takes the other
+    side's. Still end-to-end QUIC with the same certificate checks; the rendezvous only forwards."""
 
     def __init__(self, ident: Identity, port: int | None = None, info: Callable[[], pb.NodeInfo] | None = None):
         self.ident, self.port = ident, udp_port() if port is None else port
@@ -239,6 +244,22 @@ class PeerNet(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         self.transport = transport
 
+    def sendto(self, data: bytes, addr):
+        """What every Conn sends through: the UDP socket, or the rendezvous for a relayed peer."""
+        if isinstance(addr[0], str) and addr[0].startswith(RELAY):
+            asyncio.ensure_future(self.signal({"type": "relay", "to": addr[0][len(RELAY):],
+                                               "data": base64.b64encode(data).decode()}))
+        else:
+            self.transport.sendto(data, addr)
+
+    def get_extra_info(self, name, default=None):
+        return self.transport.get_extra_info(name, default)
+
+    def relay_in(self, peer_id: str, data: bytes):
+        """A QUIC packet from `peer_id` that came through the rendezvous."""
+        if peer_id and peer_id != self.ident.peer_id and self.allowed(peer_id) and data and data[0] & 0x40:
+            self._quic_datagram(data, (RELAY + peer_id, 0))
+
     def error_received(self, exc):
         pass  # ICMP unreachable while punching is expected
 
@@ -267,7 +288,7 @@ class PeerNet(asyncio.DatagramProtocol):
             quic = _QuicConnection(configuration=self.server_cfg,
                                    original_destination_connection_id=header.destination_cid)
             conn = Conn(self, quic, addr, is_client=False)
-            conn.connection_made(self.transport)
+            conn.connection_made(self)
             self.conns[addr] = conn
         conn.datagram_received(data, addr)
 
@@ -405,7 +426,17 @@ class PeerNet(asyncio.DatagramProtocol):
             except asyncio.TimeoutError:
                 pass
         if not l.got_probe.is_set():
-            self._set(l, "unreachable", "no UDP path through NAT (hole punch timed out)")
+            if not dial:   # the dialing side tries the relay; its handshake arrives through relay_in
+                await asyncio.sleep(RPC_TIMEOUT_S)
+                if l.state == "connecting":
+                    self._set(l, "unreachable", "no UDP path through NAT, and no relayed handshake arrived")
+                return
+            l.addr = (RELAY + l.peer_id, 0)
+            print(f"p2p: {self._name(l.peer_id)}: hole punch timed out, relaying through the rendezvous", flush=True)
+            try:
+                await self._dial(l)
+            except Exception as e:  # noqa: BLE001
+                self._set(l, "unreachable", f"no UDP path through NAT, and the relay failed: {e or type(e).__name__}")
             return
         l.via = kinds.get(l.addr, "stun")
         # Keep the mapping warm for a moment so the other side's handshake gets through.
@@ -440,7 +471,7 @@ class PeerNet(asyncio.DatagramProtocol):
         if old:
             old.close()
         conn = Conn(self, _QuicConnection(configuration=self.client_cfg), l.addr, is_client=True)
-        conn.connection_made(self.transport)
+        conn.connection_made(self)
         self.conns[l.addr] = conn
         conn.connect(l.addr)
         await asyncio.wait_for(conn.wait_connected(), RPC_TIMEOUT_S)
@@ -464,7 +495,9 @@ class PeerNet(asyncio.DatagramProtocol):
         if l.conn and l.conn is not conn:
             l.conn.close()
         l.conn, l.addr = conn, conn.addr
-        if not l.via:
+        if isinstance(conn.addr[0], str) and conn.addr[0].startswith(RELAY):
+            l.via = "relay"
+        elif not l.via or l.via == "relay":
             l.via = "stun"
         self._set(l, "direct")
         asyncio.ensure_future(self._refresh_info(l))

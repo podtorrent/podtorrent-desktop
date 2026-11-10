@@ -1218,7 +1218,7 @@ class PeerApp:
             rec, link = recs.get(m["peer_id"], {}), links.get(m["peer_id"]) or {}
             me = m["peer_id"] == self.me
             slices = self.slices.slices() if me else self.peer_slices({**rec, "link": link})
-            members.append({**m, "me": me, "online": me or bool(rec), "state": "you" if me else link.get("state", "offline"),
+            members.append({**m, "me": me, "online": me or bool(rec), "state": "you" if me else link.get("state", "offline"), "via": link.get("via", ""),
                             "rtt_ms": link.get("rtt_ms"), "chip": CHIP if me else rec.get("chip"),
                             "mem_total_gb": round(mem_total_gb(), 1) if me else rec.get("mem_total_gb"),
                             "slices": [{k: x.get(k) for k in ("model", "lo", "hi", "loaded")} for x in slices]})

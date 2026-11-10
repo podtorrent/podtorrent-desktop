@@ -80,7 +80,7 @@ export default {
               m.public ? h("span.small.faint", " · public") : null),
             h("div.d", [m.chip, m.mem_total_gb ? `${m.mem_total_gb} GB` : null,
               ...(m.slices || []).filter(x => x.loaded).map(x => `${shortModel(x.model)} ${fmt.layers(x.lo, x.hi)}`)].filter(Boolean).join(" · ") || "—")),
-          badge(m.me ? "This machine" : m.state === "direct" ? `Linked${m.rtt_ms ? ` · ${Math.round(m.rtt_ms)} ms` : ""}` : m.online ? "Connecting" : "Offline",
+          badge(m.me ? "This machine" : m.state === "direct" ? `${m.via === "relay" ? "Relayed" : "Linked"}${m.rtt_ms ? ` · ${Math.round(m.rtt_ms)} ms` : ""}` : m.online ? "Connecting" : "Offline",
             m.me || m.state === "direct" ? "serving" : m.online ? "degraded" : "neutral", { dot: true }),
           v.owner && !m.me ? armedButton("Remove", "Remove?", () => act(() => podApi("/remove", { peer_id: m.peer_id }), `Removed ${m.name}`), { size: "sm" }) : null)));
     }

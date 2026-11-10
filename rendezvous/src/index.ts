@@ -1,4 +1,5 @@
-// PodTorrent rendezvous: peer registries plus hole-punch signaling.
+// PodTorrent rendezvous: peer registries plus hole-punch signaling, and a relay for pod members
+// that can't hole-punch.
 // - `Swarm` (one, "global"): the public swarm, for machines in no pod.
 // - `Pod` (one per pod id): a pod's members only, gated by the pod's signed roster (docs/PODS_PLAN.md).
 // - `Matchmaker` (one, "public"): the lobby where public machines offer supply and get put into
@@ -133,6 +134,7 @@ export class Swarm extends DurableObject<Env> {
 const ROOM_PROTOCOL = 3;
 const GUEST_MS = 60_000; // a machine that isn't a member gets this long to have its join request answered
 const MAX_MSG_BYTES = 64_000; // rosters of large pods outgrow the record limit
+const MAX_RELAY_B64 = 4_096;   // one QUIC packet (≤1500 bytes), base64
 
 type PodAttachment = {
   pod_id: string; nonce: string; since: number; observed_ip: string;
@@ -187,6 +189,14 @@ export class Pod extends DurableObject<Env> {
         const nonce = String(msg.nonce ?? "").slice(0, 64);
         target.ws.send(JSON.stringify({ type: "punch", from: att.peer_id, peer: att.record, nonce }));
         ws.send(JSON.stringify({ type: "punch_ack", to: target.att.peer_id, peer: target.att.record, nonce }));
+        break;
+      }
+      case "relay": {
+        // QUIC between two members whose NATs won't hole-punch: the room carries their packets.
+        // Still end-to-end encrypted and authenticated by the peers; the room only checks both are members.
+        if (!att.member || typeof msg.data !== "string" || msg.data.length > MAX_RELAY_B64) return;
+        const target = this.sockets().find(s => s.att.member && s.att.peer_id === String(msg.to ?? ""));
+        if (target) target.ws.send(JSON.stringify({ type: "relay", from: att.peer_id, data: msg.data }));
         break;
       }
       case "roster":

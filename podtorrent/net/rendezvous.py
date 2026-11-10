@@ -6,6 +6,7 @@ no pod waits in the matchmaker's public lobby, offering what it can serve, until
 in a public pod (docs/PODS_PLAN.md). A rendezvous without the lobby (before the matchmaker deploy) gets the
 global swarm room instead."""
 import asyncio
+import base64
 import json
 import os
 import re
@@ -84,6 +85,8 @@ class SwarmClient:
     async def _signal(self, msg: dict):
         if self._ws is not None and not self._ws.closed:
             await self._ws.send_str(json.dumps(msg))
+        elif msg.get("type") == "relay":
+            pass   # a lost packet: QUIC retransmits once the rendezvous is back
         elif self.net:
             self.net.on_signal({"type": "punch_failed", "to": msg.get("to"), "reason": "unreachable: rendezvous offline"})
 
@@ -224,6 +227,11 @@ class SwarmClient:
                     self._set(peers=ev.get("peers") or [])
                 elif ev.get("type") in ("punch", "punch_ack", "punch_failed") and self.net:
                     self.net.on_signal(ev)
+                elif ev.get("type") == "relay" and self.net:
+                    try:
+                        self.net.relay_in(str(ev.get("from", "")), base64.b64decode(ev.get("data", "")))
+                    except ValueError:
+                        pass
                 elif ev.get("type") in ("roster", "assign") and isinstance(ev.get("roster"), dict):
                     self.on_roster(ev["roster"])
                 elif ev.get("type") == "dissolved":

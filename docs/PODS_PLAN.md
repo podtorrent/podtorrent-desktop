@@ -139,6 +139,10 @@ everyone":
 - `M_FORWARD` checks membership per call. `M_LOAD` comes only from the roster signer's decision: each
   member loads its own hop from the plan, and nobody pushes layers onto another machine.
   `pick_helper` is replaced by the plan.
+- **Relay**: when hole punching between two members times out (a symmetric NAT on one side), the dialing
+  side runs QUIC over the pod room instead: each packet goes as `relay {to, data}` and arrives as
+  `relay {from, data}`. The room forwards only between members; QUIC's encryption and certificate
+  checks are unchanged. The link shows as relayed in the Pod tab. Only pod rooms relay, not the lobby.
 - `route()` plans over members' offers only. The wire `protocol` goes to 3 with the per-pod rooms (phase 3):
   until then, members still find each other in the global room.
 

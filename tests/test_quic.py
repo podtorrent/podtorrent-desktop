@@ -151,3 +151,58 @@ def test_prune_drops_a_removed_member_and_refuses_its_streams():
             _close(client, server)
 
     asyncio.run(run())
+
+
+def _relay_pair(a: "quic.PeerNet", b: "quic.PeerNet"):
+    """Wire both nets' signals together as the pod room would: relay packets go across, punches are dropped."""
+    def signal(src, dst):
+        async def send(msg):
+            if msg.get("type") == "relay":
+                dst.relay_in(src.ident.peer_id, __import__("base64").b64decode(msg["data"]))
+        return send
+    a.signal, b.signal = signal(a, b), signal(b, a)
+
+
+def test_relay_when_hole_punching_fails():
+    async def run():
+        server_id, client_id, server, client = await _pair()
+        _relay_pair(client, server)
+        quic.PUNCH_S, old = 0.5, quic.PUNCH_S
+        try:
+            dead = {"endpoints": [{"kind": "stun", "ip": "192.0.2.1", "port": 9}]}  # TEST-NET: never answers
+            link = client.link(server_id.peer_id)
+            client._set(link, "connecting")
+            server._set(server.link(client_id.peer_id), "connecting")
+            server_side = asyncio.create_task(server._punch(server.link(client_id.peer_id), dead, dial=False))
+            await client._punch(link, dead, dial=True)
+            assert link.state == "direct" and link.via == "relay", (link.state, link.error)
+            assert link.snapshot()["addr"] == "rendezvous"
+            assert await client.heartbeat(link) > 0
+            assert server.links[client_id.peer_id].state == "direct"
+            assert server.links[client_id.peer_id].via == "relay"
+            server_side.cancel()
+            # A machine no longer in the pod: its relayed packets are dropped, so calls go unanswered.
+            server.allowed = lambda pid: False
+            try:
+                await link.conn.call(quic.M_INFO, b"", timeout=1)
+                raise AssertionError("a removed member was answered over the relay")
+            except (asyncio.TimeoutError, ConnectionError):
+                pass
+        finally:
+            quic.PUNCH_S = old
+            _close(client, server)
+
+    asyncio.run(run())
+
+
+def test_relay_ignores_non_members():
+    async def run():
+        server_id, client_id, server, client = await _pair()
+        server.allowed = lambda pid: False
+        try:
+            server.relay_in(client_id.peer_id, b"\xc0" + b"\0" * 1300)
+            assert not server.conns
+        finally:
+            _close(client, server)
+
+    asyncio.run(run())
