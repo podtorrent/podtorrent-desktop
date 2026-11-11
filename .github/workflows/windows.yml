@@ -6,10 +6,12 @@ on:
   push:
     branches: [main, windows-app]
     tags: ['v*']
-    # The app doesn't change with the downloads site or docs. Tag pushes always build (GitHub skips path filters for tags).
-    paths-ignore: ['downloads/**', 'docs/**']
+    # Build only when something that goes into the installer changes, or this workflow itself: not for the
+    # downloads site, docs, tests, iOS, the rendezvous, or another platform's workflow.
+    # Tag pushes always build (GitHub skips path filters for tags).
+    paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', '.github/workflows/windows.yml']
   pull_request:
-    paths-ignore: ['downloads/**', 'docs/**']
+    paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', '.github/workflows/windows.yml']
   workflow_dispatch:
 
 concurrency:
