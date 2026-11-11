@@ -28,6 +28,19 @@ fs.copyFileSync(findUv(), path.join(out, uvName));
 fs.chmodSync(path.join(out, uvName), 0o755);
 // .python-version pins the interpreter uv installs; without it uv takes the newest, which PyTorch may not support yet.
 for (const f of ["pyproject.toml", "uv.lock", "README.md", ".python-version"]) fs.copyFileSync(path.join(root, f), path.join(out, f));
+// PODTORRENT_TORCH_INDEX swaps the PyTorch wheel index the bundle installs from (the default is CUDA 12.8,
+// see pyproject.toml). The AMD Linux build sets it to a ROCm index for Strix Halo (gfx1151), then relocks
+// so first launch installs ROCm PyTorch instead of CUDA.
+const torchIndex = process.env.PODTORRENT_TORCH_INDEX;
+if (torchIndex) {
+  const pp = path.join(out, "pyproject.toml");
+  const src = fs.readFileSync(pp, "utf8");
+  const next = src.replace(/(name = "pytorch-cu128"\nurl = )"[^"]*"/, `$1"${torchIndex}"`);
+  if (next === src) throw new Error("pyproject.toml has no pytorch-cu128 index to replace");
+  fs.writeFileSync(pp, next);
+  execFileSync(path.join(out, uvName), ["lock", "--project", out], { stdio: "inherit" });
+  console.log(`torch index: ${torchIndex}`);
+}
 fs.cpSync(path.join(root, "podtorrent"), path.join(out, "podtorrent"), {
   recursive: true,
   filter: src => path.basename(src) !== "__pycache__",
