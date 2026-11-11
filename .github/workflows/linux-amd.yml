@@ -19,7 +19,17 @@ concurrency:
 
 jobs:
   build:
+    name: build (${{ matrix.target }})
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      # One build per AMD GPU family: each has its own PyTorch wheels. To support another family, add a row
+      # with the index AMD publishes for it. The repo variable ROCM_TORCH_INDEX overrides every row if AMD moves
+      # its indexes.
+      matrix:
+        include:
+          - target: gfx1151  # Ryzen AI Max / Max+ / Max PRO 4xx (Radeon 8050S/8060S/8065S)
+            index: https://repo.amd.com/rocm/whl/gfx1151/
     defaults:
       run:
         working-directory: app
@@ -50,16 +60,4 @@ jobs:
       # Not `npm run build`: that bumps the version in tauri.conf.json, which CI shouldn't do.
       - run: node scripts/bundle-backend.js
         env:
-          # AMD's gfx1151 PyTorch wheels (the pytorch.org rocm wheels don't include gfx1151). Override with the
-          # repo variable ROCM_TORCH_INDEX if AMD moves the index.
-          PODTORRENT_TORCH_INDEX: ${{ vars.ROCM_TORCH_INDEX || 'https://repo.amd.com/rocm/whl/gfx1151/' }}
-
-      - run: npx tauri build --bundles appimage,deb
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: podtorrent-linux-amd
-          path: |
-            app/src-tauri/target/release/bundle/appimage/*.AppImage
-            app/src-tauri/target/release/bundle/deb/*.deb
-          if-no-files-found: error
+          PODTORRENT_TORCH_INDEX: ${{ vars.ROCM_TORCH_INDEX || matrix.index }}

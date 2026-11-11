@@ -16,6 +16,8 @@ from pathlib import Path
 
 import numpy as np
 
+from . import gpu_probe
+
 GB = 2**30
 # CUDA 12.8 PyTorch (cu128) needs this NVIDIA driver or newer.
 MIN_NVIDIA_DRIVER = 570
@@ -105,6 +107,8 @@ else:
     DEVICE = os.environ.get("PODTORRENT_DEVICE") or default_device()
     CUDA = DEVICE.startswith("cuda")
     CHIP = torch.cuda.get_device_name(torch.device(DEVICE)) if CUDA else _cpu_name()
+    if CUDA and torch.version.hip and CHIP.strip() in ("", "AMD Radeon Graphics"):
+        CHIP = f"{_cpu_name()} (Radeon)"  # ROCm names an APU's GPU generically; the CPU name says what machine this is
     if not CUDA and not os.environ.get("PODTORRENT_DEVICE") and shutil.which("nvidia-smi"):
         # An NVIDIA GPU that PyTorch can't use: almost always a driver too old for CUDA 12.8.
         print(f"PodTorrent: NVIDIA GPU found but CUDA is unavailable; running on the CPU. "
@@ -141,10 +145,38 @@ else:
         import psutil
         return psutil.virtual_memory()
 
+    def _gpu_reported_gb() -> float:
+        return torch.cuda.get_device_properties(torch.device(DEVICE)).total_memory / GB
+
+    def _try_alloc(gb: float) -> bool:
+        try:
+            torch.empty(int(gb * GB), dtype=torch.uint8, device=DEVICE)
+            return True
+        except Exception:  # noqa: BLE001 (out of memory, or the driver refusing the size)
+            return False
+        finally:
+            torch.cuda.empty_cache()
+
+    def _gpu_total_gb() -> float:
+        """GPU memory. Integrated GPUs (AMD APUs on ROCm) share system RAM and the driver reports
+        only the BIOS-reserved slice, so there we measure what the device can actually allocate."""
+        reported = _gpu_reported_gb()
+        if not torch.version.hip:
+            return reported
+        ceiling = _ram().total * gpu_probe.RAM_SHARE / GB
+        if ceiling <= reported + gpu_probe.TOLERANCE_GB:
+            return reported
+        key = f"{CHIP}|{torch.__version__}|{round(_ram().total / GB)}|{reported:.1f}"
+        return gpu_probe.probe_cached(key, lambda: gpu_probe.find_limit(_try_alloc, reported, ceiling))
+
+    _GPU_TOTAL_GB = _gpu_total_gb() if CUDA else 0.0
+    # Shared memory: the GPU's free memory is system RAM's, which the driver's own figure doesn't show.
+    UNIFIED = CUDA and _GPU_TOTAL_GB > _gpu_reported_gb() + gpu_probe.TOLERANCE_GB
+
     def mem_total_gb() -> float:
         """Memory of the device that holds the weights: GPU memory with CUDA, else system RAM."""
         if CUDA:
-            return torch.cuda.get_device_properties(torch.device(DEVICE)).total_memory / GB
+            return _GPU_TOTAL_GB
         return _ram().total / GB
 
     def mem_budget_gb() -> float:
@@ -173,6 +205,9 @@ def mem_free_gb() -> float:
     (games, Unreal) count too: never report more than the GPU actually has free."""
     free = max(mem_budget_gb() - mem_active_gb(), 0.0)
     if NAME == "torch" and CUDA:
-        gpu_free, _ = torch.cuda.mem_get_info(torch.device(DEVICE))
+        if UNIFIED:
+            gpu_free = _ram().available
+        else:
+            gpu_free, _ = torch.cuda.mem_get_info(torch.device(DEVICE))
         free = min(free, max(gpu_free / GB - CUDA_OVERHEAD_GB, 0.0))
     return free
