@@ -31,7 +31,18 @@ const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 fn kill_group(child: &mut Child) {
     let pid = child.id();
     #[cfg(unix)]
-    let _ = Command::new("kill").args(["-TERM", &format!("-{pid}")]).status();
+    {
+        let _ = Command::new("kill").args(["-TERM", &format!("-{pid}")]).status();
+        // Give it 3 s to exit cleanly, then kill the group so Quit never hangs.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let _ = Command::new("kill").args(["-KILL", &format!("-{pid}")]).status();
+    }
     #[cfg(windows)]
     let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"])
         .creation_flags(CREATE_NO_WINDOW).status();

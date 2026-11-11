@@ -171,7 +171,8 @@ class SwarmClient:
             self.in_lobby = False
             if self.room() != roster:   # assigned to, or dropped from, a pod: go to the right room now
                 continue
-            self._set("offline", [])
+            # Keep the last peer list: direct QUIC links don't need the rendezvous, and heartbeats drop dead ones.
+            self._set("offline")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30)
             self._set("connecting")

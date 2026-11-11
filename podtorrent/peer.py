@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import platform
+import sys
 import threading
 import time
 import uuid
@@ -928,9 +929,11 @@ class PeerApp:
         try:
             n, errors, model = self.n_layers, [], self.repo
             mine = [(s.lo, s.hi) for s in self.slices.loaded(model)] or [(0, k)]
-            threads = [threading.Thread(target=self._try, args=(errors, "this machine", self._load_local, model, *r))
+            threads = [threading.Thread(target=self._try, args=(errors, "this machine", self._load_local, model, *r),
+                                        daemon=True)
                        for r in mine if not self.slices.find(model, *r)]
-            threads.append(threading.Thread(target=self._try, args=(errors, "this machine", self.ensure_head, model)))
+            threads.append(threading.Thread(target=self._try, args=(errors, "this machine", self.ensure_head, model),
+                                            daemon=True))
             # Layers nobody reachable serves (besides what this Mac is about to load): ask a peer.
             others = [o for o in self.offers(model) if o.peer_id != self.me] + [Offer(self.me, NAME, *r) for r in mine]
             _, gaps = plan(n, others)
@@ -940,7 +943,8 @@ class PeerApp:
                     errors.append(f"layers {lo}–{hi - 1} have no peer, and no other connected machine has room to serve them")
                     continue
                 threads.append(threading.Thread(target=self._try, args=(errors, self.net._name(pid),
-                                                                         self.remote_load, pid, model, lo, hi)))
+                                                                         self.remote_load, pid, model, lo, hi),
+                                                daemon=True))
             for t in threads:
                 t.start()
             for t in threads:
@@ -1458,3 +1462,8 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
         threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{port}")).start()
     print(f"peer {NAME} ({app_state.me[:8]}): local API on http://127.0.0.1:{port}", flush=True)
     web.run_app(app, host="127.0.0.1", port=port, print=None)
+    # A download in progress runs in worker threads that Python would join at exit, so quitting would wait for
+    # the whole download. on_cleanup has already stopped the video engine; nothing else needs a clean exit.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
