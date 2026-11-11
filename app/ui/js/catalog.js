@@ -1,23 +1,22 @@
-// Model catalog for the Models view: search MLX models on Hugging Face, see what this Mac already
-// holds, and get a model ("Download & serve" with a slice sized to free memory and the swarm's
-// gaps). Each result says whether it's on this Mac and whether the swarm already serves it.
+// Model catalog for the Models view: see what this machine already holds, and get a model ("Download
+// & serve" with a slice sized to free memory and the swarm's gaps). Picking a model is the shared
+// model table (modelpicker.js).
 import { h, text, fmt } from "./dom.js";
-import { state, models, shortModel } from "./store.js";
+import { state, shortModel } from "./store.js";
 import { actions } from "./actions.js";
 
 const GB = 2 ** 30;
 import { button, badge, armedButton, sheet } from "./ui.js";
 import { icon } from "./icons.js";
-import { serveSlice, catalogSearch, catalogInfo, catalogLocal, catalogDelete, cancelDownload } from "./engine.js";
+import { serveSlice, catalogInfo, catalogLocal, catalogDelete, cancelDownload } from "./engine.js";
 
-let local = [];          // this Mac's model folders, from /api/catalog/local
+let local = [];          // this machine's model folders, from /api/catalog/local
 let onLocal = () => {};  // re-render hook set by the section
 export const localModels = () => local;
 export async function refreshLocal() { local = await catalogLocal(); onLocal(); }
 
 const rangesText = rs => rs.map(([a, b]) => fmt.layers(a, b)).join(", ");
 const localOf = repo => local.find(m => m.repo === repo);
-const swarmOf = repo => models(state).find(m => m.model === repo);
 
 /** One cell per layer: serving here, downloading, on disk, or absent. */
 function layerBar(n, onDisk, serving, fetching = []) {
@@ -60,16 +59,6 @@ function pendingRow(s, bars) {
 /** Section heading: icon, title, live count on the right. */
 export function secHead(ic, title, extra) {
   return h("div.sec-h", h("span.sec-ic", icon(ic)), h("h2", title), h("span.spacer"), extra || null);
-}
-
-/** Badges for a repo: on this Mac (complete / partial) and in the swarm (available / partial). */
-function statusBadges(repo) {
-  const l = localOf(repo), m = swarmOf(repo), out = [];
-  if (l?.complete) out.push(badge("Downloaded", "serving", { dot: true }));
-  else if (l?.layers.length) out.push(badge(`On this machine · ${rangesText(l.layers)}`, "you", { dot: true }));
-  if (m?.runnable || m?.state === "available") out.push(badge("Available in swarm", "serving"));
-  else if (m && m.state !== "offline") out.push(badge(`Swarm missing ${m.gaps.map(([a, b]) => fmt.layers(a, b)).join(", ")}`, "degraded"));
-  return out;
 }
 
 /** Node stopped: size and whether it fits this machine's memory; downloading needs the node. */
@@ -136,40 +125,15 @@ export async function openGet(repo) {
   sync();
 }
 
-/** "Find models" + "On this Mac" cards. Returns { mine, finder, update(s) }, placed separately by the view. */
+/** "On this machine" card. Returns { mine, update(s) }, placed by the view. */
 export function catalogSection() {
-  const q = h("input.input", { type: "search", placeholder: "Search MLX models on Hugging Face, like qwen3 or llama", spellcheck: "false", "aria-label": "Search models" });
-  const results = h("div.cat-list");
-  const status = h("div.small.muted");
-  const chips = h("div.cat-chips", h("span.faint.small", "Try"),
-    ...["qwen3", "llama", "gemma", "mistral", "deepseek", "phi"].map(w =>
-      h("button.chip-btn", { type: "button", onclick: () => { q.value = w; run(); } }, w)));
-  const finder = h("section.card.cat-card",
-    secHead("search", "Find models", status),
-    h("div.cat-search", icon("search"), q), chips, results);
   const localList = h("div.cat-list");
   const mine = h("section.card.cat-card", secHead("memory", "On this machine", h("span.small.muted.disk")), localList);
-
-  let items = [], seq = 0, t, searched = false;
-  async function run() {
-    const my = ++seq;
-    text(status, "Searching…");
-    const r = await catalogSearch(q.value.trim());
-    if (my !== seq) return;
-    if (r.error) { items = []; text(status, r.error); } else { items = r.results; text(status, items.length ? "" : "No MLX models match"); }
-    renderResults();
-  }
-  q.addEventListener("input", () => { clearTimeout(t); t = setTimeout(run, 350); });
 
   function row(repo, sub, badges, actions, bar = null) {
     return h("div.list-row",
       h("div.grow", h("div.t", shortModel(repo), h("span.faint.small", " " + repo.split("/")[0])), sub ? h("div.d", sub) : null, bar),
       h("div.row.wrap", ...badges), ...actions);
-  }
-  function renderResults() {
-    results.replaceChildren(...items.map(it => row(it.repo, `${fmt.compact(it.downloads)} downloads · ${fmt.compact(it.likes)} likes`,
-      statusBadges(it.repo),
-      [button(localOf(it.repo)?.complete ? "Serve…" : "Get…", { icon: "download", size: "cat-get", onclick: () => openGet(it.repo) })])));
   }
   const bars = new Map();   // "model:lo:hi" -> update fn for that slice's progress line
   function renderLocal() {
@@ -195,15 +159,14 @@ export function catalogSection() {
       return r;
     }));
   }
-  onLocal = () => { renderLocal(); renderResults(); };
+  onLocal = renderLocal;
 
-  let slicesKey = null, swarmKey = null, running = null;
+  let slicesKey = null, running = null;
   return {
-    finder, mine,
+    mine,
     update(s) {
       const was = running;
       running = s.source === "live" && s.engine.phase === "running";
-      if (!searched) { searched = true; run(); }   // browsing works with the node stopped (straight to Hugging Face)
       if (s.source !== "live") { mine.hidden = true; return; }
       if (running !== was) { slicesKey = null; if (!running) refreshLocal(); }   // stopped: read the disk natively
       if (!running) return;
@@ -212,8 +175,6 @@ export function catalogSection() {
       const k = JSON.stringify(s.slices.map(x => [x.model, x.lo, x.hi, x.loaded, x.phase]));
       if (k !== slicesKey) { slicesKey = k; refreshLocal(); }
       else for (const x of s.slices) bars.get(`${x.model}:${x.lo}:${x.hi}`)?.(x);
-      const sk = models(s).map(m => m.model + m.state + m.gaps).join("|");
-      if (sk !== swarmKey) { swarmKey = sk; renderResults(); }
     },
   };
 }

@@ -344,7 +344,8 @@ canvas.chart { width: 100%; height: 180px; display: block; }
 .onb-tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .onb-tr.none { grid-template-columns: 1fr; }
 .onb-c-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; white-space: nowrap; overflow: hidden; }
-.onb-c-name b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.onb-c-name b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; max-width: 100%; }
+.onb-c-name > :not(b) { flex-shrink: 0; }
 .onb-c-num { color: var(--fg-2); font-variant-numeric: tabular-nums; }
 .onb-c-fit { display: flex; align-items: center; gap: 8px; color: var(--fg-2); white-space: nowrap; }
 .onb-c-fit .warn { color: var(--c-degraded); }

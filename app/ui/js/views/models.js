@@ -1,12 +1,13 @@
 // Models, in two tabs. Text: stats, what's on this machine, every model the swarm serves (one row
-// each: ready or waiting for layers, with who serves / loads / can't be reached), and the Hugging Face
-// finder. Video: this machine's share of the H3 prompt encoder, and whether it renders.
+// each: ready or waiting for layers, with who serves / loads / can't be reached), and the model table
+// from onboarding to pick another. Video: this machine's share of the H3 prompt encoder, and whether it renders.
 import { h, text, fmt, reconcile } from "../dom.js";
 import { models, emit, settings, setSetting } from "../store.js";
 import { empty, button, stat, segmented } from "../ui.js";
 import { actions, go } from "../actions.js";
 import { openServe } from "../serve.js";
 import { catalogSection, secHead, localModels, openGet } from "../catalog.js";
+import { modelPicker, perLayer, roomFor } from "../modelpicker.js";
 import { videoSwarmStatus, encoderStatus, videoStatus } from "../engine.js";
 import { encoderCard, renderCard } from "./video.js";
 
@@ -76,7 +77,29 @@ export default {
     const emptyBox = h("div");
     const swarmCard = h("section.card.cat-card", swarmH, rows,
       h("div.lbar-key.small.faint", ...[["srv", "Served"], ["load", "Loading"], ["plan", "Not reachable from here"], ["gap", "Waiting for a peer"]].map(([c, l]) => h("span", h(`i.${c}`), l))));
-    const textTab = h("div.col", { style: { gap: "inherit" } }, stats, cat.mine, swarmCard, emptyBox, cat.finder);
+    // Pick a model to serve: the onboarding table, sized to this machine's free memory. A pick opens the
+    // download sheet with a suggested slice.
+    let fitState = null;
+    const picker = modelPicker({
+      fit: m => {
+        const room = fitState?.room, n = room == null || !m.bytes ? m.layers : Math.max(0, Math.min(m.layers, Math.floor(room / perLayer(m))));
+        const label = room == null || !m.bytes ? "–" : n >= m.layers ? "Whole model" : n ? `${n} of ${m.layers} layers` : "Too big";
+        return { n, ok: n > 0, label };
+      },
+      pick: m => openGet(m.repo),
+      checked: m => openGet(m.repo),
+      tags: m => {
+        const out = [], sw = fitState?.swarm.get(m.repo), loc = localModels().find(l => l.repo === m.repo);
+        if (fitState?.serving.has(m.repo)) out.push(h("span.onb-tag.live", "Serving"));
+        else if (loc) out.push(h("span.onb-tag", loc.complete ? "Downloaded" : "Partly downloaded"));
+        if (sw?.runnable) out.push(h("span.onb-tag.live", "In swarm"));
+        return out;
+      },
+      rows: 10,
+    });
+    const pickCard = h("section.card.cat-card.pick-card", secHead("search", "Choose a model", h("span.small.muted", "Pick one to download and serve its layers")), picker.el);
+    let pickKey = "";
+    const textTab = h("div.col", { style: { gap: "inherit" } }, stats, cat.mine, swarmCard, emptyBox, pickCard);
     // Video: where a job runs right now, then this machine's encoder layers and rendering.
     const vText = h("div.small.muted"), vRoute = h("div.small.faint");
     const videoCard = h("section.card.cat-card", secHead("video", "Video (MiniMax-H3)", h("span.wl-tag.video", "Video")),
@@ -128,6 +151,14 @@ export default {
         if (t === "video") return paintVideo(s);
         cat.update(s);
         const loc = localModels();
+        // Free memory once the node runs; before that, an estimate from total memory.
+        const room = s.memFree ?? roomFor(s.health);
+        const pk = JSON.stringify([room == null ? null : Math.round(room * 10), ms.map(m => [m.model, m.runnable]), loc.map(l => [l.repo, l.complete]), s.slices.map(x => x.model)]);
+        if (pk !== pickKey) {
+          pickKey = pk;
+          fitState = { room, swarm: new Map(ms.map(m => [m.model, m])), serving: new Set(s.slices.map(x => x.model)) };
+          picker.paint();
+        }
         S.run.set(ms.filter(m => m.runnable).length, `of ${ms.length} in the swarm`);
         S.lay.set(s.slices.reduce((a, x) => a + (x.hi - x.lo), 0), `${new Set(s.slices.map(x => x.model)).size} model(s)`);
         S.disk.set(loc.length ? loc.reduce((a, m) => a + m.disk_bytes, 0) : null, `${loc.length} model folder(s)`);

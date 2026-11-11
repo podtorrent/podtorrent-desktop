@@ -6,58 +6,11 @@ import { h, text, fmt } from "./dom.js";
 import { state, settings, setSetting, on, models } from "./store.js";
 import { icon } from "./icons.js";
 import { button, segmented, toast } from "./ui.js";
+import { MODELS, GB, perLayer, roomFor, modelPicker } from "./modelpicker.js";
 import { go, setDemo } from "./actions.js";
-import { startHost, catalogSearch, catalogInfo } from "./engine.js";
+import { startHost } from "./engine.js";
 import { invoke, isTauri } from "./native.js";
 
-const GB = 2 ** 30;
-const SUPPORTED = new Set(["qwen3_moe"]);   // architectures the peer can split (peer.py SUPPORTED)
-// Curated MLX models. Runnable ones carry layers and size (from each repo's index); the rest are
-// listed so people see what's coming, but can't be picked until the peer runs their architecture.
-const run = (id, name, family, quant, layers, gb, tag) => ({ repo: `mlx-community/${id}`, name, family, quant, layers, bytes: gb * 1e9, tag });
-const soon = (id, name, family, quant, arch) => ({ repo: `mlx-community/${id}`, name, family, quant, arch, soon: true });
-const MODELS = [
-  run("Qwen3-30B-A3B-4bit", "Qwen3 30B A3B", "qwen", 4, 48, 17.17, "Default"),
-  run("Qwen3-30B-A3B-6bit", "Qwen3 30B A3B", "qwen", 6, 48, 24.81),
-  run("Qwen3-30B-A3B-8bit", "Qwen3 30B A3B", "qwen", 8, 48, 32.44),
-  run("Qwen3-30B-A3B-Instruct-2507-4bit", "Qwen3 30B A3B Instruct 2507", "qwen", 4, 48, 17.18),
-  run("Qwen3-30B-A3B-Instruct-2507-8bit", "Qwen3 30B A3B Instruct 2507", "qwen", 8, 48, 32.44),
-  run("Qwen3-30B-A3B-Thinking-2507-4bit", "Qwen3 30B A3B Thinking 2507", "qwen", 4, 48, 17.18),
-  run("Qwen3-Coder-30B-A3B-Instruct-4bit", "Qwen3 Coder 30B A3B", "qwen", 4, 48, 17.18),
-  run("Qwen3-Coder-30B-A3B-Instruct-6bit", "Qwen3 Coder 30B A3B", "qwen", 6, 48, 24.81),
-  run("Qwen3-Coder-30B-A3B-Instruct-8bit", "Qwen3 Coder 30B A3B", "qwen", 8, 48, 32.44),
-  run("Qwen3-235B-A22B-3bit", "Qwen3 235B A22B", "qwen", 3, 94, 102.85),
-  run("Qwen3-235B-A22B-4bit", "Qwen3 235B A22B", "qwen", 4, 94, 132.24),
-  run("Qwen3-235B-A22B-8bit", "Qwen3 235B A22B", "qwen", 8, 94, 249.79),
-  run("Qwen3-235B-A22B-Instruct-2507-4bit", "Qwen3 235B A22B Instruct 2507", "qwen", 4, 94, 132.24),
-  run("Qwen3-235B-A22B-Thinking-2507-4bit", "Qwen3 235B A22B Thinking 2507", "qwen", 4, 94, 132.24),
-  run("Qwen3-Coder-480B-A35B-Instruct-4bit", "Qwen3 Coder 480B A35B", "qwen", 4, 62, 270.09),
-  soon("Qwen3-Next-80B-A3B-Instruct-4bit", "Qwen3 Next 80B A3B", "qwen", 4, "qwen3_next"),
-  soon("Qwen3-32B-4bit", "Qwen3 32B", "qwen", 4, "qwen3"),
-  soon("Qwen3-14B-4bit", "Qwen3 14B", "qwen", 4, "qwen3"),
-  soon("Qwen3-8B-4bit", "Qwen3 8B", "qwen", 4, "qwen3"),
-  soon("Qwen3-4B-4bit", "Qwen3 4B", "qwen", 4, "qwen3"),
-  soon("Llama-3.3-70B-Instruct-4bit", "Llama 3.3 70B Instruct", "llama", 4, "llama"),
-  soon("Meta-Llama-3.1-8B-Instruct-4bit", "Llama 3.1 8B Instruct", "llama", 4, "llama"),
-  soon("Llama-3.2-3B-Instruct-4bit", "Llama 3.2 3B Instruct", "llama", 4, "llama"),
-  soon("Llama-3.2-1B-Instruct-4bit", "Llama 3.2 1B Instruct", "llama", 4, "llama"),
-  soon("gpt-oss-120b-MXFP4-Q8", "gpt-oss 120B", "gptoss", "MXFP4", "gpt_oss"),
-  soon("gpt-oss-20b-MXFP4-Q8", "gpt-oss 20B", "gptoss", "MXFP4", "gpt_oss"),
-  soon("DeepSeek-V3.1-4bit", "DeepSeek V3.1", "deepseek", 4, "deepseek_v3"),
-  soon("DeepSeek-R1-Distill-Qwen-7B-4bit", "DeepSeek R1 Distill Qwen 7B", "deepseek", 4, "qwen2"),
-  soon("Kimi-K2-Instruct-4bit", "Kimi K2 Instruct", "kimi", 4, "kimi_k2"),
-  soon("GLM-4.6-4bit", "GLM 4.6", "glm", 4, "glm4_moe"),
-  soon("GLM-4.5-Air-4bit", "GLM 4.5 Air", "glm", 4, "glm4_moe"),
-  soon("gemma-3-27b-it-4bit", "Gemma 3 27B", "gemma", 4, "gemma3"),
-  soon("gemma-3-12b-it-4bit", "Gemma 3 12B", "gemma", 4, "gemma3"),
-  soon("gemma-3-4b-it-4bit", "Gemma 3 4B", "gemma", 4, "gemma3"),
-  soon("Mistral-Small-3.2-24B-Instruct-2506-4bit", "Mistral Small 3.2 24B", "mistral", 4, "mistral3"),
-  soon("Devstral-Small-2507-4bit", "Devstral Small 24B", "mistral", 4, "mistral"),
-  soon("Phi-4-mini-instruct-4bit", "Phi 4 mini", "phi", 4, "phi3"),
-];
-const GROUPS = [["all", "All"], ["qwen", "Qwen"], ["llama", "Llama"], ["gptoss", "gpt-oss"], ["deepseek", "DeepSeek"],
-  ["kimi", "Kimi"], ["glm", "GLM"], ["gemma", "Gemma"], ["mistral", "Mistral"], ["phi", "Phi"], ["hf", "From Hugging Face"]];
-const bits = m => typeof m.quant === "number" ? `${m.quant}-bit` : m.quant || "";
 const MODES = {
   public: { icon: "swarm", t: "With anyone", d: "The matchmaker pairs it with machines that have the same model." },
   private: { icon: "peers", t: "In my pod", d: "Only machines you invite, with a code." },
@@ -101,11 +54,7 @@ export function initOnboarding() {
 
 export function openOnboarding() {
   const hl = state.health || {};
-  const mem = hl.mem_total_gb, gpuMem = hl.gpu?.mem_total_gb;
-  // Room for layers: with an NVIDIA GPU its memory less ~1.5 GB CUDA overhead; otherwise about 75% of
-  // RAM less 2 GB (what macOS lets the GPU use). Less ~1 GB for the requester's head.
-  const room = gpuMem ? gpuMem - 2.5 : mem ? mem * 0.75 - 3 : null;
-  const perLayer = m => m.bytes / m.layers / GB;
+  const mem = hl.mem_total_gb, gpuMem = hl.gpu?.mem_total_gb, room = roomFor(hl);
   const fitLayers = m => !m.bytes ? m.layers : room == null ? m.layers : Math.max(0, Math.min(m.layers, Math.floor(room / perLayer(m))));
   const fitsWhole = m => fitLayers(m) >= m.layers;
   let freeDisk = null;
@@ -117,11 +66,8 @@ export function openOnboarding() {
   let podAct = pp?.code ? "join" : "create";
   let podName = pp?.kind === "private" ? pp.name : "", code = pp?.code || "";
   let pick = ps === null && settings.onboarded ? null : MODELS.find(m => m.repo === ps?.model)?.repo || MODELS[0].repo;
-  let group = "all", quant = "any", query = "";
-  const extra = [];   // models picked from a Hugging Face search, once checked
-  const hf = { status: "", results: [], timer: 0, seq: 0 };
-  const all = () => MODELS.concat(extra);
-  const model = () => all().find(m => m.repo === pick);
+  let picker = null;   // the model table, made on the model step
+  const model = () => (picker ? picker.all() : MODELS).find(m => m.repo === pick);
   const joining = () => mode === "private" && podAct === "join";
   const steps = () => joining() ? [0, 1, 3] : [0, 1, 2, 3];
   /** Layers this machine would hold of `m` in the current mode. */
@@ -214,86 +160,33 @@ export function openOnboarding() {
       field, tip);
   }
 
-  // ---- 2: which model (B's table: groups on the left, filters on top) ----
+  // ---- 2: which model (the shared model table; this step decides what fits and what a pick does) ----
   function modelPage() {
     const swarm = new Map(models(state).map(m => [m.model, m]));
-    const inGroup = m => group === "all" || m.family === group;
-    const q = query.trim().toLowerCase();
-    const visible = all().filter(m => inGroup(m) && (quant === "any" || m.quant === +quant)
-      && (!q || `${m.name} ${m.repo}`.toLowerCase().includes(q))).sort((a, b) => !!a.soon - !!b.soon);
-    const rail = h("nav.onb-rail", { "aria-label": "Model families" }, ...GROUPS.filter(([id]) => id !== "hf" || extra.length).map(([id, label]) =>
-      h(`button.onb-rail-i${group === id ? ".on" : ""}`, { type: "button", onclick: () => { group = id; render(); } },
-        h("span.grow", label), h("span.faint", String(all().filter(m => id === "all" || m.family === id).length)))));
-    const search = h("input.input", { type: "search", value: query, placeholder: "Filter, or search Hugging Face", "aria-label": "Find a model", spellcheck: "false",
-      oninput: e => { query = e.target.value; render(); searchHF(); } });
-    const row = m => {
-      if (m.soon || m.error || m.checking) return h("button.onb-tr", { type: "button", disabled: true, title: m.arch ? `${m.arch} models don't run on PodTorrent yet` : "" },
-        h("span.onb-c-name", h("b", m.name), h("span.small.faint", bits(m))),
-        h("span.onb-c-num.small", m.bytes ? fmt.gb(m.bytes / GB) : "–"),
-        h("span.onb-c-fit.small", m.checking ? "Checking…" : m.error ? "Couldn't read it" : h("span.onb-tag", "Coming soon")));
-      const ok = usable(m), sel = pick === m.repo, n = share(m), dl = n * perLayer(m), sw = swarm.get(m.repo);
-      const here = room == null || !m.bytes ? "–" : mode === "alone" ? (ok ? "Whole model" : `Needs ${fmt.gb(m.bytes / GB + 3)}`)
-        : n >= m.layers ? "Whole model" : n ? `${n} of ${m.layers} layers` : "Too big";
-      const noDisk = freeDisk != null && ok && m.bytes && dl > freeDisk;
-      return h(`button.onb-tr${sel ? ".on" : ""}`, { type: "button", role: "radio", "aria-checked": String(sel), disabled: !ok,
-        onclick: () => { pick = m.repo; render(); } },
-        h("span.onb-c-name", h("b", m.name), h("span.small.faint", bits(m)), m.tag ? h("span.onb-tag", m.tag) : null,
-          sw?.runnable ? h("span.onb-tag.live", "In swarm") : null),
-        h("span.onb-c-num.small", m.bytes ? fmt.gb(m.bytes / GB) : "–"),
-        h("span.onb-c-fit.small", h("span.onb-meter", h("i", { style: { width: `${Math.round(100 * Math.min(n, m.layers) / m.layers)}%` } })),
-          h("span", { class: noDisk ? "warn" : "" }, noDisk ? "Not enough disk" : here)));
-    };
-    // Hugging Face results not checked yet: picking one reads its config to see whether it runs here.
-    const hfRows = q.length < 2 ? [] : hf.results.filter(r => !all().some(m => m.repo === r.repo)).map(r =>
-      h("button.onb-tr", { type: "button", onclick: () => checkHF(r.repo) },
-        h("span.onb-c-name", h("b", r.repo.split("/")[1]), h("span.small.faint", r.repo.split("/")[0])),
-        h("span.onb-c-num.small.faint", `${fmt.compact(r.downloads)} ↓`),
-        h("span.onb-c-fit.small.faint", "Select to check")));
-    const none = h(`button.onb-tr.none${pick === null ? ".on" : ""}`, { type: "button", role: "radio", "aria-checked": String(pick === null), onclick: () => { pick = null; render(); } },
-      h("span.onb-c-name", h("b", "Nothing for now"), h("span.small.faint", "Chat with what the swarm serves")));
+    picker ||= modelPicker({
+      fit: m => {
+        const ok = usable(m), n = share(m), noDisk = freeDisk != null && ok && m.bytes && n * perLayer(m) > freeDisk;
+        const here = room == null || !m.bytes ? "–" : mode === "alone" ? (ok ? "Whole model" : `Needs ${fmt.gb(m.bytes / GB + 3)}`)
+          : n >= m.layers ? "Whole model" : n ? `${n} of ${m.layers} layers` : "Too big";
+        return { n, ok, warn: noDisk, label: noDisk ? "Not enough disk" : here };
+      },
+      selected: m => pick === m.repo,
+      pick: m => { pick = m.repo; render(); },
+      checked: m => { pick = m.repo; if (step === 2) render(); },
+      tags: m => swarm.get(m.repo)?.runnable ? [h("span.onb-tag.live", "In swarm")] : [],
+      tail: () => mode === "alone" ? [] : [h(`button.onb-tr.none${pick === null ? ".on" : ""}`, { type: "button", role: "radio", "aria-checked": String(pick === null), onclick: () => { pick = null; render(); } },
+        h("span.onb-c-name", h("b", "Nothing for now"), h("span.small.faint", "Chat with what the swarm serves")))],
+    });
+    picker.paint();
     const m = model();
     const facts = [mem ? `${fmt.gb(mem)} memory, about ${fmt.gb(Math.max(0, room))} for layers` : null,
       freeDisk != null ? `${fmt.gb(freeDisk)} free on disk` : null].filter(Boolean);
     return [
       h("div.onb-h2", h("h1", "Pick a model"), h("span.small.muted", mode === "alone" ? "It has to fit whole in memory." : "You download only your share of the layers.")),
-      h("div.onb-picker", rail,
-        h("div.onb-table",
-          h("div.onb-tools", h("span.onb-search", icon("search"), search),
-            segmented([{ value: "any", label: "Any" }, { value: "4", label: "4-bit" }, { value: "8", label: "8-bit" }], quant, v => { quant = v; render(); }, "Precision")),
-          h("div.onb-thead.small", h("span", "Model"), h("span", "Size"), h("span", "On this machine")),
-          h("div.onb-rows", { role: "radiogroup", "aria-label": "Model" }, ...visible.map(row),
-            visible.length || q.length >= 2 ? null : h("div.small.faint.onb-emptyrow", "No model matches."),
-            q.length >= 2 ? h("div.onb-sec.small", "On Hugging Face", h("span.faint", hf.status)) : null, ...hfRows,
-            mode === "alone" || q ? null : none),
-          h("div.onb-hint.small.faint", "Not listed? Type a name to search every MLX model on Hugging Face. Qwen3 MoE models run today; more architectures are coming."))),
+      picker.el,
       h("div.onb-facts.small.faint", facts.join(" · "), isTauri ? h("button.onb-link", { type: "button", onclick: changeDisk }, "Change drive") : null,
         m?.bytes && mode !== "alone" ? h("span.grow.right", `Downloads about ${fmt.gb(share(m) * perLayer(m))}`) : null),
     ];
-  }
-  function searchHF() {
-    clearTimeout(hf.timer);
-    const q = query.trim();
-    if (q.length < 2) { hf.results = []; hf.status = ""; return; }
-    hf.timer = setTimeout(async () => {
-      const my = ++hf.seq;
-      hf.status = "Searching…"; render();
-      const r = await catalogSearch(q);
-      if (my !== hf.seq || step !== 2) return;
-      hf.results = (r.results || []).slice(0, 8);
-      hf.status = r.error || (hf.results.length ? "" : "No MLX models match");
-      render();
-    }, 400);
-  }
-  /** Read a searched model's config: runnable architectures become pickable, others show as coming. */
-  async function checkHF(repo) {
-    const m = { repo, name: repo.split("/")[1], family: "hf", quant: +(/(\d)bit/i.exec(repo)?.[1]) || "", checking: true };
-    extra.push(m); render();
-    const inf = await catalogInfo(repo);
-    delete m.checking;
-    if (inf.error) m.error = inf.error;
-    else if (!SUPPORTED.has(inf.model_type)) Object.assign(m, { soon: true, arch: inf.model_type || "unknown" });
-    else { Object.assign(m, { layers: inf.n_layers, bytes: inf.size_bytes || 0 }); pick = repo; }
-    if (step === 2) render();
   }
   async function changeDisk() {
     if (state.engine.phase === "running" || state.engine.phase === "starting") return toast("Stop your node first", "degraded", "The storage folder can only change while the node is stopped.");
