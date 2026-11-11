@@ -512,7 +512,6 @@ canvas.chart { width: 100%; height: 180px; display: block; }
 .mem-key { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--fg-2, inherit); }
 .mem-key span { display: inline-flex; align-items: center; gap: 6px; }
 .mem-key i { width: 9px; height: 9px; border-radius: 2px; background: color-mix(in srgb, var(--fg-1) 12%, transparent); }
-.policy { border-top: 1px solid var(--line-1); padding-top: 12px; margin: 0; }
 /* clickable layer picker (Video → Prompt encoder) */
 .lbar.pickable { cursor: pointer; user-select: none; touch-action: none; }
 .lbar.pickable i { height: 14px; }
