@@ -204,13 +204,23 @@ class Slices:
         for k in [k for k, (_, ts) in self.caches.items() if now - ts > CACHE_IDLE_S]:
             self.caches.pop(k, None)
 
-    def load(self, model: str, lo: int, hi: int, progress=lambda phase, done=0, total=0, msg="": None) -> Served:
+    def load(self, model: str, lo: int, hi: int, progress=lambda phase, done=0, total=0, msg="": None,
+             replace: bool = False) -> Served:
         """Download and load `model` layers [lo, hi) next to whatever is already served. Slices of the
-        same model that the new one contains are dropped once it's ready. Raises MemoryError up front
-        when the slice won't fit in this Mac's GPU budget."""
+        same model that the new one contains are dropped once it's ready; with `replace` (a resize, which
+        may also shrink), every other slice of the model is. Raises MemoryError up front when the slice
+        won't fit in this machine's GPU budget."""
         with self._load_lock:
-            have = self.find(model, lo, hi)
+            have = (next((s for s in self.loaded(model) if (s.lo, s.hi) == (lo, hi)), None) if replace
+                    else self.find(model, lo, hi))
             if have is not None:
+                if replace:
+                    with MLX:
+                        for r in self.loaded(model):
+                            if r is not have:
+                                r.shard = None
+                                self.items.pop((r.model, r.lo, r.hi), None)
+                        B.clear_cache()
                 progress("ready", 1, 1)
                 return have
             d = self.model_dir(model)
@@ -221,7 +231,7 @@ class Slices:
             n = cfg["num_hidden_layers"]
             if not 0 <= lo < hi <= n:
                 raise ValueError(f"layers [{lo},{hi}) out of range: {model} has {n} layers")
-            replaced = [s for s in self.loaded(model) if lo <= s.lo and s.hi <= hi]
+            replaced = [s for s in self.loaded(model) if replace or (lo <= s.lo and s.hi <= hi)]
             need = gb(d, lo, hi)
             video = self.reserved()
             free = mem_free_gb() - video + sum(gb(d, s.lo, s.hi) for s in replaced)
@@ -691,7 +701,7 @@ class PeerApp:
                 break
         await asyncio.gather(task, return_exceptions=True)
 
-    def _load_local(self, model, lo, hi, progress=lambda *a: None):
+    def _load_local(self, model, lo, hi, progress=lambda *a: None, replace=False):
         last = [None]
 
         def report(phase, done=0, total=0, msg=""):
@@ -707,7 +717,7 @@ class PeerApp:
                       assignments=[{"node": NAME, "lo": lo, "hi": hi, "roles": []}])
         self._announce()  # the new slice shows up as "checking" / "downloading"
         try:
-            s = self.slices.load(model, lo, hi, report)
+            s = self.slices.load(model, lo, hi, report, replace=replace)
         except Cancelled:
             # The UI gets "cancelled"; a requesting peer gets "error", which every version understands.
             self.emit("load_progress", node=NAME, model=model, lo=lo, hi=hi, phase="cancelled", done=0, total=0,
@@ -719,7 +729,7 @@ class PeerApp:
             report("error", msg=str(e))
             self._announce()
             raise
-        save_slices(lambda cur: [c for c in cur if not (c.get("model") == model and lo <= c["lo"] and c["hi"] <= hi)]
+        save_slices(lambda cur: [c for c in cur if not (c.get("model") == model and (replace or lo <= c["lo"] and c["hi"] <= hi))]
                     + [{"model": model, "lo": s.lo, "hi": s.hi}])
         self._announce()
 
@@ -1003,7 +1013,9 @@ class PeerApp:
 
     async def serve(self, request):
         """Serve {model?, lo, hi} next to what's already served. With `peer` (a name or peer_id),
-        ask that direct peer to serve it instead. Progress arrives as `load_progress` events."""
+        ask that direct peer to serve it instead. Progress arrives as `load_progress` events.
+        Here only: `replace` makes it a resize (the model's other slices go once it's loaded), and
+        `trim` then deletes the model's layers outside what's served from disk."""
         b = await request.json()
         args = self._slice_args(b)
         if isinstance(args, str):
@@ -1015,13 +1027,16 @@ class PeerApp:
                 return web.json_response({"error": f"no direct peer {b['peer']}"}, status=404)
             fn, who, fargs = self.remote_load, self.net._name(pid), (pid, model, lo, hi)
         else:
-            fn, who, fargs = self._load_local, "serve", (model, lo, hi)
+            replace, trim = bool(b.get("replace")), bool(b.get("trim"))
+            fn, who, fargs = (lambda *a: self._load_local(*a, replace=replace)), "serve", (model, lo, hi)
         errors: list[str] = []
 
         def go():
             self._try(errors, who, fn, *fargs)
             if errors:
                 self.emit("error", message=errors[0])
+            elif not b.get("peer") and trim:
+                self._try(errors, "trim", self._trim, model)
         if b.get("wait"):
             await asyncio.to_thread(go)
             return web.json_response({"error": errors[0]} if errors else {"ok": True, "slices": self.slices.slices()},
@@ -1089,6 +1104,26 @@ class PeerApp:
             it["downloading"] = [{"lo": s.lo, "hi": s.hi, "phase": s.phase, "done": s.done, "total": s.total}
                                  for s in slices if s.model == it["repo"] and s.shard is None]
         return web.json_response({"models": items})
+
+    def _trim(self, model: str, keep: list[tuple[int, int]] = ()) -> int:
+        """Delete `model` layers from disk outside `keep` and every slice served or on its way here."""
+        ranges = [*keep, *((s.lo, s.hi) for s in self.slices.items.values() if s.model == model)]
+        freed = catalog.trim(self.model_dir(model), ranges)
+        self.emit("disk", model=model, freed=freed)
+        return freed
+
+    async def catalog_trim(self, request):
+        """Delete {repo}'s layers outside [lo, hi) from disk; layers being served are always kept."""
+        b = await request.json()
+        args = self._slice_args({**b, "model": b.get("repo")})
+        if isinstance(args, str):
+            return web.json_response({"error": args}, status=400)
+        model, lo, hi = args
+        try:
+            freed = await asyncio.to_thread(self._trim, model, [(lo, hi)])
+        except (OSError, ValueError) as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response({"ok": True, "freed": freed})
 
     async def catalog_delete(self, request):
         """Stop serving a model and remove its files from this Mac."""
@@ -1358,6 +1393,7 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
                     web.get("/api/catalog/info", app_state.catalog_info),
                     web.get("/api/catalog/local", app_state.catalog_local),
                     web.post("/api/catalog/delete", app_state.catalog_delete),
+                    web.post("/api/catalog/trim", app_state.catalog_trim),
                     web.post("/api/start", app_state.start), web.post("/api/serve", app_state.serve),
                     web.post("/api/unserve", app_state.unserve),
                     web.post("/api/chat", app_state.chat), web.post("/api/complete", app_state.complete),

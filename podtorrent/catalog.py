@@ -1,5 +1,6 @@
 """Model catalog: search MLX models on Hugging Face, see what's on this Mac, suggest a slice, delete."""
 import json
+import struct
 import shutil
 from pathlib import Path
 
@@ -71,6 +72,56 @@ def local(known: list[str] = ()) -> list[dict]:
         out.append({"repo": repo or d.name, "dir": d.name, "n_layers": n, "layers": _runs(layers),
                     "complete": bool(n) and len(layers) == n, "disk_bytes": size})
     return out
+
+
+def trim(d: Path, keep: list[tuple[int, int]]) -> int:
+    """Remove from model folder `d` every layer tensor outside the half-open ranges in `keep`, and any
+    layer tensor stored twice (slices that overlapped). Embedding, head and config files are left as
+    they are. Files are rewritten to a temp name and swapped in. Returns the bytes freed."""
+    freed, seen = 0, set()
+    for f in sorted(d.glob("*.safetensors")):
+        with open(f, "rb") as fh:
+            (n,) = struct.unpack("<Q", fh.read(8))
+            hdr = json.loads(fh.read(n))
+        meta = hdr.pop("__metadata__", None)
+
+        def wanted(name: str) -> bool:
+            m = LAYER_RE.match(name)
+            return not m or (name not in seen and any(a <= int(m.group(1)) < b for a, b in keep))
+        kept = sorted(((k, v) for k, v in hdr.items() if wanted(k)), key=lambda kv: kv[1]["data_offsets"][0])
+        seen.update(k for k, _ in kept)
+        if len(kept) == len(hdr):
+            continue
+        size = f.stat().st_size
+        if not kept:
+            f.unlink()
+            freed += size
+            continue
+        out, off = {}, 0
+        for k, v in kept:
+            a, b = v["data_offsets"]
+            out[k] = {**v, "data_offsets": [off, off + b - a]}
+            off += b - a
+        if meta is not None:
+            out["__metadata__"] = meta
+        head = json.dumps(out, separators=(",", ":")).encode()
+        head += b" " * (-len(head) % 8)
+        tmp = f.with_name(f.name + ".trim.tmp")
+        with open(f, "rb") as src, open(tmp, "wb") as dst:
+            dst.write(struct.pack("<Q", len(head)) + head)
+            for _, v in kept:
+                a, b = v["data_offsets"]
+                src.seek(8 + n + a)
+                left = b - a
+                while left:
+                    chunk = src.read(min(left, 1 << 24))
+                    if not chunk:
+                        raise OSError(f"{f.name} is shorter than its header says")
+                    dst.write(chunk)
+                    left -= len(chunk)
+        tmp.replace(f)
+        freed += size - f.stat().st_size
+    return freed
 
 
 def _runs(xs: list[int]) -> list[list[int]]:

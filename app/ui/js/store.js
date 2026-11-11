@@ -141,6 +141,7 @@ export function applyEvent(ev) {
       }
       break;
     }
+    case "disk": emit("disk", ev); break;   // layers removed from disk: the catalog re-reads it
     case "slices":
       state.slices = ev.slices || [];
       if (ev.mem_free_gb != null) state.memFree = ev.mem_free_gb;

@@ -2,33 +2,42 @@
 // & serve" with a slice sized to free memory and the swarm's gaps). Picking a model is the shared
 // model table (modelpicker.js).
 import { h, text, fmt } from "./dom.js";
-import { state, models, shortModel } from "./store.js";
+import { state, models, shortModel, on, commit } from "./store.js";
 import { actions } from "./actions.js";
 
 const GB = 2 ** 30;
 import { button, iconButton, badge, armedButton, sheet } from "./ui.js";
 import { icon } from "./icons.js";
-import { serveSlice, unserveSlice, catalogInfo, catalogLocal, catalogDelete, cancelDownload } from "./engine.js";
+import { serveSlice, unserveSlice, catalogInfo, catalogLocal, catalogDelete, catalogTrim, cancelDownload } from "./engine.js";
 
 let local = [];          // this machine's model folders, from /api/catalog/local
 let onLocal = () => {};  // re-render hook set by the section
 export const localModels = () => local;
-export async function refreshLocal() { local = await catalogLocal(); onLocal(); }
+export async function refreshLocal() { local = await catalogLocal(); onLocal(); commit(); }   // commit: views that read it repaint
+on("disk", () => refreshLocal());   // layers deleted from disk
 
 const rangesText = rs => rs.map(([a, b]) => fmt.layers(a, b)).join(", ");
 const localOf = repo => local.find(m => m.repo === repo);
 const swarmOf = repo => models(state).find(m => m.model === repo);
 const inRuns = (rs, i) => rs.some(([a, b]) => a <= i && i < b);
 
-/** Play / stop for this machine's layers of `repo`: play serves what's on disk (nothing to download),
- *  stop stops serving. Null when this machine has none of it. */
+/** Runs of layers on disk that no loaded slice covers: what play would start serving. */
+function idleRuns(repo) {
+  const l = localOf(repo), mine = state.slices.filter(x => x.model === repo);
+  if (!l || mine.some(x => !x.loaded)) return [];   // a download or load is under way
+  return l.layers.filter(([a, b]) => !mine.some(x => x.lo <= a && b <= x.hi));
+}
+
+/** Play / stop for this machine's layers of `repo`. Play serves every run on disk that isn't served
+ *  yet (nothing to download; a served slice inside the run is swapped for the whole run), stop stops
+ *  serving. Null when this machine has none of it. */
 export function playStop(repo) {
   const l = localOf(repo), mine = state.slices.filter(x => x.model === repo);
   if (!l?.layers.length && !mine.length) return null;
-  const loaded = mine.filter(x => x.loaded).map(x => [x.lo, x.hi]), idle = mine.length ? [] : l.layers;
-  const play = iconButton("play", idle.length ? `Serve layers ${rangesText(idle)} on this machine` : mine.length ? "Already serving" : "Nothing on disk",
+  const loaded = mine.filter(x => x.loaded).map(x => [x.lo, x.hi]), idle = idleRuns(repo);
+  const play = iconButton("play", idle.length ? `Serve layers ${rangesText(idle)} from disk` : loaded.length ? "Serving everything on disk" : "Nothing on disk",
     () => { play.disabled = true; idle.forEach(([a, b]) => serveSlice(repo, a, b)); });
-  const stop = iconButton("stop", loaded.length ? `Stop serving layers ${rangesText(loaded)} on this machine` : "Not serving",
+  const stop = iconButton("stop", loaded.length ? `Stop serving layers ${rangesText(loaded)}` : "Not serving",
     () => { stop.disabled = true; loaded.forEach(([a, b]) => unserveSlice(repo, a, b)); });
   play.disabled = !idle.length; stop.disabled = !loaded.length;
   return h("div.ps-group", { role: "group", "aria-label": "This machine" }, play, stop);
@@ -37,12 +46,13 @@ export function playStop(repo) {
 export const playStopKey = repo => JSON.stringify([localOf(repo)?.layers, state.slices.filter(x => x.model === repo).map(x => [x.lo, x.hi, x.loaded])]);
 
 /** One cell per layer: serving here, downloading, on disk, or absent. */
-function layerBar(n, onDisk, serving, fetching = [], fetchLabel = "Downloading") {
+/** `keep`, when given, dims the layers outside that range. */
+function layerBar(n, onDisk, serving, fetching = [], fetchLabel = "Downloading", keep = null) {
   if (!n) return null;
   const inR = (rs, i) => rs.some(([a, b]) => a <= i && i < b);
   return h("div.lbar-wrap",
     h("div.lbar", { role: "img", "aria-label": `${n} layers` },
-      ...Array.from({ length: n }, (_, i) => h(`i${inR(serving, i) ? ".srv" : inR(fetching, i) ? ".dl" : inR(onDisk, i) ? ".disk" : ""}`))),
+      ...Array.from({ length: n }, (_, i) => h(`i${inR(serving, i) ? ".srv" : inR(fetching, i) ? ".dl" : inR(onDisk, i) ? ".disk" : ""}${keep && !inR([keep], i) ? ".out" : ""}`))),
     h("div.lbar-key.small.faint", h("span", h("i.srv"), "Serving"), fetching.length ? h("span", h("i.dl"), fetchLabel) : null,
       h("span", h("i.disk"), "Downloaded"), h("span", h("i"), "Not here")));
 }
@@ -143,51 +153,85 @@ export async function openGet(repo) {
   sync();
 }
 
-/** Sheet: add layers before or after the ones this machine has, and serve the wider range. The node
- *  downloads only the new layers and swaps the old slice out once the wider one is loaded. */
+/** Sheet: pick the layer range this machine keeps for `repo`, larger or smaller, and see what it
+ *  costs in memory and on disk. Serve resizes the served slice (only new layers download; the old
+ *  slice goes once the new one is loaded); Free deletes layers outside the range from disk. */
 export async function openAdjust(repo) {
-  const l = localOf(repo);
-  // The run being extended: the one served here, else the longest on disk.
-  const srv = state.slices.find(x => x.model === repo && x.loaded);
-  const [lo0, hi0] = srv ? [srv.lo, srv.hi] : [...(l?.layers || [])].sort((x, y) => (y[1] - y[0]) - (x[1] - x[0]))[0] || [0, 0];
+  const l = localOf(repo), N0 = l?.n_layers || 0;
+  const loaded = state.slices.filter(x => x.model === repo && x.loaded);
+  // Start from what's served, else from everything on disk.
+  const span = rs => rs.length ? [Math.min(...rs.map(r => r[0])), Math.max(...rs.map(r => r[1]))] : [0, 0];
+  const served = span(loaded.map(x => [x.lo, x.hi])), disk = l?.layers || [];
+  let [lo, hi] = loaded.length ? served : span(disk);
   const body = h("div.col", { style: { gap: "14px" } }, h("div.small.muted", "Reading model info…"));
+  const free = button("Free space", { icon: "x" });
   const go = button("Serve", { variant: "primary", icon: "play", disabled: true });
-  const s = sheet({ title: `Adjust ${shortModel(repo)}`, body, footer: [button("Cancel", { onclick: () => s.close() }), go] });
+  const s = sheet({ title: `Adjust ${shortModel(repo)}`, body, footer: [button("Cancel", { onclick: () => s.close() }), h("span.spacer"), free, go] });
   const inf = await catalogInfo(repo);
   if (inf.error) { body.replaceChildren(h("div.small", { style: { color: "var(--c-gap)" } }, inf.error)); return; }
   if (inf.offline) {
-    body.replaceChildren(h("div.small", "Start your node to change the layers it serves."));
+    body.replaceChildren(h("div.small", "Start your node to change the layers it serves or keeps."));
     text(go.querySelector("span"), "Start my node"); go.disabled = false; go.onclick = () => { s.close(); actions.startHost(); };
     return;
   }
-  const N = inf.n_layers, lb = inf.layer_bytes || 0;
-  let before = 0, after = 0;
-  const bar = h("div"), sum = h("div.small"), err = h("div.small", { style: { color: "var(--c-gap)" } });
-  const stepper = (label, get, set, max) => {
-    const v = h("b.num"), minus = iconButton("minus", `Fewer layers ${label.toLowerCase()}`, () => { set(get() - 1); paint(); }),
-      plus = iconButton("plus", `More layers ${label.toLowerCase()}`, () => { set(get() + 1); paint(); });
-    return { el: h("div.field", h("label", label), h("div.stepper", minus, v, plus)), paint: () => { text(v, String(get())); minus.disabled = get() <= 0; plus.disabled = get() >= max; } };
+  const N = inf.n_layers || N0, lb = inf.layer_bytes || 0;
+  const count = (a, b, pred) => { let n = 0; for (let i = a; i < b; i++) if (pred(i)) n++; return n; };
+  const stepper = (label, get, set, min, max) => {
+    const v = h("b.num"), minus = iconButton("minus", `${label}: one lower`, () => { set(get() - 1); paint(); }),
+      plus = iconButton("plus", `${label}: one higher`, () => { set(get() + 1); paint(); });
+    return { el: h("div.field", h("label", label), h("div.stepper", minus, v, plus)),
+      paint: () => { text(v, String(get())); minus.disabled = get() <= min(); plus.disabled = get() >= max(); } };
   };
-  const front = stepper("Before", () => before, x => { before = x; }, lo0), back = stepper("After", () => after, x => { after = x; }, N - hi0);
-  function paint() {
-    front.paint(); back.paint();
-    const lo = lo0 - before, hi = hi0 + after, n = hi - lo, added = [];
-    if (before) added.push([lo, lo0]); if (after) added.push([hi0, hi]);
-    let fresh = 0; for (let i = lo; i < hi; i++) if (!inRuns(l?.layers || [], i)) fresh++;
-    bar.replaceChildren(layerBar(N, l?.layers || [], srv ? [[srv.lo, srv.hi]] : [], added, "Adding"));
-    const need = n * lb / GB, room = inf.mem_free_gb + (srv ? (srv.hi - srv.lo) * lb / GB : 0);
-    text(err, lb && need > room * 0.95 ? `Layers ${fmt.layers(lo, hi)} need about ${fmt.gb(need)}; this machine has ${fmt.gb(room)} for them.` : "");
-    text(sum, `Layers ${fmt.layers(lo, hi)}, ${n} of ${N}. ${fresh ? `Downloads ${fresh} new layer${fresh > 1 ? "s" : ""}${lb ? ` (about ${fmt.bytes(fresh * lb)})` : ""}` : "Nothing to download"}${lb ? `, keeps about ${fmt.bytes(n * lb)} in memory while serving` : ""}.`);
-    text(go.querySelector("span"), srv && !before && !after ? "Serving" : `Serve ${fmt.layers(lo, hi)}`);
-    go.disabled = !!err.textContent || (srv && !before && !after);
+  // From and Through are layer numbers (inclusive), like everywhere else in the app.
+  const from = stepper("From layer", () => lo, x => { lo = x; }, () => 0, () => hi - 1);
+  const thru = stepper("Through layer", () => hi - 1, x => { hi = x + 1; }, () => lo, () => N - 1);
+  const bar = h("div"), rows = h("div.adj-rows"), err = h("div.small", { style: { color: "var(--c-gap)" } });
+  const line = (k, v) => h("div.adj-row", h("span.muted", k), h("span", v));
+  const gbOf = n => lb ? fmt.bytes(n * lb) : `${n} layers`;
+  function plan() {
+    const n = hi - lo, onDisk = i => inRuns(disk, i), isServed = i => inRuns(loaded.map(x => [x.lo, x.hi]), i);
+    const fresh = count(lo, hi, i => !onDisk(i));
+    // Freeing keeps the range and anything served now (it can't drop layers in use).
+    const extra = count(0, N, i => onDisk(i) && !(lo <= i && i < hi) && !isServed(i));
+    const extraAfter = count(0, N, i => onDisk(i) && !(lo <= i && i < hi));
+    const changes = !loaded.length || served[0] !== lo || served[1] !== hi;
+    return { n, fresh, extra, extraAfter, changes };
   }
-  go.onclick = async () => {
-    go.disabled = true;
-    if (await serveSlice(repo, lo0 - before, hi0 + after)) { s.close(); setTimeout(refreshLocal, 1500); } else go.disabled = false;
+  function paint() {
+    from.paint(); thru.paint();
+    const p = plan(), memNow = loaded.reduce((a, x) => a + x.hi - x.lo, 0), diskNow = count(0, N, i => inRuns(disk, i));
+    const adding = [];
+    for (let i = lo; i < hi; i++) if (!inRuns(disk, i)) adding.push([i, i + 1]);
+    bar.replaceChildren(layerBar(N, disk, loaded.map(x => [x.lo, x.hi]), adding, "To download", [lo, hi]));
+    rows.replaceChildren(
+      line("Serve", `Layers ${fmt.layers(lo, hi)} · ${p.n} of ${N}`),
+      line("Memory while serving", `${gbOf(p.n)}${memNow ? ` (now ${gbOf(memNow)})` : ""}`),
+      line("Download", p.fresh ? `${p.fresh} layer${p.fresh > 1 ? "s" : ""}, ${gbOf(p.fresh)}` : "Nothing"),
+      line("On disk", `${gbOf(diskNow + p.fresh)}${p.extraAfter ? `, or ${gbOf(diskNow + p.fresh - p.extraAfter)} after freeing the ${p.extraAfter} outside the range` : ""} (now ${gbOf(diskNow)})`));
+    const need = p.n * lb / GB, room = inf.mem_free_gb + memNow * lb / GB;
+    text(err, lb && need > room * 0.95 ? `Layers ${fmt.layers(lo, hi)} need about ${fmt.gb(need)} of memory; this machine has ${fmt.gb(room)} for them.` : "");
+    // Free: while serving a different range, serve the new one first, then free (old layers are in use until then).
+    const both = p.changes && loaded.length > 0;
+    free.hidden = both ? !p.extraAfter : !p.extra;
+    text(free.querySelector("span"), both ? `Serve and free ${gbOf(p.extraAfter)}` : `Free ${gbOf(p.extra)}`);
+    free.disabled = both && !!err.textContent;
+    go.hidden = !p.changes;
+    text(go.querySelector("span"), `Serve ${fmt.layers(lo, hi)}`);
+    go.disabled = !!err.textContent;
+  }
+  const serve = async trim => {
+    go.disabled = free.disabled = true;
+    if (await serveSlice(repo, lo, hi, null, { replace: true, trim })) { s.close(); setTimeout(refreshLocal, 1500); } else paint();
+  };
+  go.onclick = () => serve(false);
+  free.onclick = async () => {
+    if (plan().changes && loaded.length > 0) return serve(true);
+    free.disabled = true;
+    if (await catalogTrim(repo, lo, hi)) { s.close(); refreshLocal(); } else paint();
   };
   body.replaceChildren(
-    h("div.small.muted", `${srv ? "Serving" : "On disk"}: layers ${fmt.layers(lo0, hi0)}. Add layers before or after to serve more of the model.`),
-    h("div.row", { style: { gap: "24px" } }, front.el, back.el), bar, sum, err);
+    h("div.small.muted", `${loaded.length ? `Serving layers ${rangesText(loaded.map(x => [x.lo, x.hi]))}` : "Not serving"}; on disk: ${disk.length ? rangesText(disk) : "nothing"}. Pick the range to keep: more layers take more memory, fewer free it.`),
+    h("div.row", { style: { gap: "24px" } }, from.el, thru.el), bar, rows, err);
   paint();
 }
 

@@ -168,12 +168,14 @@ export async function loadModel() {
 }
 
 /** Serve `model` layers [lo, hi) on this Mac (or on a connected peer, by name). Progress arrives as events. */
-export async function serveSlice(model, lo, hi, peer = null) {
+/** opts.replace: a resize (this machine's other slices of the model go once it's loaded);
+ *  opts.trim: then delete the model's layers outside what's served from disk. */
+export async function serveSlice(model, lo, hi, peer = null, opts = {}) {
   const what = `${shortModel(model)} ${fmt.layers(lo, hi)}`;
   if (state.source === "demo") return emit("demo:serve", { model, lo, hi, peer });
   if (state.engine.phase !== "running") return toast("Start your node first", "degraded");
   try {
-    const r = await post("/api/serve", { model, lo, hi, peer });
+    const r = await post("/api/serve", { model, lo, hi, peer, ...opts });
     if (!r.ok) return toast(`Couldn't serve ${what}`, "gap", r.body?.error || `HTTP ${r.status}`);
     feed("load", `${peer || "This machine"} will serve ${what}`, "Downloading only those layers", "info");
     toast(`Serving ${what}${peer ? ` on ${peer}` : ""}`, "info", "Downloads only those layers, then loads them");
@@ -291,6 +293,16 @@ export async function cancelDownload(model, lo, hi) {
     const r = await post("/api/unserve", { model, lo, hi });
     if (!r.ok) return toast(`Couldn't cancel ${what}`, "gap", r.body?.error || `HTTP ${r.status}`);
     toast(`Cancelled downloading ${what}`, "info", "The partial download was removed.");
+    return true;
+  } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
+}
+
+/** Delete `repo`'s layers outside [lo, hi) from disk; layers being served stay. */
+export async function catalogTrim(repo, lo, hi) {
+  try {
+    const r = await post("/api/catalog/trim", { repo, lo, hi }, 60000);
+    if (!r.ok) return toast(`Couldn't free space for ${shortModel(repo)}`, "gap", r.body?.error || `HTTP ${r.status}`);
+    toast(`Freed ${fmt.bytes(r.body.freed)}`, "info", `Kept ${shortModel(repo)} layers ${fmt.layers(lo, hi)} and anything served`);
     return true;
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
 }
