@@ -5,10 +5,12 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-    # The app doesn't change with the downloads site or docs. Tag pushes always build (GitHub skips path filters for tags).
-    paths-ignore: ['downloads/**', 'docs/**']
+    # Build only when something that goes into the installer changes, or this workflow itself: not for the
+    # downloads site, docs, tests, iOS, the rendezvous, or another platform's workflow.
+    # Tag pushes always build (GitHub skips path filters for tags).
+    paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', '.github/workflows/linux.yml']
   pull_request:
-    paths-ignore: ['downloads/**', 'docs/**']
+    paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', '.github/workflows/linux.yml']
   # A manual run with "publish" ticked uploads the build like a tag does: for a release whose tag build
   # failed, or when the artifact quota is full and there is nothing to download and publish by hand.
   workflow_dispatch:
