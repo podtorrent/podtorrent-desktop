@@ -78,33 +78,48 @@ async function serveBuild(env: Env, req: Request, key: string, file: string, imm
   return new Response("body" in obj ? (obj as R2ObjectBody).body : null, { headers });
 }
 
-// Per-platform card content. Requirements and first-run steps match docs/WINDOWS_PLAN.md and LINUX_PLAN.md.
-const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: string[]; first: string }> = {
+// Per-platform card content. Requirements and install steps match docs/WINDOWS_PLAN.md and LINUX_PLAN.md.
+const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: string[]; steps: string[] }> = {
   mac: {
     name: "macOS", arch: "Apple Silicon (M1 or later)",
     icon: `<path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.7.9-.8 0-1.9-.9-3.2-.8-1.6 0-3.1 1-4 2.4-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3 2.4 1.2 0 1.7-.8 3.1-.8 1.5 0 1.9.8 3.2.8 1.3 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.3-2.8-.1 0-2.5-1-2.5-3.9zM14 5.4c.7-.8 1.1-1.9 1-3-1 0-2.1.7-2.8 1.5-.6.7-1.2 1.8-1 2.9 1.1.1 2.1-.6 2.8-1.4z"/>`,
     needs: ["Apple Silicon Mac", "16 GB memory or more recommended"],
     // The app isn't notarized, so Gatekeeper reports a downloaded copy as "damaged" until the quarantine flag is cleared.
-    first: `Open the .dmg and drag PodTorrent to Applications. Then open Terminal and run this once, or macOS will say the app is damaged:
-      <code class="cmd">xattr -dr com.apple.quarantine /Applications/PodTorrent.app</code>`,
+    steps: [
+      "Open the <code>.dmg</code> and drag PodTorrent to Applications.",
+      `Open Terminal and run this once, or macOS will say the app is damaged:<code class="cmd">xattr -dr com.apple.quarantine /Applications/PodTorrent.app</code>`,
+      "Open PodTorrent from Applications.",
+    ],
   },
   windows: {
     name: "Windows", arch: "x64",
     icon: `<path d="M3 5.1 10.4 4v7.1H3zm0 13.8 7.4 1.1v-7H3zm8.2 1.2L21 21.5V13h-9.8zm0-16.2V11H21V2.5z"/>`,
     needs: ["Windows 10 or 11", "NVIDIA RTX GPU, driver 570 or newer"],
-    first: "If SmartScreen appears, choose More info, then Run anyway. Allow PodTorrent through the firewall so peers can reach this machine.",
+    steps: [
+      "Run the downloaded installer.",
+      "If SmartScreen appears, choose <b>More info</b>, then <b>Run anyway</b>.",
+      "Allow PodTorrent through the firewall so peers can reach this machine.",
+    ],
   },
   linux: {
     name: "Linux", arch: "x64 AppImage",
     icon: `<path d="M12 2c-2 0-3.2 1.7-3.2 4.2 0 1.4.3 2.3-.4 3.5C7.3 11.6 5 14 5 17c0 .8.3 1.3.7 1.6-.5.6-.9 1.4-.3 2.1.9 1 3.3.6 4.4 0 .7.2 1.5.3 2.2.3s1.5-.1 2.2-.3c1.1.6 3.5 1 4.4 0 .6-.7.2-1.5-.3-2.1.4-.3.7-.8.7-1.6 0-3-2.3-5.4-3.4-7.3-.7-1.2-.4-2.1-.4-3.5C15.2 3.7 14 2 12 2zm-1.6 4.3c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1-.7-.5-.7-1.1.3-1.1.7-1.1zm3.2 0c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1-.7-.5-.7-1.1.3-1.1.7-1.1zM12 9.3c.9 0 2 .6 2 1s-1.1 1.2-2 1.2-2-.8-2-1.2 1.1-1 2-1z"/>`,
     needs: ["Ubuntu 22.04 or newer (or similar)", "NVIDIA RTX GPU, driver 570 or newer"],
-    first: "Make it executable with <code>chmod +x PodTorrent*.AppImage</code>, then run it.",
+    steps: [
+      `Make the file executable:<code class="cmd">chmod +x PodTorrent*.AppImage</code>`,
+      `Run it:<code class="cmd">./PodTorrent*.AppImage</code>`,
+    ],
   },
   "linux-amd": {
     name: "Linux for AMD", arch: "x64 AppImage · ROCm",
     icon: `<path d="M12 2c-2 0-3.2 1.7-3.2 4.2 0 1.4.3 2.3-.4 3.5C7.3 11.6 5 14 5 17c0 .8.3 1.3.7 1.6-.5.6-.9 1.4-.3 2.1.9 1 3.3.6 4.4 0 .7.2 1.5.3 2.2.3s1.5-.1 2.2-.3c1.1.6 3.5 1 4.4 0 .6-.7.2-1.5-.3-2.1.4-.3.7-.8.7-1.6 0-3-2.3-5.4-3.4-7.3-.7-1.2-.4-2.1-.4-3.5C15.2 3.7 14 2 12 2z"/>`,
     needs: ["Ubuntu 22.04 or newer", "AMD Ryzen AI Max / Max+ / Max PRO (Strix Halo, Radeon 8050S to 8065S)", "Linux kernel 6.14 or newer; your user in the <code>video</code> and <code>render</code> groups"],
-    first: "Make it executable with <code>chmod +x PodTorrent*.AppImage</code>, then run it. On Ubuntu 24.04 first run <code>sudo apt install libfuse2t64</code>. Preview: the first launch measures how much of the shared memory the GPU can use.",
+    steps: [
+      `On Ubuntu 24.04 only, install FUSE:<code class="cmd">sudo apt install libfuse2t64</code>`,
+      `Make the file executable:<code class="cmd">chmod +x PodTorrent*.AppImage</code>`,
+      `Run it:<code class="cmd">./PodTorrent*.AppImage</code>`,
+      "Preview: the first launch measures how much of the shared memory the GPU can use.",
+    ],
   },
 };
 
@@ -119,24 +134,33 @@ main{max-width:1040px;margin:0 auto;padding:56px 16px 72px}
 h1{margin:0;font-size:clamp(28px,5vw,40px);line-height:1.1;letter-spacing:-.02em}
 .lead{color:var(--mut);max-width:640px;margin:12px 0 0}
 .rel{display:inline-block;margin-top:16px;padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--mut);font-size:14px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px;margin:40px 0}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:14px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px;row-gap:0;margin:40px 0 24px}
+@media (max-width:720px){.grid{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;margin-bottom:16px;display:grid;grid-row:span 4;grid-template-rows:subgrid;row-gap:0}
+@media (max-width:720px){.card{display:flex;flex-direction:column}}
+.card>*+*{margin-top:16px}
 .card.me{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
-.head{display:flex;align-items:center;gap:12px}
-.os{width:32px;height:32px;flex:none}
-h2{margin:0;font-size:20px}.arch{margin:0;color:var(--mut);font-size:14px}
-.tag{display:none;margin-left:auto;font-size:12px;font-weight:600;padding:3px 8px;border-radius:999px;background:var(--soft);color:var(--acc)}
+.head{display:flex;align-items:center;gap:14px}
+.os{width:36px;height:36px;flex:none;padding:8px;border-radius:10px;background:var(--soft);color:var(--acc)}
+h2{margin:0;font-size:20px;line-height:1.2}.arch{margin:2px 0 0;color:var(--mut);font-size:14px}
+.tag{display:none;margin-left:auto;white-space:nowrap;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;background:var(--soft);color:var(--acc)}
 .card.me .tag{display:inline-block}
 .btn{display:flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;border-radius:10px;background:var(--acc);color:var(--accfg);text-decoration:none;font-weight:600}
 .btn:hover{filter:brightness(1.08)}.btn:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
 .btn.off{background:transparent;border:1px dashed var(--line);color:var(--mut);font-weight:500}
 .ic{width:18px;height:18px}
-.meta{margin:-6px 0 0;text-align:center;color:var(--mut);font-size:13px}
+.meta{margin:8px 0 0;text-align:center;color:var(--mut);font-size:13px}
+.label{margin:0 0 8px;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)}
 ul{margin:0;padding-left:18px;color:var(--mut);font-size:14px}
-.first{margin:auto 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:14px;color:var(--mut)}
-.first b{color:var(--fg)}
-code{font:13px ui-monospace,Menlo,monospace;background:var(--soft);padding:1px 5px;border-radius:5px;word-break:break-all}
-code.cmd{display:block;margin-top:8px;padding:8px 10px;color:var(--fg);word-break:normal;overflow-wrap:anywhere;user-select:all}
+.needs li+li{margin-top:4px}
+.install{padding-top:16px;border-top:1px solid var(--line)}
+.steps{list-style:none;margin:0;padding:0;counter-reset:s;font-size:14px;color:var(--mut)}
+.steps li{position:relative;padding-left:32px;counter-increment:s;min-height:22px}
+.steps li+li{margin-top:12px}
+.steps li::before{content:counter(s);position:absolute;left:0;top:0;width:22px;height:22px;border-radius:50%;background:var(--soft);color:var(--acc);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.steps b{color:var(--fg)}
+code{font:13px ui-monospace,Menlo,monospace;background:var(--soft);padding:1px 5px;border-radius:5px;white-space:nowrap}
+code.cmd{display:block;white-space:normal;margin-top:8px;padding:8px 10px;color:var(--fg);word-break:normal;overflow-wrap:anywhere;user-select:all}
 h3{font-size:18px;margin:0 0 8px}
 pre{white-space:pre-wrap;font:inherit;color:var(--mut);margin:0}
 .notes,.how{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;margin-top:16px}
@@ -176,9 +200,9 @@ function page(rel: Release | null): Response {
       : `<span class="btn off">Coming soon</span><p class="meta">No ${i.name} build yet</p>`;
     return `<section class="card" data-os="${p}">
       <div class="head">${svg(i.icon, "os")}<div><h2>${i.name}</h2><p class="arch">${i.arch}</p></div><span class="tag">Your system</span></div>
-      ${action}
-      <ul>${i.needs.map((n) => `<li>${n}</li>`).join("")}</ul>
-      <p class="first"><b>First run:</b> ${i.first}</p>
+      <div>${action}</div>
+      <div><p class="label">Requirements</p><ul class="needs">${i.needs.map((n) => `<li>${n}</li>`).join("")}</ul></div>
+      <div class="install"><p class="label">Installation</p><ol class="steps">${i.steps.map((n) => `<li>${n}</li>`).join("")}</ol></div>
     </section>`;
   };
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
