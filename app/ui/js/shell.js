@@ -20,8 +20,8 @@ const VIEWS = { swarm, models: modelsView, playground, node, peers, activity, ne
 const NAV = [
   ["swarm", "Swarm", "swarm", "⌘1"], ["models", "Models", "models", "⌘2"], ["playground", "Playground", "playground", "⌘3"], ["peers", "Peers", "peers", "⌘5"],
 ];
-// Pinned to the bottom: Activity, then this machine (the My Node view), labelled with its name.
-const NAV_BOTTOM = [["activity", "Activity", "activity", "⌘6"], ["node", "This machine", "node", "⌘4"]];
+// Pinned to the bottom: Activity, then the node card (this machine, opens My Node).
+const NAV_BOTTOM = [["activity", "Activity", "activity", "⌘6"]];
 /** This machine's name: the one set in onboarding, else the one the node reports. */
 const machineName = s => settings.peerName || s.self || s.hostInfo?.name || "This machine";
 
@@ -29,10 +29,11 @@ export function mountShell() {
   const items = {};
   const navItem = ([id, label, ic, k]) => {
     const nb = h("span.nb"), el = h("button.nav-item", { type: "button", onclick: () => go(id) }, icon(ic), h("span", label), nb, h("span.nk", k));
-    items[id] = { el, nb, label: el.querySelector("span") };
+    items[id] = { el, nb };
     return el;
   };
-  const nodeCard = h("button.node-card", { type: "button", onclick: () => go("node") },
+  // This machine: its name first; layers and tok/s open below once the node runs.
+  const nodeCard = h("button.node-card", { type: "button", onclick: () => go("node"), "data-tip": "My Node  ⌘4" },
     h("div.top", h("span.you-chip", icon("person")), h("span.nc-name.ellipsis.grow"), h("span.statedot")),
     h("div.bot", h("span", h("b.nc-layers"), " layers"), h("span", h("b.nc-tps"), " tok/s")));
   const demoPill = h("button.badge.demo.demo-pill", { type: "button", "data-tip": "Demo Mode · ⌥⌘D to turn off", onclick: () => setDemo(false) }, "Demo");
@@ -66,7 +67,7 @@ export function mountShell() {
     cur = VIEWS[id].mount(page);
     viewActions.replaceChildren(...(VIEWS[id].toolbar?.() || []));
     viewEl.scrollTop = 0;
-    Object.entries(items).forEach(([k, v]) => k === id ? v.el.setAttribute("aria-current", "page") : v.el.removeAttribute("aria-current"));
+    Object.entries({ ...items, node: { el: nodeCard } }).forEach(([k, v]) => k === id ? v.el.setAttribute("aria-current", "page") : v.el.removeAttribute("aria-current"));
     render(state);
     if (id === "playground") requestAnimationFrame(() => cur?.focus?.());
   }
@@ -80,8 +81,6 @@ export function mountShell() {
     text(title, V.title);
     text(subtitle, V.subtitle?.(s) || "");
     cur?.update?.(s);
-    text(items.node.label, machineName(s));
-    items.node.el.title = "My Node";
     // sidebar badges
     const st = swarmStats(s), ms = models(s), m = ms[0];
     const me = selfNode(s), meSt = me ? nodeState(me, s) : null;
@@ -94,24 +93,24 @@ export function mountShell() {
     setNb("models", "", m ? (m.runnable ? "serving" : m.verdict.level === "gap" ? "gap" : m.verdict.level === "degraded" ? "degraded" : "off") : "");
     const vj = Object.values(s.video.jobs);
     setNb("playground", "", s.chat.busy || vj.some(j => !["done", "failed", "cancelled"].includes(j.state)) ? "active" : "");
-    setNb("node", "", s.engine.phase === "starting" ? "active" : me ? (meSt === "idle" ? "off" : meSt) : s.engine.error ? "gap" : "");
     setNb("peers", st.total ? String(st.total) : "");
     const fresh = curId === "activity" ? 0 : s.feed.length - unseen.at;
     setNb("activity", fresh > 0 ? String(Math.min(99, fresh)) : "");
     const net = networkState();
     setNb("network", net === "online" ? "Online" : "", net === "online" ? "serving" : net === "rejected" ? "gap" : net === "connecting" ? "degraded" : "");
     // node card
-    nodeCard.hidden = !s.role && s.source !== "demo";
-    if (!nodeCard.hidden) {
-      text(nodeCard.querySelector(".nc-name"), me ? `${me.name} · peer` : s.engine.phase === "starting" ? "Starting…" : s.role || "");
-      nodeCard.querySelector(".statedot").className = `statedot ${me ? (meSt === "idle" ? "off" : meSt) : "active"}`;
+    const running = !!me || s.source === "demo";
+    text(nodeCard.querySelector(".nc-name"), machineName(s));
+    nodeCard.querySelector(".statedot").className = `statedot ${me ? (meSt === "idle" ? "off" : meSt) : s.engine.phase === "starting" ? "active" : s.engine.error ? "gap" : "off"}`;
+    cls(nodeCard, "running", running);
+    if (running) {
       const nl = s.slices.filter(x => x.loaded).reduce((a, x) => a + x.hi - x.lo, 0);
       text(nodeCard.querySelector(".nc-layers"), nl ? String(nl) : "–");
       nodeCard.querySelector(".nc-layers").dataset.tip = s.slices.length ? slicesLabel(s.slices) : "Serving nothing";
       const tps = me?.tps.slice(-5) || [];
       text(nodeCard.querySelector(".nc-tps"), tps.length ? fmt.fixed(tps.reduce((a, b) => a + b, 0) / tps.length) : "0.0");
-      nodeCard.setAttribute("aria-label", me ? `This machine: ${nodeStateLabel(me, s)}` : "This machine");
     }
+    nodeCard.setAttribute("aria-label", `${machineName(s)}: ${me ? nodeStateLabel(me, s) : s.engine.phase === "starting" ? "starting" : "not running"}`);
     demoPill.hidden = s.source !== "demo";
     // banners: demo, offline, engine trouble
     const b = [];
