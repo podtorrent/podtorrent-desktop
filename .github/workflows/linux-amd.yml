@@ -12,7 +12,14 @@ on:
     paths-ignore: ['downloads/**', 'docs/**']
   pull_request:
     paths-ignore: ['downloads/**', 'docs/**']
+  # A manual run with "publish" ticked uploads the build like a tag does: for a release whose tag build
+  # failed, or when the artifact quota is full and there is nothing to download and publish by hand.
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish this build to the download page
+        type: boolean
+        default: false
 
 concurrency:
   group: linux-amd-${{ github.ref }}
@@ -87,11 +94,11 @@ jobs:
             app/src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
 
-      # On a v* tag, upload the AppImage to R2 and make it the latest at podtorrent.com/download/linux-amd.
+      # On a v* tag (or a manual run that asks for it), upload the AppImage to R2 and make it the latest at podtorrent.com/download/linux-amd.
       # Tauri names it like the CUDA build (PodTorrent_<version>_amd64.AppImage) and publish.js keys files by
       # name, so it is renamed first: otherwise one build would replace the other in the release.
       # The page has one AMD download, so only the gfx1151 row publishes.
-      - if: startsWith(github.ref, 'refs/tags/v') && matrix.target == 'gfx1151'
+      - if: (startsWith(github.ref, 'refs/tags/v') || inputs.publish) && matrix.target == 'gfx1151'
         working-directory: downloads
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
