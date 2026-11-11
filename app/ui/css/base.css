@@ -19,7 +19,7 @@ h1, h2, h3, h4, p { margin: 0; }
 h1 { font: 650 var(--t-5)/1.2 var(--font-display); letter-spacing: var(--track-tight); }
 h2 { font: 600 var(--t-4)/1.3 var(--font-display); letter-spacing: -0.01em; }
 h3 { font: 600 var(--t-3)/1.3 var(--font-ui); }
-a { color: var(--accent); text-decoration: none; }
+a { color: var(--accent-fg); text-decoration: none; text-underline-offset: 2px; transition: color var(--d-fast); }
 a:hover { text-decoration: underline; }
 button, input, select, textarea { font: inherit; color: inherit; }
 input, textarea, .selectable, .msg-body, pre, code, .mono { -webkit-user-select: text; user-select: text; cursor: auto; }

@@ -61,11 +61,18 @@ export default {
       h("div.small.faint", "Machines on different networks connect directly over encrypted QUIC (UDP hole punching). The swarm is open: any PodTorrent peer can send work to this machine. "));
 
     // ---- starting ----
-    const startLine = h("div.mono.small.muted");
+    const startLine = h("span.grow");
+    const startPct = h("span.num");
     const startBar = h("div.progress.indeterminate", h("i"));
-    const starting = h("div.page", h("div.card.pad.starting", h("div.row", h("span.statedot.active"), h("h2", "Starting your node…")), startBar, startLine,
-      h("div.small.faint", "First run installs the Python environment (one time, needs internet). Output: ~/.podtorrent/engine.log"),
-      h("div", button("Cancel", { onclick: () => stopNode() }))));
+    const starting = h("div.page", h("section.card.starting",
+      h("div.starting-h",
+        h("div.starting-art", icon("node")),
+        h("div.col.grow", h("h2", "Starting your node"),
+          h("p", "It joins the swarm in a few seconds. The first run also installs the Python environment, once, and needs internet.")),
+        button("Cancel", { variant: "ghost", size: "sm", onclick: () => stopNode() })),
+      startBar,
+      h("div.starting-log.mono", startLine, startPct),
+      h("div.small.faint", "Full output: ~/.podtorrent/engine.log")));
 
     // ---- running ----
     const g = gauge();
@@ -207,7 +214,8 @@ export default {
           const su = s.engine.setup;
           startBar.classList.toggle("indeterminate", !su);
           startBar.firstChild.style.width = su ? `${(su.frac * 100).toFixed(1)}%` : "";
-          text(startLine, s.engine.line);
+          text(startLine, s.engine.line || "Starting engine…");
+          text(startPct, su ? `${Math.round(su.frac * 100)}%` : "");
           return;
         }
         const me = selfNode(s);

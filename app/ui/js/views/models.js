@@ -165,7 +165,7 @@ export default {
         S.mem.set(s.memFree, "");
         swarmCard.hidden = !ms.length; emptyBox.hidden = !!ms.length;
         if (!ms.length) {
-          const k = s.engine.phase + s.source;
+          const k = s.engine.phase;
           if (k !== emptyKey) {
             emptyKey = k;
             emptyBox.replaceChildren(s.engine.phase === "running"
@@ -179,7 +179,7 @@ export default {
       },
     };
     function paintVideo(s) {
-      const live = s.source === "live" && s.engine.phase === "running";
+      const live = s.engine.phase === "running";
       const es = s.video.encoder?.slices || [], route = live ? s.video.swarm?.route : null;
       V.run.set(live ? !!route : null, route ? `renders on ${route.video}` : live ? "see below for what's missing" : "node is stopped");
       V.lay.set(es.reduce((a, x) => a + (x.hi - x.lo), 0), `of 50 · ${es.filter(x => x.loaded).length} slice(s) in memory`);

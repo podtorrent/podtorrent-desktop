@@ -7,6 +7,8 @@ import { icon } from "../icons.js";
 import { invoke, isTauri } from "../native.js";
 import { podView } from "./pod.js";
 import { go } from "../actions.js";
+import { state as app } from "../store.js";
+import { startHost } from "../engine.js";
 
 let status = null; // last network_status, for the toolbar subtitle and the sidebar
 // Set by a join until the agent reports connected or rejected: only then does it toast the outcome.
@@ -29,10 +31,14 @@ function settleJoin(s) {
 }
 if (isTauri) { poll(); setInterval(poll, 3000); }
 
+// The network is only tried once this machine's node is started (Start My Node): the agent
+// serves network requests through the node, and the app doesn't run it without one.
+const nodeOff = () => app.engine.phase !== "running";
+
 /** "online" (agent connected), "rejected" (the network refuses the token or node), "connecting"
  *  (agent running, link down) or null. For the sidebar. */
 export function networkState() {
-  return status?.connected ? "online" : problem(status)?.rejected ? "rejected" : status?.running ? "connecting" : null;
+  return nodeOff() ? null : status?.connected ? "online" : problem(status)?.rejected ? "rejected" : status?.running ? "connecting" : null;
 }
 
 const netName = s => s?.config?.network || "production";
@@ -41,7 +47,7 @@ const netName = s => s?.config?.network || "production";
  *  rejected means the network refuses this token or node (retrying won't help); null when
  *  connected or there is nothing to explain yet. */
 function problem(s) {
-  if (!s?.running || s.connected) return null;
+  if (!s?.running || s.connected || nodeOff()) return null;
   const line = (s.log || "").split("\n").reverse().find(l => l.includes("msg=connected") || l.includes("link down"));
   const say = (text, rejected = false) => ({ text, rejected });
   if (!line || line.includes("msg=connected")) return say(`Reaching the ${netName(s)} network…`);
@@ -60,7 +66,7 @@ const field = (label, input, hint) => h("div.field", h("label", label), input, h
 
 export default {
   title: "Network",
-  subtitle: () => !isTauri ? "Desktop app only" : status?.connected ? `Serving as ${status.config?.node} on ${netName(status)}`
+  subtitle: () => !isTauri ? "Desktop app only" : nodeOff() ? "Node is offline" : status?.connected ? `Serving as ${status.config?.node} on ${netName(status)}`
     : problem(status)?.rejected ? `Rejected by ${netName(status)}` : status?.running ? `Connecting to ${netName(status)}` : status?.config ? "Not connected" : "Not joined",
   mount(root) {
     if (!isTauri) {
@@ -80,6 +86,9 @@ export default {
     const whyText = h("span.grow");
     const replaceToken = button("Replace token", { variant: "primary", size: "sm", onclick: () => { editToken = true; show(); token.focus(); } });
     const why = h("div.next.small", { hidden: true }, icon("alert"), whyText, replaceToken);
+    const offNote = h("div.next.small", { hidden: true }, icon("alert"),
+      h("span.grow", "This machine's node is offline, so it isn't connecting to the network. Start your node first."),
+      button("Start My Node", { variant: "primary", size: "sm", icon: "play", onclick: () => startHost() }));
     const log = h("pre.small.mono.faint.net-log");
     let busy = false, filled = false, net = "production", editToken = false;
     const which = segmented([{ value: "production", label: "Production" }, { value: "staging", label: "Staging" }], net, v => { net = v; label(); }, "Network");
@@ -105,6 +114,7 @@ export default {
       saveToken.hidden = !joined || token.hidden;
       saveToken.disabled = busy || !token.value.trim();
       replaceToken.hidden = editToken || !problem(status)?.rejected;
+      join.disabled = busy || nodeOff();
       tokenButtons.hidden = cancelToken.hidden && saveToken.hidden;
       text(join.querySelector("span"), saved && token.value.trim() ? "Save Token and Join" : "Join Network");
     }
@@ -116,7 +126,9 @@ export default {
 
     // Starts (or restarts) the agent; success is only toasted once it reports connected (see poll).
     async function doJoin() {
-      if (busy) return; busy = true; show();
+      if (busy) return;
+      if (nodeOff()) return toast("Start your node first", "degraded", "The network is only tried once this machine's node is started.");
+      busy = true; show();
       try {
         await invoke("network_join", { node: node.value, token: token.value, priceIn: Number(pin.value || 0), priceOut: Number(pout.value || 0), network: net });
         if (token.value.trim()) toast("Node token saved", "info", `Connecting to the ${net} network with it…`);
@@ -143,12 +155,19 @@ export default {
       token.placeholder = s.token_saved ? "Paste the new node token" : "Paste your node token";
       show();
       label();
-      text(state, !s.available ? "Agent missing" : s.connected ? `Online · ${netName(s)}` : s.running ? "Connecting…" : s.config ? "Not connected" : "Not joined");
+      const off = nodeOff();
+      offNote.hidden = !off;
+      const starting = app.engine.phase === "starting";
+      offNote.querySelector("button").hidden = starting;
+      text(offNote.querySelector("span"), starting ? "Your node is starting. The network is tried once it's up."
+        : s.config ? "This machine's node is offline, so it isn't connecting to the network. Start your node and it connects again."
+        : "This machine's node is offline. Start your node, then join the network.");
+      text(state, !s.available ? "Agent missing" : off ? (starting ? "Node starting…" : "Node offline") : s.connected ? `Online · ${netName(s)}` : s.running ? "Connecting…" : s.config ? "Not connected" : "Not joined");
       const p = problem(s);
       why.hidden = !p; text(whyText, p?.text || "");
       why.classList.toggle("err", !!p?.rejected);
       if (!s.connected && p?.rejected) text(state, "Rejected");
-      state.className = `badge dot ${s.connected ? "serving" : p?.rejected ? "gap" : s.running ? "degraded pulse" : ""}`;
+      state.className = `badge dot ${off ? "neutral" : s.connected ? "serving" : p?.rejected ? "gap" : s.running ? "degraded pulse" : ""}`;
       const pv = podView(), inPod = !!pv?.pod, isHead = !!pv?.heads?.length;
       const names = Object.fromEntries((pv?.members || []).map(m => [m.peer_id, m.name]));
       const heads = [...new Set((pv?.pod?.plans || []).map(p => names[p.head] || p.head.slice(0, 8)))];
@@ -173,6 +192,7 @@ export default {
         h("div.card-b",
           h("p.small.muted", "Offer the models your swarm fully covers to network clients, with this machine as the head of each route. Needs an approved node id and token."),
           podNote,
+          offNote,
           why,
           h("div.net-grid",
             field("Network", which, "Where your node was approved. A staging token doesn't work on production."),

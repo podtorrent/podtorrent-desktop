@@ -305,8 +305,7 @@ export function catalogSection() {
     mine,
     update(s) {
       const was = running;
-      running = s.source === "live" && s.engine.phase === "running";
-      if (s.source !== "live") { mine.hidden = true; return; }
+      running = s.engine.phase === "running";
       if (running !== was) { slicesKey = null; if (!running) refreshLocal(); }   // stopped: read the disk natively
       if (!running) return;
       // Slices added, removed, loaded or moved to another phase: re-scan the disk. Byte counts only move

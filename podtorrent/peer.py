@@ -1450,16 +1450,39 @@ class PeerApp:
             openai_api.write_network_manifest(self, home())
 
 
+def port_free(port: int, host: str = "127.0.0.1") -> bool:
+    """True when nothing is listening on `port`. Connections left in TIME_WAIT by a node that
+    just stopped don't count: SO_REUSEADDR (what the server itself binds with) ignores them, so
+    stopping and restarting never trips over the previous run. Windows has no such lingering
+    bind failure, and there SO_REUSEADDR would let a bind steal a live listener, so it's skipped."""
+    import socket
+    with socket.socket() as probe:
+        if os.name != "nt":
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def wait_port_free(port: int, timeout: float = 6.0, host: str = "127.0.0.1") -> bool:
+    """`port_free`, retried while the node that held it is still shutting down."""
+    import time
+    deadline = time.monotonic() + timeout
+    while not port_free(port, host):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.25)
+    return True
+
+
 def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[tuple[str | None, int, int]] | None,
              open_browser: bool = False):
     """`serve`: slices to load at start as (model or None for `repo`, lo, hi); default: the saved config."""
-    import socket
-    with socket.socket() as probe:  # fail fast, before loading any model
-        try:
-            probe.bind(("127.0.0.1", port))
-        except OSError:
-            raise SystemExit(f"port {port} is already in use by another program; "
-                             f"pick a free one with --port or PODTORRENT_PORT")
+    if not wait_port_free(port):
+        raise SystemExit(f"port {port} is already in use by another program; "
+                         f"pick a free one with --port or PODTORRENT_PORT")
     app_state = PeerApp(repo, Path(model_dir), n_layers)
     app_state.video = VideoService(app_state.emit, NAME)
     if serve:

@@ -353,7 +353,7 @@ export function videoStudio(top) {
     focus() { prompt.focus(); },
     update(s) {
       paintJobs(s);
-      if (s.source !== "live" || s.engine.phase !== "running") { asked = false; return show("offline", offline); }
+      if (s.engine.phase !== "running") { asked = false; return show("offline", offline); }
       if (Date.now() - swarmAsked > 3000) { swarmAsked = Date.now(); videoSwarmStatus(); }
       if (!s.video.status) { if (!asked) { asked = true; videoStatus(); } return show("loading", loading); }
       const st = s.video.status;

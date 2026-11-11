@@ -68,14 +68,15 @@ export default {
     const covCard = h("button.card.cov-card", { type: "button", onclick: () => go("models") },
       h("div.row", h("span.wl-tag.text", "Text"), h("span.caps", "Model coverage"), covTitle, h("span.spacer"), covVerdict), strip, covReason);
     const ctaBody = h("p");
-    const cta = h("div.join-cta",
+    const cta = h("div.join-cta", { hidden: true },
       h("div.join-cta-art", icon("swarm")),
       h("div.col.join-cta-text", h("h2", "You're watching, not in the swarm yet"), ctaBody),
       button("Start My Node", { variant: "primary", size: "xl", icon: "play", onclick: actions.startHost }));
     const offBadge = h("span.badge.dot.neutral", "This machine is offline");
     const body = h("div.page",
+      cta,
       h("div.grid-stats", Object.values(S)),
-      h("div.card.net-card", h("div.card-h", h("h2", "Network"), offBadge, h("span.spacer"), layout), cta, stage, h("div.card-f", legend, note)),
+      h("div.card.net-card", h("div.card-h", h("h2", "Network"), offBadge, h("span.spacer"), layout), stage, h("div.card-f", legend, note)),
       covCard, video.el);
     const emptyBox = h("div.page");
     root.append(body, emptyBox);
@@ -84,11 +85,11 @@ export default {
     let emptyKey = "";
     function renderEmpty(s) {
       const key = s.engine.phase + "|" + s.engine.error;
-      if (key === emptyKey) { const l = emptyBox.querySelector(".mono"); if (l) text(l, s.engine.line || "Starting engine…"); return; }
+      if (key === emptyKey) { const l = emptyBox.querySelector(".mono"); if (l) text(l, s.engine.phase === "running" ? "Connecting to your node…" : s.engine.line || "Starting engine…"); return; }
       emptyKey = key;
-      if (s.engine.phase === "starting") {
+      if (s.engine.phase === "starting" || s.engine.phase === "running") {
         emptyBox.replaceChildren(h("div.grid-stats", Object.keys(S).map(() => h("div.stat", skeleton(90, 12), h("div", { style: { height: "10px" } }), skeleton(60, 26)))),
-          h("div.card", { style: { height: "420px", display: "grid", placeItems: "center" } }, h("div.col", { style: { alignItems: "center" } }, h("div.progress.indeterminate", { style: { width: "220px" } }, h("i")), h("div.small.muted.mono", s.engine.line || "Starting engine…"))));
+          h("div.card", { style: { height: "420px", display: "grid", placeItems: "center" } }, h("div.col", { style: { alignItems: "center" } }, h("div.progress.indeterminate", { style: { width: "220px" } }, h("i")), h("div.small.muted.mono", s.engine.phase === "running" ? "Connecting to your node…" : s.engine.line || "Starting engine…"))));
         return;
       }
       emptyBox.replaceChildren(empty({
@@ -138,7 +139,7 @@ export default {
         if (has) emptyKey = "";
         if (!has) { graph.setVisible(false); return renderEmpty(s); }
         const st = swarmStats(s);
-        const preview = s.engine.phase === "stopped" && s.source === "live";
+        const preview = s.engine.phase === "stopped";
         cta.hidden = !preview; offBadge.hidden = !preview;
         if (preview) text(ctaBody, s.engine.error
           ? `The engine stopped: ${s.engine.error.split("\n").pop().slice(0, 160)}`
@@ -155,7 +156,7 @@ export default {
         graph.setVisible(g);
         if (g) graph.update(); else renderGrid(s);
         text(note, "");
-        if (s.source === "live" && s.engine.phase === "running") {
+        if (s.engine.phase === "running") {
           if (Date.now() - vAsk > 3000) { vAsk = Date.now(); videoSwarmStatus(); }
           video.paint(s.video.swarm);
         } else video.paint(null);

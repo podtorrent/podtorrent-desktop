@@ -34,7 +34,7 @@
 
   --fg-1: #eceef1;
   --fg-2: #a3a6af;
-  --fg-3: #737680;
+  --fg-3: #8a8d97;   /* ≥4.5:1 on --bg-content */
   --fg-4: #50535c;
   --fg-on-accent: #04252b;
 
@@ -54,6 +54,15 @@
   --c-wl-video: #ff7ac6;  /* workload: video */
 
   --accent: #3fe8ff;
+  --accent-fg: #3fe8ff;   /* accent as text/icon on a surface (the fill --accent is too pale in light) */
+
+  /* text/icon-safe status colors (AA on surfaces); fills keep --c-* */
+  --c-serving-fg: var(--c-serving); --c-active-fg: var(--c-active);
+  --c-degraded-fg: var(--c-degraded); --c-gap-fg: var(--c-gap);
+
+  /* callout tones: one recipe for banners, inline notices and toasts */
+  --tone-bg-pct: 10%; --tone-line-pct: 30%;
+  --fg-on-solid: #fff;
 
   /* type */
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
@@ -130,8 +139,8 @@
 
   --fg-1: #1b1c20;
   --fg-2: #5b5e67;
-  --fg-3: #868993;
-  --fg-4: #b3b5bd;
+  --fg-3: #6b6e78;   /* ≥4.5:1 on white and --bg-content */
+  --fg-4: #a4a6af;
 
   --line-1: rgba(0, 0, 0, 0.07);
   --line-2: rgba(0, 0, 0, 0.11);
@@ -146,6 +155,11 @@
   --c-net: #6b7489;
   --c-wl-text: #3f63d6;
   --c-wl-video: #c42f84;
+
+  --accent-fg: #0a7388;
+  --c-serving-fg: #0b7a50; --c-active-fg: #0a6ba3;
+  --c-degraded-fg: #8f5800; --c-gap-fg: #c4213a;
+  --tone-bg-pct: 8%; --tone-line-pct: 32%;
 
   --elev-float: 0 0 0 1px var(--line-2), 0 12px 32px rgba(15, 20, 30, 0.16), 0 2px 6px rgba(15, 20, 30, 0.08), var(--highlight);
 }
