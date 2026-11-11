@@ -243,50 +243,34 @@ function guide(): Response {
       </ul>
       <p>The first launch downloads the inference engine into your home folder (a few GB on Windows and Linux), so give it a few minutes.</p>`],
     ["name", "2. Name this machine", `
-      <p>On first launch, a short welcome walks you through four steps. First, name this machine. Other machines in the swarm see this name, so pick something you'll recognise, like <code>studio</code> or <code>logesh-air</code>. Leave it empty to use the hostname. PodTorrent also shows the chip and memory it found.</p>
-      <p>You can skip the welcome at any time and replay it later from Settings.</p>`],
-    ["run", "3. Choose how it runs", `
-      <p>Pick who this machine serves with:</p>
+      <p>On first launch, PodTorrent asks for a name. Other machines in the swarm see this name, so pick something you'll recognise, like <code>studio</code> or <code>logesh-air</code>. Leave it empty to use the hostname.</p>
+      ${fig("01-name.jpg", "Welcome screen asking for a name for this machine", "The first screen: a name for this machine.")}`],
+    ["serve", "3. Choose what to serve", `
+      <p>A large model is split into layers, and each machine serves a slice. Pick a slice that fits this machine's memory. PodTorrent downloads only those layers, and warns you if a choice may not fit.</p>
       <ul>
-        <li><b>With anyone:</b> the matchmaker pairs this machine with others that have the same model, in a public pod, once together they cover every layer.</li>
-        <li><b>In my pod:</b> only machines you invite, with a code. Choose <b>Create a pod</b> and name it, or <b>Join with a code</b> and paste an invite that starts with <code>pod1-</code>. The owner's machine must be online to join.</li>
-        <li><b>Just this machine:</b> it holds the whole model and links to no other machine.</li>
+        <li><b>Layers 0–23</b> or <b>24–47</b>: half of Qwen3-30B-A3B, about 8 GB. Two machines with one half each can run the whole model.</li>
+        <li><b>Layers 0–11</b>: a quarter, for a smaller machine.</li>
+        <li><b>Nothing for now</b>: join the swarm and chat with models other machines serve. You can serve layers later from Models.</li>
       </ul>
-      <p>A machine is in one pod at a time. You can change it later from <b>Pod</b>.</p>`],
-    ["pick", "4. Pick a model", `
-      <p>A large model is split into layers, and each machine serves a slice. The model table lists families on the left, with a filter and precision on top. Each row shows the model's size and how much of it fits this machine, such as <b>Whole model</b>, <b>24 of 48 layers</b> or <b>Too big</b>. Models already served in the swarm are tagged <b>In swarm</b>, and models that don't run on PodTorrent yet are greyed out.</p>
-      <ul>
-        <li><b>With anyone / In my pod:</b> you download only your share of the layers, sized to your free memory and the gaps in the swarm.</li>
-        <li><b>Just this machine:</b> the whole model has to fit in memory.</li>
-        <li><b>Nothing for now:</b> join the swarm and chat with models other machines serve. You can serve layers later from Models.</li>
-        <li>Joining a pod with a code skips this step: the pod's owner decides which layers you serve.</li>
-      </ul>
-      <p>Below the table you'll see free memory, free disk and the download size. <b>Change drive</b> chooses where models are stored. On the last screen, click <b>Start My Node</b>. Downloads continue in the background, and chat works while they do.</p>`],
-    ["pods", "5. Pods: serve with machines you choose", `
-      <p>The <b>Pod</b> tab shows who this machine serves with. It has three states:</p>
-      <ul>
-        <li><b>Public swarm:</b> no pod yet. The matchmaker puts this machine in a public pod. You can create a private pod or serve alone from here to leave it.</li>
-        <li><b>Private pod:</b> the owner clicks <b>Invite machine</b> to make a single-use code (copy it with <b>Copy</b>), and the other machine uses <b>Pod → Join a pod</b>. The list shows each machine, what it serves and whether it's <b>Linked</b>, <b>Connecting</b> or <b>Offline</b>. The owner can <b>Remove</b> a machine or <b>Disband pod</b>, which sends everyone back to the public swarm. Members choose <b>Leave pod</b>.</li>
-        <li><b>Alone:</b> a pod of one. Serve whole models on this machine only. It can still join the PodTorrent network as its own node.</li>
-      </ul>
-      <p>In a pod, machines connect only to each other, and a model's layers are split between them. Only a pod's head, the machine that runs a model's first and last steps and answers chat for it, joins the network.</p>`],
-    ["swarm", "6. See the swarm", `
-      <p>The <b>Swarm</b> view shows every machine or peer online, across any network, with pods grouped around their head machine. They find each other and connect directly: there's no address to type and no VPN. Each circle shows the layers that machine serves, and arrows show tokens moving between them.</p>
+      <p>You can also choose where models are stored. On the last screen, click <b>Start My Node</b>.</p>
+      ${fig("02-serve.jpg", "Choosing which layers this machine serves", "Pick a slice. You can change it any time.")}`],
+    ["swarm", "4. See the swarm", `
+      <p>The <b>Swarm</b> view shows every machine or peer online, across any network. They find each other and connect directly: there's no address to type and no VPN. Each circle shows the layers that machine serves, and arrows show tokens moving between them.</p>
       <p>A red circle is a peer that's online but can't be reached from here, for example one behind a strict NAT. Its layers don't count until it's reachable.</p>
       ${fig("03-swarm.jpg", "Swarm view with a graph of connected peers", "Peers online, pooled memory and throughput, and the network graph.")}`],
-    ["models", "7. Check which models can run", `
-      <p><b>Models</b> has a <b>Text</b> and a <b>Video</b> tab. Under <b>In the swarm</b>, each text model has a bar of its layers. A model is <b>Ready to use</b> once every layer has a reachable machine serving it, and <b>Open Playground</b> starts a chat with it. A gap shows which layers still need a peer.</p>
-      <p>To fill a gap, click <b>Serve missing</b> to serve those layers on this machine; the size is shown before anything downloads. Use the play and stop buttons on a row to start or stop serving this machine's layers. <b>Choose a model</b> at the bottom is the same table as in the welcome: pick any model to download and serve its layers.</p>
+    ["models", "5. Check which models can run", `
+      <p><b>Models</b> lists each model in the swarm with a bar of its layers. A model is <b>Ready to use</b> once every layer has a reachable machine serving it. A gap shows which layers still need a peer.</p>
+      <p>To fill a gap, serve those layers on this machine, or ask another machine to. <b>Find models</b> at the bottom lets you add other supported models.</p>
       ${fig("04-models.jpg", "Models view showing layer coverage for two models", "Each layer range and who serves it. Green means served.")}`],
-    ["chat", "8. Chat with the swarm", `
+    ["chat", "6. Chat with the swarm", `
       <p>Open <b>Playground</b>, pick a ready model, and type a message. Your prompt passes through each machine's layers in turn, and the answer streams back to you.</p>
       <p>Under each reply you'll see its speed, time to first token, and the <b>route</b> it took. <b>Token trace</b> shows how long each hop took. Replies use greedy decoding, so the same prompt gives the same answer.</p>
       ${fig("05-playground.jpg", "Playground with a chat reply and its route", "A reply with its route through the swarm. The sidebar shows which peers serve each layer.")}`],
-    ["node", "9. Manage your machine", `
-      <p><b>My Node</b> (the card at the bottom of the sidebar) shows what this machine contributes: memory in use, layers served, tokens processed and requests helped. Use <b>Serve text layers…</b> to add a slice, <b>Stop serving</b> to drop one, or <b>Stop node</b> to leave the swarm.</p>
+    ["node", "7. Manage your machine", `
+      <p><b>My Node</b> shows what this machine contributes: memory in use, layers served, tokens processed and requests helped. Use <b>Serve text layers…</b> to add a slice, <b>Stop serving</b> to drop one, or <b>Stop node</b> to leave the swarm.</p>
       ${fig("06-node.jpg", "My Node view showing this machine's contribution", "This machine's slices and stats.")}`],
-    ["network", "10. Serve the PodTorrent network (optional)", `
-      <p>Once your swarm or pod covers a whole model, it can answer requests from the PodTorrent network, and this machine's operator is paid for each one. Your node must be running first; the Network tab shows <b>Node offline</b> with a <b>Start My Node</b> button until it is. In a pod, join from the head machine. In <b>Network</b>:</p>
+    ["network", "8. Serve the PodTorrent network (optional)", `
+      <p>Once your swarm covers a whole model, it can answer requests from the PodTorrent network, and this machine's operator is paid for each one. In <b>Network</b>:</p>
       <ol>
         <li>Choose <b>Production</b> or <b>Staging</b>.</li>
         <li>Enter your approved <b>node id</b> and <b>node token</b>.</li>
@@ -298,7 +282,6 @@ function guide(): Response {
       <ul>
         <li><b>macOS says PodTorrent is damaged:</b> run the <code>xattr</code> command from step 1.</li>
         <li><b>A peer shows as not reachable:</b> its network blocks direct connections (often a strict NAT or firewall). On Windows, make sure PodTorrent is allowed through the firewall. Try another network if it persists.</li>
-        <li><b>Can't join a pod:</b> codes start with <code>pod1-</code>, work once, and expire. Make sure the owner's machine is online, or ask for a new invite.</li>
         <li><b>A model never becomes ready:</b> open Models and look for the gap. Some machine has to serve those layers.</li>
         <li><b>A slice won't download:</b> it was too big for this machine's memory. Choose a smaller range.</li>
         <li><b>Keep machines awake</b> while serving, or their layers drop out of the swarm.</li>
@@ -306,7 +289,7 @@ function guide(): Response {
   ];
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Using PodTorrent</title>
-<meta name="description" content="How to install PodTorrent, choose a pod and a model, serve layers, and chat with the swarm.">
+<meta name="description" content="How to install PodTorrent, serve layers of a model, and chat with the swarm.">
 <style>
 ${STYLE}</style></head><body><main>
 <a class="back" href="/download">← Download PodTorrent</a>
