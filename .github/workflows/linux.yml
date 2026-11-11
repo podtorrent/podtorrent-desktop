@@ -50,7 +50,9 @@ jobs:
 
       - run: npx tauri build --bundles appimage,deb
 
+      # Don't let a full artifact quota stop the build, or the R2 publish below on a tag.
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: podtorrent-linux
           path: |
