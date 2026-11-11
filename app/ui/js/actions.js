@@ -2,7 +2,6 @@
 // keyboard shortcuts all trigger the same thing.
 import { state, settings, setSetting, emit, on, resetState, commit, selfNode } from "./store.js";
 import * as engine from "./engine.js";
-import { startDemo, stopDemo, presets } from "./demo.js";
 import { toast } from "./ui.js";
 
 export const VIEWS = ["swarm", "models", "playground", "node", "peers", "activity", "pod", "network", "settings"];
@@ -15,22 +14,6 @@ export function go(v, tab) {
   if (tab) setSetting(`${v}Tab`, tab);
   route = v;
   emit("route", v);
-}
-
-export async function setDemo(on_) {
-  if (on_ === (state.source === "demo")) return;
-  if (on_ && state.engine.phase !== "stopped" && state.source === "live") {
-    toast("Demo Mode is view-only", "info", "Your real node keeps running; turn Demo off to see it again.");
-  }
-  setSetting("demo", on_);
-  if (on_) { engine.detach(); startDemo(settings.demoPreset); }
-  else { stopDemo(); resetState({ source: "live" }); await engine.attachExisting(); }
-  toast(on_ ? `Demo Mode on · ${presets[settings.demoPreset].label}` : "Demo Mode off", on_ ? "degraded" : "info");
-}
-export const toggleDemo = () => setDemo(state.source !== "demo");
-export function setDemoPreset(p) {
-  setSetting("demoPreset", p);
-  if (state.source === "demo") startDemo(p);
 }
 
 /** Kept for the menu and ⌘K: there's no address to enter any more, so this just starts the peer. */
@@ -63,7 +46,7 @@ export function handleMenu(id) {
   if (id.startsWith("nav:")) return go(id.slice(4));
   ({
     settings: () => go("settings"), palette: () => emit("palette"), "toggle-sidebar": toggleSidebar,
-    inspector: toggleInspector, "swarm-layout": toggleSwarmLayout, demo: toggleDemo, shortcuts: () => emit("shortcuts"),
+    inspector: toggleInspector, "swarm-layout": toggleSwarmLayout, shortcuts: () => emit("shortcuts"),
     onboarding: () => emit("onboarding"), "node:start-host": actions.startHost, "node:join": actions.join,
     "node:load": actions.load, "node:stop": actions.stop,
   })[id]?.();

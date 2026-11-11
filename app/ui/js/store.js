@@ -1,11 +1,11 @@
-// App state, the engine-event reducer (shared by live and Demo Mode), and derived selectors.
+// App state, the engine-event reducer , and derived selectors.
 // Mutations mark the store dirty; subscribers run once per animation frame.
 import { median, fmt } from "./dom.js";
 
 const SETTINGS_KEY = "pt.settings";
 const HISTORY_KEY = "pt.history";
 const DEFAULT_SETTINGS = {
-  theme: "system", reduceEffects: false, demo: false, demoPreset: "swarm", demoAutoplay: true,
+  theme: "system", reduceEffects: false, 
   sidebarCollapsed: false, swarmLayout: "graph", inspector: true, maxTokens: 256, onboarded: false,
   peerName: "", pendingServe: null, pendingPod: null, notifications: true,
   valuationBasis: null, macPrice: null, amortMonths: null,
@@ -22,7 +22,6 @@ export function setSetting(k, v) { settings[k] = v; save(SETTINGS_KEY, settings)
 
 function blank() {
   return {
-    source: settings.demo ? "demo" : "live",
     role: null,              // "host" while this Mac's peer runs (every Mac is a peer; the name is historical)
     engine: { phase: "stopped", owned: false, line: "", error: "" }, // stopped|starting|running|unreachable
     conn: "idle",            // the peer's event stream: idle|connecting|live|down
@@ -88,7 +87,7 @@ function node(name) {
   };
 }
 
-/** Apply one engine event (host WebSocket shape). Demo Mode feeds the same shapes. */
+/** Apply one engine event (host WebSocket shape). */
 export function applyEvent(ev) {
   const ts = ev.ts || Date.now() / 1000;
   switch (ev.type) {
@@ -246,7 +245,7 @@ function applySwarm(ev) {
  * that sent the prompt, so one Mac never receives another Mac's chat. */
 export const chatKey = crypto.randomUUID();
 /** The host marks the requester's copy of generation events; others get them without text. */
-const mine = ev => !!ev.mine || state.source === "demo";
+const mine = ev => !!ev.mine;
 
 function streamingMsg(ev = {}) {
   if (!mine(ev)) return null;
@@ -283,7 +282,6 @@ const today = () => new Date().toISOString().slice(0, 10);
 /** Per-day counters beyond tokens: requests, online/active seconds, block-seconds hosted. */
 export const dayStats = k => history.stats[k] ||= { req: 0, online_s: 0, active_s: 0, block_s: 0 };
 function recordHistory() {
-  if (state.source !== "live") return;
   const me = state.nodes[state.self];
   const day = today();
   let dirtyH = false;

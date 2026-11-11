@@ -1,4 +1,4 @@
-"""Serve app/ui for a browser preview (Demo Mode works without the app). No caching."""
+"""Serve app/ui for a browser preview. No caching."""
 import functools
 import http.server
 import pathlib

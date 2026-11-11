@@ -61,4 +61,4 @@ Semantic colors have **one meaning everywhere**:
 
 - Views build their DOM once and update targeted nodes from `store.subscribe` (batched per animation frame).
 - Never put `.empty` or another component class name on a sub-element. Modifier classes are prefixed (`is-empty`).
-- No number appears unless it came from the engine, or from Demo Mode while Demo is visibly on.
+- No number appears unless it came from the engine.

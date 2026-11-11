@@ -110,6 +110,6 @@ npm run dev      # dev mode
 npm run build    # app/src-tauri/target/release/bundle/macos/PodTorrent.app (also .dmg)
 ```
 
-The app keeps its own UI (Swarm, Models, Playground, My Node, Peers, Activity) and talks to the engine over HTTP/WebSocket; closing the window keeps the node running in the menu bar, ⌘Q quits. Demo Mode (⌥⌘D) simulates a swarm for screenshots. UI docs: [UI_AUDIT](docs/UI_AUDIT.md), [DESIGN_SYSTEM](docs/DESIGN_SYSTEM.md), [UI_DATA_GAPS](docs/UI_DATA_GAPS.md), [SCREENSHOT_GUIDE](docs/SCREENSHOT_GUIDE.md). Preview the UI in a browser: `python3 app/scripts/serve-ui.py`.
+The app keeps its own UI (Swarm, Models, Playground, My Node, Peers, Activity) and talks to the engine over HTTP/WebSocket; closing the window keeps the node running in the menu bar, ⌘Q quits. UI docs: [UI_AUDIT](docs/UI_AUDIT.md), [DESIGN_SYSTEM](docs/DESIGN_SYSTEM.md), [UI_DATA_GAPS](docs/UI_DATA_GAPS.md). Preview the UI in a browser: `python3 app/scripts/serve-ui.py`.
 
 Engine output goes to `~/.podtorrent/engine.log`. The app is unsigned: on another Mac, right-click > Open the first time (or `xattr -dr com.apple.quarantine PodTorrent.app`).

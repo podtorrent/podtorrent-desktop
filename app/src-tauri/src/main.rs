@@ -781,8 +781,6 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .item(&item("inspector", "Toggle Inspector", Some("CmdOrCtrl+I"))?)
         .item(&item("swarm-layout", "Toggle Graph / Grid", Some("CmdOrCtrl+G"))?)
         .separator()
-        .item(&item("demo", "Demo Mode", Some("Alt+CmdOrCtrl+D"))?)
-        .separator()
         .fullscreen()
         .build()?;
     let node = SubmenuBuilder::new(app, "Node")

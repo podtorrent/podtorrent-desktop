@@ -26,7 +26,7 @@ export async function pollHealth() {
 
 // ---- notifications: meaningful events only, and only when the window isn't in front ----
 function notify(title, body) {
-  if (!settings.notifications || state.source === "demo") return;
+  if (!settings.notifications) return;
   if (document.hasFocus()) { emit("toast", { text: title, detail: body, kind: "info" }); return; }
   invoke("notify", { title, body }).catch(() => {});
 }
@@ -36,11 +36,10 @@ let lastTray = "";
 function updateTray() {
   if (!isTauri) return;
   const me = selfNode();
-  const online = state.engine.phase === "running" || state.source === "demo";
+  const online = state.engine.phase === "running";
   const st = swarmStats();
   let status = "Not running";
-  if (state.source === "demo") status = `Demo · ${fmt.fixed(st.tps ?? 0)} tok/s`;
-  else if (state.engine.phase === "starting") status = "Starting…";
+  if (state.engine.phase === "starting") status = "Starting…";
   else if (online) status = `${state.slices.length ? `Serving ${slicesLabel(state.slices)}` : "Peer · serving nothing"} · ${fmt.fixed(st.tps ?? 0)} tok/s`;
   const samples = state.tps.slice(-24);
   const key = status + samples.join(",") + online;

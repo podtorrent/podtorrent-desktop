@@ -5,7 +5,7 @@ import { stat, segmented, empty, button, sparkline, skeleton } from "../ui.js";
 import { icon } from "../icons.js";
 import { swarmGraph, PLAYBACK } from "../viz/graph.js";
 import { modelStrip } from "../viz/strip.js";
-import { go, actions, setDemo } from "../actions.js";
+import { go, actions } from "../actions.js";
 import { peerSheet } from "./peers.js";
 import { videoSwarmStatus } from "../engine.js";
 import { videoFlow, activeStage } from "../viz/videoflow.js";
@@ -93,9 +93,9 @@ export default {
       }
       emptyBox.replaceChildren(empty({
         icon: "swarm", title: "This machine isn't in a swarm yet",
-        body: s.engine.error ? `The engine stopped: ${s.engine.error.split("\n").pop().slice(0, 160)}` : "Start your node to join the global swarm. Every machine is an equal peer: it finds the others automatically, connects to them directly, serves a slice of the model and can chat with it. Or explore a simulated swarm first.",
+        body: s.engine.error ? `The engine stopped: ${s.engine.error.split("\n").pop().slice(0, 160)}` : "Start your node to join the global swarm. Every machine is an equal peer: it finds the others automatically, connects to them directly, serves a slice of the model and can chat with it.",
         tone: s.engine.error ? "gap" : "",
-        actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost }), button("Explore Demo", { variant: "ghost", icon: "sparkle", onclick: () => setDemo(true) })],
+        actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })],
       }));
     }
 

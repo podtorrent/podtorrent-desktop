@@ -1,15 +1,14 @@
-// ⌘K command palette: navigate, node actions, models, peers, Demo Mode, copy, logs, theme.
+// ⌘K command palette: navigate, node actions, models, peers, copy, logs, theme.
 import { h, text, fmt } from "./dom.js";
 import { openServe } from "./serve.js";
 import { state, settings, setSetting, emit, nodeList, models, nodeSlices, slicesLabel } from "./store.js";
 import { icon } from "./icons.js";
 import { kbd } from "./ui.js";
-import { go, actions, toggleDemo, setDemoPreset, copyNodeId, toggleSidebar, toggleInspector, toggleSwarmLayout } from "./actions.js";
-import { presets } from "./demo.js";
+import { go, actions, copyNodeId, toggleSidebar, toggleInspector, toggleSwarmLayout } from "./actions.js";
 import { peerSheet } from "./views/peers.js";
 
 function commands() {
-  const live = state.source === "live", running = state.engine.phase !== "stopped";
+  const live = true, running = state.engine.phase !== "stopped";
   const c = [
     ...[["swarm", "Swarm", "⌘1"], ["models", "Models", "⌘2"], ["playground", "Playground", "⌘3"], ["node", "My Node", "⌘4"], ["peers", "Peers", "⌘5"], ["activity", "Activity", "⌘6"], ["network", "Network", ""], ["settings", "Settings", "⌘,"]]
       .map(([id, t, k]) => ({ group: "Go to", title: t, icon: id === "node" ? "node" : id === "network" ? "link" : id, kbd: k, run: () => go(id) })),
@@ -26,8 +25,6 @@ function commands() {
     { group: "View", title: "Theme: Light", icon: "sun", run: () => setSetting("theme", "light") },
     { group: "View", title: "Theme: Dark", icon: "moon", run: () => setSetting("theme", "dark") },
     { group: "View", title: settings.reduceEffects ? "Restore visual effects" : "Reduce visual effects", icon: "sparkle", run: () => setSetting("reduceEffects", !settings.reduceEffects) },
-    { group: "Developer", title: state.source === "demo" ? "Turn off Demo Mode" : "Turn on Demo Mode", icon: "sparkle", kbd: "⌥⌘D", run: toggleDemo },
-    ...Object.entries(presets).map(([k, p]) => ({ group: "Developer", title: `Demo preset: ${p.label}`, sub: p.hint, icon: "sparkle", run: () => { setDemoPreset(k); if (state.source !== "demo") toggleDemo(); } })),
     { group: "Help", title: "Keyboard shortcuts", icon: "keyboard", kbd: "?", run: () => emit("shortcuts") },
     { group: "Help", title: "Welcome tour", icon: "info", run: () => emit("onboarding") },
   ];

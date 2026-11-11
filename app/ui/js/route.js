@@ -18,7 +18,7 @@ export function routeOf(t, layersOf = () => null) {
   if (pre != null) segs.push({ kind: "compute", node: host.node, ms: pre, label: `${host.node} · embed${L(host.node)}` });
   else segs.push({ kind: "compute", node: host.node, ms: host.compute_ms, label: `${host.node} · layers + head (combined)` });
   if (nets.length === workers.length + 1) {
-    // explicit one-way hops (Demo Mode multi-stage swarms)
+    // explicit one-way hops (multi-stage swarms)
     let from = host.node;
     workers.forEach((w, i) => {
       segs.push({ kind: "net", from, to: w.node, ms: nets[i].compute_ms, label: `${from} → ${w.node}` });

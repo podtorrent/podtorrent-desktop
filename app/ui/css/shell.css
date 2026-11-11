@@ -57,7 +57,7 @@
 
 .banner { display: flex; align-items: center; gap: 10px; padding: 8px var(--s-5); font-size: var(--t-2); border-bottom: 1px solid var(--line-1); background: color-mix(in srgb, var(--c, var(--accent)) 10%, var(--bg-content)); }
 .banner svg { width: 14px; height: 14px; color: var(--c); flex: none; }
-.banner.degraded { --c: var(--c-degraded); } .banner.gap { --c: var(--c-gap); } .banner.demo { --c: #ff9f0a; }
+.banner.degraded { --c: var(--c-degraded); } .banner.gap { --c: var(--c-gap); }
 .banner .btn { margin-left: auto; }
 
 .view { flex: 1; min-height: 0; overflow: auto; position: relative; }

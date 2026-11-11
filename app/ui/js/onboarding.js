@@ -7,7 +7,7 @@ import { state, settings, setSetting, on, models } from "./store.js";
 import { icon } from "./icons.js";
 import { button, segmented, toast } from "./ui.js";
 import { MODELS, GB, perLayer, roomFor, modelPicker } from "./modelpicker.js";
-import { go, setDemo } from "./actions.js";
+import { go } from "./actions.js";
 import { startHost } from "./engine.js";
 import { invoke, isTauri } from "./native.js";
 
@@ -211,8 +211,7 @@ export function openOnboarding() {
       h("p", h("b", me()), " ", what),
       next ? h("div.onb-next.small", icon("arrowright"), next) : null,
       h("div.onb-actions",
-        button("Start My Node", { variant: "primary", size: "xl", icon: "play", onclick: () => { save(); finish(mode === "private" ? "pod" : m ? "models" : "swarm"); startHost(); } }),
-        button("Explore Demo first", { size: "xl", icon: "sparkle", onclick: () => { save(); finish("swarm"); setDemo(true); } })),
+        button("Start My Node", { variant: "primary", size: "xl", icon: "play", onclick: () => { save(); finish(mode === "private" ? "pod" : m ? "models" : "swarm"); startHost(); } })),
     ];
   }
 
