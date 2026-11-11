@@ -1,3 +1,4 @@
 .build/
 .home/
 *.log
+*.zip
