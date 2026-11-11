@@ -136,6 +136,8 @@ export function applyEvent(ev) {
         if (ev.phase === "ready") feed("load", `${ev.node} is serving ${what || "its layers"}`, "", "success", ts);
         if (ev.phase === "cancelled") feed("load", `${ev.node} cancelled the download of ${what || "its layers"}`, "", "info", ts);
         if (ev.phase === "error") feed("load", `${ev.node} couldn't serve ${what || "its layers"}`, ev.message || "", "error", ts);
+        // This machine's own download or load failing must not look like it finished: say so.
+        if (ev.phase === "error" && ev.node === state.self) emit("toast", { text: `Couldn't serve ${what || "those layers"}`, detail: ev.message || "The download stopped. Try again.", kind: "gap" });
       }
       break;
     }

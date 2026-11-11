@@ -16,6 +16,8 @@ const P = {
   download: '<path d="M10 3v9.5M6 9l4 4 4-4M4 16.5h12"/>',
   check: '<path d="m4.5 10.5 3.5 3.5 7.5-8"/>',
   x: '<path d="m5.5 5.5 9 9M14.5 5.5l-9 9"/>',
+  plus: '<path d="M10 4.5v11M4.5 10h11"/>',
+  minus: '<path d="M4.5 10h11"/>',
   alert: '<path d="M10 3.2 17.5 16H2.5z"/><path d="M10 8v3.5M10 13.8v.2"/>',
   info: '<circle cx="10" cy="10" r="7"/><path d="M10 9v4.5M10 6.5v.2"/>',
   chevron: '<path d="m7.5 4.5 5.5 5.5-5.5 5.5"/>',

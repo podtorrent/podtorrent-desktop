@@ -451,6 +451,16 @@ canvas.chart { width: 100%; height: 180px; display: block; }
 /* swarm rows */
 .sw-row { align-items: flex-start; padding-top: var(--s-4); padding-bottom: var(--s-4); }
 .sw-side { align-items: flex-end; gap: 8px; flex: none; }
+.sw-side .act { display: flex; align-items: center; gap: 8px; }
+/* Play / stop for this machine's layers of a model: one joined pair. */
+.ps-group { display: inline-flex; border-radius: var(--r-md); box-shadow: inset 0 0 0 1px var(--line-2); }
+.ps-group .icon-btn { border-radius: 0; }
+.ps-group .icon-btn:first-child { border-radius: var(--r-md) 0 0 var(--r-md); }
+.ps-group .icon-btn:last-child { border-radius: 0 var(--r-md) var(--r-md) 0; box-shadow: inset 1px 0 0 var(--line-2); }
+.ps-group .icon-btn:disabled { opacity: .35; }
+/* Adjust sheet: add layers before / after. */
+.stepper { display: inline-flex; align-items: center; gap: 6px; }
+.stepper b { min-width: 28px; text-align: center; font-variant-numeric: tabular-nums; }
 .sw-det { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: var(--t-2); color: var(--fg-3); }
 .sw-det > div { display: flex; align-items: center; gap: 8px; }
 .sw-det b { font-weight: 500; color: var(--fg-2); font-variant-numeric: tabular-nums; }

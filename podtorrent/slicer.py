@@ -136,8 +136,11 @@ def download_slice(
 
     out_path = out_dir / f"{name}.safetensors"
     index = {"weight_map": weight_map(repo, out_dir)}
-    wanted = select_tensors(index["weight_map"], lo, hi, host, tail)
-    if out_path.exists() or set(wanted) <= local_tensors(out_dir):  # already fetched, maybe as another slice
+    # Only tensors not already on disk, maybe in another slice's file: extending 41–47 to 36–47 fetches
+    # 36–40. Loading reads every .safetensors in the folder, so the pieces add up.
+    have = local_tensors(out_dir)
+    wanted = [n for n in select_tensors(index["weight_map"], lo, hi, host, tail) if n not in have]
+    if out_path.exists() or not wanted:
         size = out_path.stat().st_size if out_path.exists() else 1
         if on_progress:
             on_progress(size, size)
