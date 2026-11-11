@@ -173,12 +173,12 @@ export default {
         picker.disabled = ms.filter(x => x.runnable).length < 2;
         // blocked / empty states
         const ok = !!m?.runnable;
-        const k = `${ok}|${m?.id}|${m?.verdict.title}|${s.engine.phase}|${s.source}`;
+        const k = `${ok}|${m?.id}|${m?.verdict.title}|${s.engine.phase}`;
         if (k !== blockKey) {
           blockKey = k;
           const gap = m?.gaps?.[0];
           if (ok) blocked.replaceChildren();
-          else if (s.source === "live" && s.engine.phase !== "running") blocked.replaceChildren(empty({ icon: "playground", title: "Start your node to chat", body: "This machine joins the swarm and can then talk to any model the swarm covers, even if it serves nothing itself.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
+          else if (s.engine.phase !== "running") blocked.replaceChildren(empty({ icon: "playground", title: "Start your node to chat", body: "This machine joins the swarm and can then talk to any model the swarm covers, even if it serves nothing itself.", actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })] }));
           else if (!m) blocked.replaceChildren(empty({ icon: "playground", title: "No model to talk to yet", body: "Nobody online serves a model yet. Serve some layers to start one.", actions: [button("Open Models", { variant: "primary", icon: "models", onclick: () => go("models") })] }));
           else blocked.replaceChildren(empty({
             icon: m.verdict.level === "gap" ? "alert" : "layers", tone: m.verdict.level === "gap" ? "gap" : "degraded",

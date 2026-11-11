@@ -52,7 +52,7 @@ export async function startHost() {
   stopTimers();
   const my = ++epoch;
   resetState({ role: "host" });
-  state.engine = { phase: "starting", owned: true, line: "Starting engine (first run installs Python packages)…", error: "" };
+  state.engine = { phase: "starting", owned: true, line: "Starting engine…", error: "" };
   commit();
   try { await invoke("start_engine", { mode: "peer", name: settings.peerName || null }); }
   catch (e) { state.engine = { phase: "stopped", owned: false, line: "", error: String(e) }; commit(); toast("Couldn't start the engine", "gap", String(e)); return; }
@@ -136,7 +136,7 @@ export function connectHost(addr) {
   try { sock = new WebSocket(`ws://${addr}/ws?key=${chatKey}`); } catch { state.conn = "down"; commit(); return; }
   ws = sock;
   sock.onopen = () => { if (my !== epoch) return; state.conn = "live"; commit(); applyPendingServe(); };
-  sock.onmessage = e => { if (my !== epoch || state.source !== "live") return; try { applyEvent(JSON.parse(e.data)); } catch (err) { console.error(err); } };
+  sock.onmessage = e => { if (my !== epoch) return; try { applyEvent(JSON.parse(e.data)); } catch (err) { console.error(err); } };
   sock.onclose = () => {
     if (my !== epoch) return;
     const was = state.conn;
@@ -189,7 +189,6 @@ export async function unserveSlice(model, lo, hi) {
 /** The pod and slice picked during onboarding, applied once the peer is up: the pod first, so the
  * slice loads inside it. `auto` asks the node for a slice sized to free memory and the swarm's gaps. */
 async function applyPendingServe() {
-  if (state.source !== "live") return;
   const pod = settings.pendingPod, p = settings.pendingServe;
   if (pod) {
     setSetting("pendingPod", null);
@@ -230,7 +229,7 @@ export async function logTail(name = "engine.log", lines = 800) {
 
 // ---------- catalog: find, download and delete models ----------
 const get = (path, ms) => json(HOST + path, {}, ms);
-const live = () => state.source === "live" && state.engine.phase === "running";
+const live = () => state.engine.phase === "running";
 
 // Node stopped: browse Hugging Face straight from the UI (mirrors podtorrent/catalog.py), so
 // models can be found and sized before starting. Downloading still goes through the node.

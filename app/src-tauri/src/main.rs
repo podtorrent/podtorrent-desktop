@@ -29,6 +29,10 @@ const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
 /// Stop the engine and everything it started (uv -> python).
 fn kill_group(child: &mut Child) {
+    // Already exited (it crashed, or its node went away): nothing to signal.
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        return;
+    }
     let pid = child.id();
     #[cfg(unix)]
     {
@@ -231,6 +235,14 @@ fn engine_port() -> String {
     std::env::var("PODTORRENT_PORT").ok().filter(|p| !p.is_empty()).unwrap_or_else(|| "27183".into())
 }
 
+/// Whether this machine's node is started: its local API accepts connections. The network agent
+/// only runs while it is, since it serves network requests through that API.
+fn node_up() -> bool {
+    let Ok(port) = engine_port().parse::<u16>() else { return false };
+    std::net::TcpStream::connect_timeout(&(std::net::Ipv4Addr::LOCALHOST, port).into(),
+        std::time::Duration::from_secs(1)).is_ok()
+}
+
 /// Put this peer on the network as `node`. The peer writes network-manifest.json (the models
 /// the swarm fully covers, with their routes) from network.json; the agent serves them through
 /// the peer's /v1 API. An empty token means the one saved in the data folder.
@@ -262,8 +274,12 @@ fn network_join(app: AppHandle, state: State<Agent>, node: String, token: String
 }
 
 /// Start the agent from the saved network.json and token, replacing a running one (and any left
-/// over from an earlier run of the app). Fails until the swarm fully covers a model.
+/// over from an earlier run of the app). Fails while this machine's node is offline, and until
+/// the swarm fully covers a model.
 fn start_agent(app: &AppHandle, state: &Agent) -> Result<(), String> {
+    if !node_up() {
+        return Err("this machine's node is offline; start your node, then it connects to the network".into());
+    }
     let data = data_dir();
     let config: serde_json::Value = std::fs::read_to_string(data.join("network.json")).ok()
         .and_then(|t| serde_json::from_str(&t).ok()).ok_or("not joined")?;
@@ -315,8 +331,9 @@ fn kill_stray_agents(bin: &std::path::Path) {
     }
 }
 
-/// Keeps a joined node on the network: once the app starts, and whenever the agent has exited,
-/// start it again when network.json says this Mac joined and the swarm covers a model.
+/// Keeps a joined node on the network while this machine's node is started: whenever the agent
+/// has exited, start it again when network.json says this machine joined and the swarm covers a
+/// model. Stops the agent when the node goes offline, so it never dials the network without one.
 fn supervise_agent(app: AppHandle) {
     std::thread::spawn(move || {
         kill_stray_agents(&backend_dir(&app).join(AGENT));
@@ -325,6 +342,13 @@ fn supervise_agent(app: AppHandle) {
             let state = app.state::<Agent>();
             let running = state.0.lock().unwrap().as_mut().is_some_and(|c| c.try_wait().ok().flatten().is_none());
             let joined = data_dir().join("network.json").exists();
+            if running && !node_up() {
+                if let Some(mut c) = state.0.lock().unwrap().take() {
+                    kill_group(&mut c);
+                }
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                continue;
+            }
             // At most every 30 s, so an agent that exits at once doesn't restart in a tight loop.
             if joined && !running && last.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(30))
                 && start_agent(&app, &state).is_ok() {
@@ -382,6 +406,7 @@ fn network_status(app: AppHandle, state: State<Agent>) -> serde_json::Value {
     let connected = running && lines.iter().rev().find(|l| l.contains("msg=connected") || l.contains("link down"))
         .is_some_and(|l| l.contains("msg=connected"));
     serde_json::json!({ "available": backend_dir(&app).join(AGENT).exists(), "running": running, "connected": connected,
+        "node_up": node_up(),
         "token_saved": saved, "config": read("network.json"), "manifest": read("network-manifest.json"),
         "log": lines[lines.len().saturating_sub(20)..].join("\n") })
 }
@@ -470,8 +495,12 @@ fn engine_running(state: State<Engine>) -> bool {
     }
 }
 
+/// Stop this machine's node, and the network agent with it: the agent only runs on a started node.
 #[tauri::command]
-fn stop_engine(state: State<Engine>) {
+fn stop_engine(state: State<Engine>, agent: State<Agent>) {
+    if let Some(mut c) = agent.0.lock().unwrap().take() {
+        kill_group(&mut c);
+    }
     if let Some(mut c) = state.0.lock().unwrap().take() {
         kill_group(&mut c);
     }
