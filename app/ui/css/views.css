@@ -274,24 +274,92 @@ canvas.chart { width: 100%; height: 180px; display: block; }
 
 /* ================= Onboarding ================= */
 .onb-scrim { background: rgba(0,0,0,.42); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
-.onb { position: fixed; z-index: 820; left: 50%; top: 50%; width: min(560px, calc(100vw - 40px)); transform: translate(-50%, -46%) scale(.97); opacity: 0; transition: opacity var(--d-base), transform var(--d-slow) var(--spring-smooth); box-shadow: var(--elev-float); overflow: hidden; }
+.onb { position: fixed; z-index: 820; left: 50%; top: 50%; width: min(560px, calc(100vw - 40px)); transform: translate(-50%, -46%) scale(.97); opacity: 0; transition: opacity var(--d-base), transform var(--d-slow) var(--spring-smooth), width var(--d-slow) var(--spring-smooth); box-shadow: var(--elev-float); overflow: hidden; }
 .onb.show { opacity: 1; transform: translate(-50%, -50%); }
-.onb-body { padding: var(--s-8) var(--s-8) var(--s-5); display: flex; flex-direction: column; gap: 12px; min-height: 300px; }
-.onb-body h1 { font-size: 26px; letter-spacing: var(--track-display); }
+.onb.wide { width: min(780px, calc(100vw - 40px)); }
+.onb-body { padding: var(--s-6) var(--s-8) var(--s-5); display: flex; flex-direction: column; gap: 14px; min-height: 210px; }
+.onb-body h1 { font-size: 24px; letter-spacing: var(--track-display); }
 .onb-body p { color: var(--fg-2); font-size: 14px; line-height: 1.55; }
-.onb-art { display: flex; flex-direction: column; gap: 10px; padding: 18px; margin-bottom: 8px; border-radius: var(--r-lg); background: var(--bg-sunken); box-shadow: inset 0 0 0 1px var(--line-1); }
-.onb-strip { display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; height: 34px; }
-.onb-strip i { border-radius: 3px; animation: onb-in 600ms var(--spring-snappy) backwards; }
-.onb-strip i.a { background: var(--c-you); } .onb-strip i.b { background: var(--c-serving); }
+.onb-body p b { color: var(--fg-1); font-weight: 600; }
+/* The chain: who holds which layers, redrawn every step */
+.onb-art { display: flex; flex-direction: column; gap: 8px; padding: 22px var(--s-8) 16px; background: var(--bg-sunken); border-bottom: 1px solid var(--line-1); }
+.oc-bar { display: grid; grid-template-columns: repeat(24, 1fr); gap: 3px; height: 30px; }
+.oc-bar i { border-radius: 3px; animation: onb-in 600ms var(--spring-snappy) backwards; transition: background-color var(--d-slow), box-shadow var(--d-slow); }
+.oc-bar i.me { background: var(--c-you); }
+.oc-bar i.peer { background: var(--c-serving); }
+.oc-bar i.open { background: transparent; box-shadow: inset 0 0 0 1px var(--line-2); background-image: repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in srgb, var(--fg-3) 14%, transparent) 4px 5px); }
 @keyframes onb-in { from { transform: scaleY(0); opacity: 0; } }
-.onb-macs { display: grid; grid-template-columns: 1fr 1fr; font-size: var(--t-2); color: var(--fg-2); }
-.onb-macs span { display: flex; align-items: center; gap: 6px; } .onb-macs span:last-child { justify-content: flex-end; }
-.onb-macs svg { width: 15px; height: 15px; }
-.onb-roles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
-.onb-role { all: unset; display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: var(--r-md); background: var(--bg-elev-2); box-shadow: inset 0 0 0 1px var(--line-2); transition: box-shadow var(--d-fast), transform var(--d-fast) var(--spring-snappy); }
-.onb-role:hover { transform: translateY(-1px); }
-.onb-role[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--c-you), 0 0 0 4px color-mix(in srgb, var(--c-you) 15%, transparent); }
-.onb-role:focus-visible { outline: 2px solid var(--accent); }
+.oc-labels { display: flex; gap: 3px; font-size: var(--t-2); color: var(--fg-2); min-height: 18px; }
+.oc-labels span { flex-basis: 0; min-width: 0; display: flex; align-items: center; gap: 6px; transition: flex-grow var(--d-slow) var(--spring-smooth); }
+.oc-labels span + span { justify-content: flex-end; }
+.oc-labels em { font-style: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.oc-labels b { flex: none; width: 7px; height: 7px; border-radius: 2px; }
+.oc-labels .me b { background: var(--c-you); } .oc-labels .peer b { background: var(--c-serving); } .oc-labels .open b { box-shadow: inset 0 0 0 1px var(--fg-3); }
+.oc-labels .me em { color: var(--fg-1); font-weight: 500; }
+/* 0: this machine */
+.onb-machine { display: flex; align-items: center; gap: 18px; }
+.onb-device { flex: none; width: 72px; color: var(--c-you); }
+.onb-device svg { width: 100%; display: block; }
+.onb-name { all: unset; display: block; width: 100%; font-size: 26px; font-weight: 600; letter-spacing: var(--track-display); color: var(--fg-1); border-bottom: 1px dashed var(--line-2); padding: 2px 0 4px; margin-bottom: 6px; transition: border-color var(--d-fast); }
+.onb-name::placeholder { color: var(--fg-3); }
+.onb-name:focus { border-bottom: 1px solid var(--accent); }
+/* 1: how it runs */
+.onb-modes { display: flex; flex-direction: column; border-radius: var(--r-md); box-shadow: inset 0 0 0 1px var(--line-2); overflow: hidden; }
+.onb-mode + .onb-mode { border-top: 1px solid var(--line-1); }
+.onb-mode.on { background: color-mix(in srgb, var(--c-you) 7%, transparent); }
+.onb-mode-h { all: unset; display: flex; align-items: center; gap: 12px; width: 100%; box-sizing: border-box; padding: 12px 14px; cursor: default; }
+.onb-mode-h:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.onb-mode-h .grow { display: flex; flex-direction: column; gap: 2px; }
+.onb-mode-ic { flex: none; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--bg-elev-2); color: var(--fg-2); }
+.onb-mode-ic svg { width: 16px; height: 16px; }
+.onb-mode.on .onb-mode-ic { color: var(--c-you); background: color-mix(in srgb, var(--c-you) 16%, transparent); }
+.onb-radio { flex: none; width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--line-2); transition: box-shadow var(--d-fast); }
+.onb-mode.on .onb-radio { box-shadow: inset 0 0 0 4px var(--c-you); }
+.onb-pod { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 14px 56px; }
+.onb-pod .seg { align-self: flex-start; }
+/* 2: model table */
+.onb-h2 { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.onb-picker { display: grid; grid-template-columns: 150px 1fr; gap: 14px; min-height: 0; }
+.onb-rail { display: flex; flex-direction: column; gap: 1px; }
+.onb-rail-i { all: unset; display: flex; gap: 8px; padding: 6px 9px; border-radius: 6px; font-size: var(--t-2); color: var(--fg-2); cursor: default; }
+.onb-rail-i:hover { background: var(--bg-elev-2); }
+.onb-rail-i.on { background: var(--bg-elev-2); color: var(--fg-1); box-shadow: inset 2px 0 0 var(--c-you); }
+.onb-rail-i:focus-visible { outline: 2px solid var(--accent); }
+.onb-table { display: flex; flex-direction: column; min-width: 0; border-radius: var(--r-md); box-shadow: inset 0 0 0 1px var(--line-2); overflow: hidden; }
+.onb-tools { display: flex; gap: 8px; align-items: center; padding: 8px; border-bottom: 1px solid var(--line-1); }
+.onb-search { flex: 1; display: flex; align-items: center; gap: 6px; color: var(--fg-3); }
+.onb-search svg { width: 14px; height: 14px; flex: none; margin-left: 4px; }
+.onb-search .input { height: 28px; background: transparent; box-shadow: none; padding: 0 4px; }
+.onb-thead, .onb-tr { display: grid; grid-template-columns: 1fr 72px 170px; gap: 12px; align-items: center; padding: 0 12px; }
+.onb-thead { height: 28px; color: var(--fg-3); border-bottom: 1px solid var(--line-1); }
+.onb-rows { max-height: 272px; overflow-y: auto; }
+.onb-tr { all: unset; display: grid; grid-template-columns: 1fr 72px 170px; gap: 12px; align-items: center; padding: 0 12px; height: 40px; width: 100%; box-sizing: border-box; cursor: default; border-bottom: 1px solid var(--line-1); }
+.onb-tr:last-child { border-bottom: 0; }
+.onb-tr:hover:not(:disabled) { background: var(--bg-elev-2); }
+.onb-tr.on { background: color-mix(in srgb, var(--c-you) 10%, transparent); box-shadow: inset 2px 0 0 var(--c-you); }
+.onb-tr:disabled { opacity: .45; }
+.onb-tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.onb-tr.none { grid-template-columns: 1fr; }
+.onb-c-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.onb-c-name b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.onb-c-num { color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.onb-c-fit { display: flex; align-items: center; gap: 8px; color: var(--fg-2); white-space: nowrap; }
+.onb-c-fit .warn { color: var(--c-degraded); }
+.onb-meter { flex: none; width: 44px; height: 5px; border-radius: 3px; background: var(--bg-elev-3); overflow: hidden; }
+.onb-meter i { display: block; height: 100%; background: var(--c-you); border-radius: 3px; }
+.onb-tag { font-size: 10.5px; padding: 1px 6px; border-radius: var(--r-pill); color: var(--fg-2); box-shadow: inset 0 0 0 1px var(--line-2); }
+.onb-tag.live { color: var(--c-serving); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-serving) 40%, transparent); }
+.onb-emptyrow { padding: 14px 12px; }
+.onb-sec { display: flex; justify-content: space-between; gap: 8px; padding: 10px 12px 6px; color: var(--fg-3); font-weight: 500; border-bottom: 1px solid var(--line-1); }
+.onb-hint { padding: 8px 12px; border-top: 1px solid var(--line-1); line-height: 1.45; }
+.onb-facts { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.onb-facts .right { text-align: right; }
+.onb-link { all: unset; color: var(--accent); cursor: default; }
+.onb-link:hover { text-decoration: underline; }
+/* 3: start */
+.onb-next { display: flex; align-items: center; gap: 8px; color: var(--fg-2); }
+.onb-next svg { width: 14px; height: 14px; color: var(--c-you); }
+@media (max-width: 640px) { .onb-picker { grid-template-columns: 1fr; } .onb-rail { flex-direction: row; overflow-x: auto; } .onb-thead, .onb-tr { grid-template-columns: 1fr 60px 120px; } }
 .onb-actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
 .onb-f { display: flex; align-items: center; gap: 8px; padding: var(--s-4) var(--s-8); border-top: 1px solid var(--line-1); }
 .onb-dots { display: flex; gap: 6px; }

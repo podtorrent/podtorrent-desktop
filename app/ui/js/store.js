@@ -7,7 +7,7 @@ const HISTORY_KEY = "pt.history";
 const DEFAULT_SETTINGS = {
   theme: "system", reduceEffects: false, demo: false, demoPreset: "swarm", demoAutoplay: true,
   sidebarCollapsed: false, swarmLayout: "graph", inspector: true, maxTokens: 256, onboarded: false,
-  peerName: "", pendingServe: null, notifications: true,
+  peerName: "", pendingServe: null, pendingPod: null, notifications: true,
   valuationBasis: null, macPrice: null, amortMonths: null,
 };
 

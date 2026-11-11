@@ -192,12 +192,25 @@ export async function unserveSlice(model, lo, hi) {
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
 }
 
-/** The slice picked during onboarding, served once the peer is up. */
-function applyPendingServe() {
-  const p = settings.pendingServe;
-  if (!p || state.source !== "live") return;
+/** The pod and slice picked during onboarding, applied once the peer is up: the pod first, so the
+ * slice loads inside it. `auto` asks the node for a slice sized to free memory and the swarm's gaps. */
+async function applyPendingServe() {
+  if (state.source !== "live") return;
+  const pod = settings.pendingPod, p = settings.pendingServe;
+  if (pod) {
+    setSetting("pendingPod", null);
+    try {
+      await (pod.code ? podApi("/join", { code: pod.code }, 60000) : podApi("/create", { name: pod.name, kind: pod.kind }));
+      toast(pod.code ? "Joined the pod" : pod.kind === "alone" ? "Serving alone" : "Pod created", "serving");
+    } catch (e) { toast(pod.code ? "Couldn't join the pod" : "Couldn't set up the pod", "degraded", `${e.message}. Try again from Pod.`); }
+  }
+  if (!p) return;
   setSetting("pendingServe", null);
-  serveSlice(p.model || state.hostInfo?.repo, p.lo, p.hi);
+  const model = p.model || state.hostInfo?.repo;
+  if (!p.auto) return serveSlice(model, p.lo, p.hi);
+  const inf = await catalogInfo(model), sug = inf?.suggest;
+  if (sug?.hi > sug?.lo) serveSlice(model, sug.lo, sug.hi);
+  else toast(`Didn't serve ${shortModel(model)}`, "degraded", inf?.error || sug?.reason || "No room for its layers on this machine.");
 }
 
 export async function sendPrompt(prompt, model) {
