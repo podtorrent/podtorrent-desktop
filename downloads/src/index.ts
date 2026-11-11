@@ -1,6 +1,6 @@
 // podtorrent.com/download — serves builds from R2.
-//   /download                    page with the latest Mac, Windows and Linux links and notes
-//   /download/mac|windows|linux latest installer for that platform
+//   /download                    page with the latest Mac, Windows, Linux and Linux AMD links and notes
+//   /download/mac|windows|linux|linux-amd latest installer for that platform
 //   /download/latest.json        manifest (also for in-app update checks)
 //   /download/v/<ver>/<platform> a specific older build
 //   /download/guide              how to use the app, with screenshots
@@ -10,9 +10,9 @@ interface Env {
 }
 
 type Build = { key: string; file: string; sha256: string; size: number };
-type Release = { version: string; date: string; notes: string; mac?: Build; windows?: Build; linux?: Build };
+type Release = { version: string; date: string; notes: string; mac?: Build; windows?: Build; linux?: Build; "linux-amd"?: Build };
 
-const PLATFORMS = ["mac", "windows", "linux"] as const;
+const PLATFORMS = ["mac", "windows", "linux", "linux-amd"] as const;
 type Platform = (typeof PLATFORMS)[number];
 
 export default {
@@ -28,7 +28,7 @@ export default {
       });
     }
 
-    const latest = path.match(/^\/download\/(mac|windows|linux)$/);
+    const latest = path.match(/^\/download\/(mac|windows|linux-amd|linux)$/);
     if (latest) {
       const rel = await latestRelease(env);
       const build = rel?.[latest[1] as Platform];
@@ -36,7 +36,7 @@ export default {
       return serveBuild(env, req, build.key, build.file, false);
     }
 
-    const pinned = path.match(/^\/download\/v\/([\w.-]+)\/(mac|windows|linux)$/);
+    const pinned = path.match(/^\/download\/v\/([\w.-]+)\/(mac|windows|linux-amd|linux)$/);
     if (pinned) {
       const obj = await env.RELEASES.get(`releases/v${pinned[1]}/release.json`);
       if (!obj) return new Response("Unknown version", { status: 404 });
@@ -99,6 +99,12 @@ const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: 
     icon: `<path d="M12 2c-2 0-3.2 1.7-3.2 4.2 0 1.4.3 2.3-.4 3.5C7.3 11.6 5 14 5 17c0 .8.3 1.3.7 1.6-.5.6-.9 1.4-.3 2.1.9 1 3.3.6 4.4 0 .7.2 1.5.3 2.2.3s1.5-.1 2.2-.3c1.1.6 3.5 1 4.4 0 .6-.7.2-1.5-.3-2.1.4-.3.7-.8.7-1.6 0-3-2.3-5.4-3.4-7.3-.7-1.2-.4-2.1-.4-3.5C15.2 3.7 14 2 12 2zm-1.6 4.3c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1-.7-.5-.7-1.1.3-1.1.7-1.1zm3.2 0c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1-.7-.5-.7-1.1.3-1.1.7-1.1zM12 9.3c.9 0 2 .6 2 1s-1.1 1.2-2 1.2-2-.8-2-1.2 1.1-1 2-1z"/>`,
     needs: ["Ubuntu 22.04 or newer (or similar)", "NVIDIA RTX GPU, driver 570 or newer"],
     first: "Make it executable with <code>chmod +x PodTorrent*.AppImage</code>, then run it.",
+  },
+  "linux-amd": {
+    name: "Linux for AMD", arch: "x64 AppImage · ROCm",
+    icon: `<path d="M12 2c-2 0-3.2 1.7-3.2 4.2 0 1.4.3 2.3-.4 3.5C7.3 11.6 5 14 5 17c0 .8.3 1.3.7 1.6-.5.6-.9 1.4-.3 2.1.9 1 3.3.6 4.4 0 .7.2 1.5.3 2.2.3s1.5-.1 2.2-.3c1.1.6 3.5 1 4.4 0 .6-.7.2-1.5-.3-2.1.4-.3.7-.8.7-1.6 0-3-2.3-5.4-3.4-7.3-.7-1.2-.4-2.1-.4-3.5C15.2 3.7 14 2 12 2z"/>`,
+    needs: ["Ubuntu 22.04 or newer", "AMD Ryzen AI Max / Max+ / Max PRO (Strix Halo, Radeon 8050S to 8065S)", "Linux kernel 6.14 or newer; your user in the <code>video</code> and <code>render</code> groups"],
+    first: "Make it executable with <code>chmod +x PodTorrent*.AppImage</code>, then run it. On Ubuntu 24.04 first run <code>sudo apt install libfuse2t64</code>. Preview: the first launch measures how much of the shared memory the GPU can use.",
   },
 };
 
@@ -177,7 +183,7 @@ function page(rel: Release | null): Response {
   };
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Download PodTorrent</title>
-<meta name="description" content="Download PodTorrent for macOS, Windows and Linux.">
+<meta name="description" content="Download PodTorrent for macOS, Windows, Linux and Linux for AMD.">
 <style>
 ${STYLE}</style></head><body><main>
 <div class="hero">${LOGO}
