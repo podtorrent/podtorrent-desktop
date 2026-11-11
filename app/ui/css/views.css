@@ -525,7 +525,7 @@ canvas.chart { width: 100%; height: 180px; display: block; }
 .pod-split select.input { width: auto; }
 .net-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3) var(--s-4); margin-top: var(--s-3); }
 .net-token-saved { display: flex; align-items: center; gap: var(--s-2); min-height: 32px; }
-.net-token-row { display: flex; align-items: center; gap: var(--s-2); justify-content: space-between; }
+.net-token-row { display: flex; align-items: center; gap: var(--s-2); justify-content: flex-end; }
 .net-actions { display: flex; gap: var(--s-2); justify-content: flex-end; margin-top: var(--s-4); }
 .net-log { max-height: 160px; overflow: auto; white-space: pre-wrap; margin: 0; }
 @media (max-width: 640px) { .net-grid { grid-template-columns: 1fr; } }

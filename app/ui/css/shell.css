@@ -12,6 +12,7 @@
 .brand b { font: 650 14px/1 var(--font-display); letter-spacing: -0.01em; }
 .brand .sub { font-size: var(--t-1); color: var(--fg-3); margin-top: 3px; }
 .nav { display: flex; flex-direction: column; gap: 1px; padding: 0 10px; flex: 1; overflow: auto; }
+.nav .nav-fill { flex: 1; min-height: var(--s-4); }
 .nav .sect { padding: 14px 8px 4px; font-size: var(--t-1); font-weight: 600; color: var(--fg-3); }
 .nav-item {
   position: relative; display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border: 0; width: 100%;

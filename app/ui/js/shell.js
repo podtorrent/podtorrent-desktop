@@ -18,15 +18,18 @@ import podView from "./views/pod.js";
 
 const VIEWS = { swarm, models: modelsView, playground, node, peers, activity, network: networkView, pod: podView, settings: settingsView };
 const NAV = [
-  ["swarm", "Swarm", "swarm", "⌘1"], ["models", "Models", "models", "⌘2"], ["playground", "Playground", "playground", "⌘3"],
-  ["node", "My Node", "node", "⌘4"], ["peers", "Peers", "peers", "⌘5"], ["activity", "Activity", "activity", "⌘6"],
+  ["swarm", "Swarm", "swarm", "⌘1"], ["models", "Models", "models", "⌘2"], ["playground", "Playground", "playground", "⌘3"], ["peers", "Peers", "peers", "⌘5"],
 ];
+// Pinned to the bottom: Activity, then this machine (the My Node view), labelled with its name.
+const NAV_BOTTOM = [["activity", "Activity", "activity", "⌘6"], ["node", "This machine", "node", "⌘4"]];
+/** This machine's name: the one set in onboarding, else the one the node reports. */
+const machineName = s => settings.peerName || s.self || s.hostInfo?.name || "This machine";
 
 export function mountShell() {
   const items = {};
   const navItem = ([id, label, ic, k]) => {
     const nb = h("span.nb"), el = h("button.nav-item", { type: "button", onclick: () => go(id) }, icon(ic), h("span", label), nb, h("span.nk", k));
-    items[id] = { el, nb };
+    items[id] = { el, nb, label: el.querySelector("span") };
     return el;
   };
   const nodeCard = h("button.node-card", { type: "button", onclick: () => go("node") },
@@ -36,7 +39,8 @@ export function mountShell() {
   const sidebar = h("aside.sidebar", { "aria-label": "Sidebar" },
     h("div.sidebar-top", { "data-tauri-drag-region": "" }, demoPill),
     h("div.brand", { "data-tauri-drag-region": "" }, h("div.logo", h("img", { src: "favicon.svg", alt: "" })), h("div", h("b", "PodTorrent"), h("div.sub", "Many machines, one swarm"))),
-    h("nav.nav", NAV.map(navItem), h("div.sect", " "), navItem(["pod", "Pod", "peers", ""]), navItem(["network", "Network", "link", ""]), navItem(["settings", "Settings", "settings", "⌘,"])),
+    h("nav.nav", NAV.map(navItem), h("div.sect", " "), navItem(["pod", "Pod", "peers", ""]), navItem(["network", "Network", "link", ""]), navItem(["settings", "Settings", "settings", "⌘,"]),
+      h("div.nav-fill"), NAV_BOTTOM.map(navItem)),
     nodeCard);
 
   const title = h("h1"), subtitle = h("span.muted");
@@ -76,6 +80,8 @@ export function mountShell() {
     text(title, V.title);
     text(subtitle, V.subtitle?.(s) || "");
     cur?.update?.(s);
+    text(items.node.label, machineName(s));
+    items.node.el.title = "My Node";
     // sidebar badges
     const st = swarmStats(s), ms = models(s), m = ms[0];
     const me = selfNode(s), meSt = me ? nodeState(me, s) : null;
@@ -93,7 +99,7 @@ export function mountShell() {
     const fresh = curId === "activity" ? 0 : s.feed.length - unseen.at;
     setNb("activity", fresh > 0 ? String(Math.min(99, fresh)) : "");
     const net = networkState();
-    setNb("network", net === "online" ? "Online" : "", net === "online" ? "serving" : net === "connecting" ? "degraded" : "");
+    setNb("network", net === "online" ? "Online" : "", net === "online" ? "serving" : net === "rejected" ? "gap" : net === "connecting" ? "degraded" : "");
     // node card
     nodeCard.hidden = !s.role && s.source !== "demo";
     if (!nodeCard.hidden) {
