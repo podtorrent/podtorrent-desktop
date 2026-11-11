@@ -168,12 +168,14 @@ export async function loadModel() {
 }
 
 /** Serve `model` layers [lo, hi) on this Mac (or on a connected peer, by name). Progress arrives as events. */
-export async function serveSlice(model, lo, hi, peer = null) {
+/** opts.replace: a resize (this machine's other slices of the model go once it's loaded);
+ *  opts.trim: then delete the model's layers outside what's served from disk. */
+export async function serveSlice(model, lo, hi, peer = null, opts = {}) {
   const what = `${shortModel(model)} ${fmt.layers(lo, hi)}`;
   if (state.source === "demo") return emit("demo:serve", { model, lo, hi, peer });
   if (state.engine.phase !== "running") return toast("Start your node first", "degraded");
   try {
-    const r = await post("/api/serve", { model, lo, hi, peer });
+    const r = await post("/api/serve", { model, lo, hi, peer, ...opts });
     if (!r.ok) return toast(`Couldn't serve ${what}`, "gap", r.body?.error || `HTTP ${r.status}`);
     feed("load", `${peer || "This machine"} will serve ${what}`, "Downloading only those layers", "info");
     toast(`Serving ${what}${peer ? ` on ${peer}` : ""}`, "info", "Downloads only those layers, then loads them");
@@ -192,12 +194,25 @@ export async function unserveSlice(model, lo, hi) {
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
 }
 
-/** The slice picked during onboarding, served once the peer is up. */
-function applyPendingServe() {
-  const p = settings.pendingServe;
-  if (!p || state.source !== "live") return;
+/** The pod and slice picked during onboarding, applied once the peer is up: the pod first, so the
+ * slice loads inside it. `auto` asks the node for a slice sized to free memory and the swarm's gaps. */
+async function applyPendingServe() {
+  if (state.source !== "live") return;
+  const pod = settings.pendingPod, p = settings.pendingServe;
+  if (pod) {
+    setSetting("pendingPod", null);
+    try {
+      await (pod.code ? podApi("/join", { code: pod.code }, 60000) : podApi("/create", { name: pod.name, kind: pod.kind }));
+      toast(pod.code ? "Joined the pod" : pod.kind === "alone" ? "Serving alone" : "Pod created", "serving");
+    } catch (e) { toast(pod.code ? "Couldn't join the pod" : "Couldn't set up the pod", "degraded", `${e.message}. Try again from Pod.`); }
+  }
+  if (!p) return;
   setSetting("pendingServe", null);
-  serveSlice(p.model || state.hostInfo?.repo, p.lo, p.hi);
+  const model = p.model || state.hostInfo?.repo;
+  if (!p.auto) return serveSlice(model, p.lo, p.hi);
+  const inf = await catalogInfo(model), sug = inf?.suggest;
+  if (sug?.hi > sug?.lo) serveSlice(model, sug.lo, sug.hi);
+  else toast(`Didn't serve ${shortModel(model)}`, "degraded", inf?.error || sug?.reason || "No room for its layers on this machine.");
 }
 
 export async function sendPrompt(prompt, model) {
@@ -278,6 +293,16 @@ export async function cancelDownload(model, lo, hi) {
     const r = await post("/api/unserve", { model, lo, hi });
     if (!r.ok) return toast(`Couldn't cancel ${what}`, "gap", r.body?.error || `HTTP ${r.status}`);
     toast(`Cancelled downloading ${what}`, "info", "The partial download was removed.");
+    return true;
+  } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
+}
+
+/** Delete `repo`'s layers outside [lo, hi) from disk; layers being served stay. */
+export async function catalogTrim(repo, lo, hi) {
+  try {
+    const r = await post("/api/catalog/trim", { repo, lo, hi }, 60000);
+    if (!r.ok) return toast(`Couldn't free space for ${shortModel(repo)}`, "gap", r.body?.error || `HTTP ${r.status}`);
+    toast(`Freed ${fmt.bytes(r.body.freed)}`, "info", `Kept ${shortModel(repo)} layers ${fmt.layers(lo, hi)} and anything served`);
     return true;
   } catch (e) { toast("Couldn't reach the engine", "gap", String(e)); }
 }

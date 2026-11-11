@@ -17,6 +17,8 @@
 .btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, white); }
 .btn.danger { --b-bg: transparent; --b-fg: var(--c-gap); box-shadow: 0 0 0 1px color-mix(in srgb, var(--c-gap) 45%, transparent); }
 .btn.danger:hover { background: color-mix(in srgb, var(--c-gap) 12%, transparent); }
+.btn.danger.calm { --b-fg: var(--fg-2); box-shadow: 0 0 0 1px var(--line-2); }
+.btn.danger.calm:hover { --b-fg: var(--c-gap); background: color-mix(in srgb, var(--c-gap) 8%, transparent); }
 .btn.danger.armed { --b-bg: var(--c-gap); --b-fg: #fff; }
 .btn.ghost { --b-bg: transparent; box-shadow: none; color: var(--fg-2); }
 .btn.ghost:hover { background: var(--bg-hover); color: var(--fg-1); }

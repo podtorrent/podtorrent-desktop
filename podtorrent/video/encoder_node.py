@@ -51,12 +51,6 @@ class EncoderNode:
     def held_gb(self) -> float:
         return sum(slice_bytes(s["lo"], s["hi"]) for s in self.slices()) / backend.GB
 
-    def reserved_gb(self) -> float:
-        """Encoder layers on disk that will load on the next video job: text slices must leave room."""
-        if not self.shares_budget():
-            return 0.0
-        return sum(slice_bytes(s["lo"], s["hi"]) for s in self.slices() if not s["loaded"]) / backend.GB
-
     def device(self) -> str:
         """Where encoder slices run: "mlx", "cuda" or "cpu" (PODTORRENT_ENCODER_DEVICE overrides)."""
         if backend.NAME == "mlx":

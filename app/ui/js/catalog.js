@@ -1,32 +1,74 @@
-// Model catalog for the Models view: search MLX models on Hugging Face, see what this Mac already
-// holds, and get a model ("Download & serve" with a slice sized to free memory and the swarm's
-// gaps). Each result says whether it's on this Mac and whether the swarm already serves it.
+// Model catalog for the Models view: see what this machine already holds, and get a model ("Download
+// & serve" with a slice sized to free memory and the swarm's gaps). Picking a model is the shared
+// model table (modelpicker.js).
 import { h, text, fmt } from "./dom.js";
-import { state, models, shortModel } from "./store.js";
+import { state, models, shortModel, on, commit } from "./store.js";
 import { actions } from "./actions.js";
 
 const GB = 2 ** 30;
-import { button, badge, armedButton, sheet } from "./ui.js";
+import { button, iconButton, badge, armedButton, sheet } from "./ui.js";
 import { icon } from "./icons.js";
-import { serveSlice, catalogSearch, catalogInfo, catalogLocal, catalogDelete, cancelDownload } from "./engine.js";
+import { serveSlice, unserveSlice, catalogInfo, catalogLocal, catalogDelete, catalogTrim, cancelDownload } from "./engine.js";
 
-let local = [];          // this Mac's model folders, from /api/catalog/local
+let local = [];          // this machine's model folders, from /api/catalog/local
 let onLocal = () => {};  // re-render hook set by the section
 export const localModels = () => local;
-export async function refreshLocal() { local = await catalogLocal(); onLocal(); }
+export async function refreshLocal() { local = await catalogLocal(); onLocal(); commit(); }   // commit: views that read it repaint
+on("disk", () => refreshLocal());   // layers deleted from disk
 
 const rangesText = rs => rs.map(([a, b]) => fmt.layers(a, b)).join(", ");
 const localOf = repo => local.find(m => m.repo === repo);
 const swarmOf = repo => models(state).find(m => m.model === repo);
+const inRuns = (rs, i) => rs.some(([a, b]) => a <= i && i < b);
+
+/** Runs of layers on disk that no loaded slice covers: what play would start serving. */
+function idleRuns(repo) {
+  const l = localOf(repo), mine = state.slices.filter(x => x.model === repo);
+  if (!l || mine.some(x => !x.loaded)) return [];   // a download or load is under way
+  return l.layers.filter(([a, b]) => !mine.some(x => x.lo <= a && b <= x.hi));
+}
+
+/** Whether serving `runs` of `repo` fits this machine's free memory for models, estimating a layer's
+ *  size from the disk (a little high: the folder also holds the embedding and head). True if unknown. */
+function fitsInMemory(repo, runs) {
+  const l = localOf(repo), onDisk = (l?.layers || []).reduce((a, [x, y]) => a + y - x, 0);
+  if (state.memFree == null || !onDisk || !l.disk_bytes) return true;
+  const per = l.disk_bytes / onDisk / GB, held = state.slices.filter(x => x.model === repo && x.loaded).reduce((a, x) => a + x.hi - x.lo, 0);
+  const n = runs.reduce((a, [x, y]) => a + y - x, 0);
+  return n * per + 1 <= state.memFree + held * per;   // 1 GB: the engine's load headroom
+}
+
+/** Play / stop for this machine's layers of `repo`. Play serves every run on disk that isn't served
+ *  yet (nothing to download; a served slice inside the run is swapped for the whole run), stop stops
+ *  serving. Null when this machine has none of it. */
+export function playStop(repo) {
+  const l = localOf(repo), mine = state.slices.filter(x => x.model === repo);
+  if (!l?.layers.length && !mine.length) return null;
+  const loaded = mine.filter(x => x.loaded).map(x => [x.lo, x.hi]), idle = idleRuns(repo);
+  const play = iconButton("play", idle.length ? `Serve layers ${rangesText(idle)} from disk` : loaded.length ? "Serving everything on disk" : "Nothing on disk", () => {
+    // More than fits in memory: open Adjust, which says how many layers fit and lets you pick them.
+    if (!fitsInMemory(repo, idle)) return openAdjust(repo);
+    play.disabled = true;
+    idle.forEach(([a, b]) => serveSlice(repo, a, b));
+    setTimeout(() => { play.disabled = false; }, 2000);   // a refused load never shows up as a slice
+  });
+  const stop = iconButton("stop", loaded.length ? `Stop serving layers ${rangesText(loaded)}` : "Not serving",
+    () => { stop.disabled = true; loaded.forEach(([a, b]) => unserveSlice(repo, a, b)); });
+  play.disabled = !idle.length; stop.disabled = !loaded.length;
+  return h("div.ps-group", { role: "group", "aria-label": "This machine" }, play, stop);
+}
+/** Changes whenever playStop(repo) would draw differently. */
+export const playStopKey = repo => JSON.stringify([localOf(repo)?.layers, state.slices.filter(x => x.model === repo).map(x => [x.lo, x.hi, x.loaded])]);
 
 /** One cell per layer: serving here, downloading, on disk, or absent. */
-function layerBar(n, onDisk, serving, fetching = []) {
+/** `keep`, when given, dims the layers outside that range. */
+function layerBar(n, onDisk, serving, fetching = [], fetchLabel = "Downloading", keep = null) {
   if (!n) return null;
   const inR = (rs, i) => rs.some(([a, b]) => a <= i && i < b);
   return h("div.lbar-wrap",
     h("div.lbar", { role: "img", "aria-label": `${n} layers` },
-      ...Array.from({ length: n }, (_, i) => h(`i${inR(serving, i) ? ".srv" : inR(fetching, i) ? ".dl" : inR(onDisk, i) ? ".disk" : ""}`))),
-    h("div.lbar-key.small.faint", h("span", h("i.srv"), "Serving"), fetching.length ? h("span", h("i.dl"), "Downloading") : null,
+      ...Array.from({ length: n }, (_, i) => h(`i${inR(serving, i) ? ".srv" : inR(fetching, i) ? ".dl" : inR(onDisk, i) ? ".disk" : ""}${keep && !inR([keep], i) ? ".out" : ""}`))),
+    h("div.lbar-key.small.faint", h("span", h("i.srv"), "Serving"), fetching.length ? h("span", h("i.dl"), fetchLabel) : null,
       h("span", h("i.disk"), "Downloaded"), h("span", h("i"), "Not here")));
 }
 
@@ -60,16 +102,6 @@ function pendingRow(s, bars) {
 /** Section heading: icon, title, live count on the right. */
 export function secHead(ic, title, extra) {
   return h("div.sec-h", h("span.sec-ic", icon(ic)), h("h2", title), h("span.spacer"), extra || null);
-}
-
-/** Badges for a repo: on this Mac (complete / partial) and in the swarm (available / partial). */
-function statusBadges(repo) {
-  const l = localOf(repo), m = swarmOf(repo), out = [];
-  if (l?.complete) out.push(badge("Downloaded", "serving", { dot: true }));
-  else if (l?.layers.length) out.push(badge(`On this machine · ${rangesText(l.layers)}`, "you", { dot: true }));
-  if (m?.runnable || m?.state === "available") out.push(badge("Available in swarm", "serving"));
-  else if (m && m.state !== "offline") out.push(badge(`Swarm missing ${m.gaps.map(([a, b]) => fmt.layers(a, b)).join(", ")}`, "degraded"));
-  return out;
 }
 
 /** Node stopped: size and whether it fits this machine's memory; downloading needs the node. */
@@ -110,9 +142,9 @@ export async function openGet(repo) {
     else if (n > sug.fits) e = `About ${sug.fits} layers fit in free memory (${fmt.gb(inf.mem_free_gb)}).`;
     text(err, e);
     const sz = inf.layer_bytes ? fmt.bytes(n * inf.layer_bytes) : null;
-    const onDisk = l?.complete || (l?.layers || []).some(([x, y]) => x <= a && b < y);
-    text(est, e ? "" : onDisk ? `${n} layers, already on disk: nothing to download. Keeps ${sz ? `about ${sz}` : "them"} in memory while serving (${fmt.gb(inf.mem_free_gb)} free).` : sz ? `${n} layers · downloads up to ${sz} and keeps about ${sz} in memory while serving (${fmt.gb(inf.mem_free_gb)} free). Layers already on disk aren't downloaded again.`
-      : `${n} layers. Layers already on disk aren't downloaded again.`);
+    let fresh = 0; for (let i = a; i <= b; i++) if (!inRuns(l?.layers || [], i)) fresh++;
+    const dl = inf.layer_bytes ? ` (about ${fmt.bytes(fresh * inf.layer_bytes)})` : "";
+    text(est, e ? "" : `${n} layers. ${fresh ? `Downloads ${fresh === n ? "them" : `the ${fresh} not on disk yet`}${dl}` : "All on disk: nothing to download"}. Keeps ${sz ? `about ${sz}` : "them"} in memory while serving (${fmt.gb(inf.mem_free_gb)} free).`);
     go.disabled = !!e;
   };
   lo.addEventListener("input", sync); last.addEventListener("input", sync);
@@ -136,40 +168,109 @@ export async function openGet(repo) {
   sync();
 }
 
-/** "Find models" + "On this Mac" cards. Returns { mine, finder, update(s) }, placed separately by the view. */
+/** Sheet: pick the layer range this machine keeps for `repo`, larger or smaller, and see what it
+ *  costs in memory and on disk. Serve resizes the served slice (only new layers download; the old
+ *  slice goes once the new one is loaded); Free deletes layers outside the range from disk. */
+export async function openAdjust(repo) {
+  const l = localOf(repo), N0 = l?.n_layers || 0;
+  const loaded = state.slices.filter(x => x.model === repo && x.loaded);
+  // Start from what's served, else from everything on disk.
+  const span = rs => rs.length ? [Math.min(...rs.map(r => r[0])), Math.max(...rs.map(r => r[1]))] : [0, 0];
+  const served = span(loaded.map(x => [x.lo, x.hi])), disk = l?.layers || [];
+  let [lo, hi] = loaded.length ? served : span(disk);
+  const body = h("div.col", { style: { gap: "14px" } }, h("div.small.muted", "Reading model info…"));
+  const free = button("Free space", { icon: "x" });
+  const go = button("Serve", { variant: "primary", icon: "play", disabled: true });
+  const s = sheet({ title: `Adjust ${shortModel(repo)}`, body, footer: [button("Cancel", { onclick: () => s.close() }), h("span.spacer"), free, go] });
+  const inf = await catalogInfo(repo);
+  if (inf.error) { body.replaceChildren(h("div.small", { style: { color: "var(--c-gap)" } }, inf.error)); return; }
+  if (inf.offline) {
+    body.replaceChildren(h("div.small", "Start your node to change the layers it serves or keeps."));
+    text(go.querySelector("span"), "Start my node"); go.disabled = false; go.onclick = () => { s.close(); actions.startHost(); };
+    return;
+  }
+  const N = inf.n_layers || N0, lb = inf.layer_bytes || 0;
+  const count = (a, b, pred) => { let n = 0; for (let i = a; i < b; i++) if (pred(i)) n++; return n; };
+  const stepper = (label, get, set, min, max) => {
+    const v = h("b.num"), minus = iconButton("minus", `${label}: one lower`, () => { set(get() - 1); paint(); }),
+      plus = iconButton("plus", `${label}: one higher`, () => { set(get() + 1); paint(); });
+    return { el: h("div.field", h("label", label), h("div.stepper", minus, v, plus)),
+      paint: () => { text(v, String(get())); minus.disabled = get() <= min(); plus.disabled = get() >= max(); } };
+  };
+  // From and Through are layer numbers (inclusive), like everywhere else in the app.
+  const from = stepper("From layer", () => lo, x => { lo = x; }, () => 0, () => hi - 1);
+  const thru = stepper("Through layer", () => hi - 1, x => { hi = x + 1; }, () => lo, () => N - 1);
+  const bar = h("div"), rows = h("div.adj-rows"), errText = h("span.grow");
+  // Too big for memory: say why, how many layers fit, and offer that range.
+  const fitBtn = button("Use what fits", { size: "sm" });
+  const err = h("div.next.err.small", { hidden: true }, icon("alert"), errText, fitBtn);
+  const line = (k, v) => h("div.adj-row", h("span.muted", k), h("span", v));
+  const gbOf = n => lb ? fmt.bytes(n * lb) : `${n} layers`;
+  function plan() {
+    const n = hi - lo, onDisk = i => inRuns(disk, i), isServed = i => inRuns(loaded.map(x => [x.lo, x.hi]), i);
+    const fresh = count(lo, hi, i => !onDisk(i));
+    // Freeing keeps the range and anything served now (it can't drop layers in use).
+    const extra = count(0, N, i => onDisk(i) && !(lo <= i && i < hi) && !isServed(i));
+    const extraAfter = count(0, N, i => onDisk(i) && !(lo <= i && i < hi));
+    const changes = !loaded.length || served[0] !== lo || served[1] !== hi;
+    return { n, fresh, extra, extraAfter, changes };
+  }
+  function paint() {
+    from.paint(); thru.paint();
+    const p = plan(), memNow = loaded.reduce((a, x) => a + x.hi - x.lo, 0), diskNow = count(0, N, i => inRuns(disk, i));
+    const adding = [];
+    for (let i = lo; i < hi; i++) if (!inRuns(disk, i)) adding.push([i, i + 1]);
+    bar.replaceChildren(layerBar(N, disk, loaded.map(x => [x.lo, x.hi]), adding, "To download", [lo, hi]));
+    rows.replaceChildren(
+      line("Serve", `Layers ${fmt.layers(lo, hi)} · ${p.n} of ${N}`),
+      line("Memory while serving", `${gbOf(p.n)}${memNow ? ` (now ${gbOf(memNow)})` : ""}`),
+      line("Download", p.fresh ? `${p.fresh} layer${p.fresh > 1 ? "s" : ""}, ${gbOf(p.fresh)}` : "Nothing"),
+      line("On disk", `${gbOf(diskNow + p.fresh)}${p.extraAfter ? `, or ${gbOf(diskNow + p.fresh - p.extraAfter)} after freeing the ${p.extraAfter} outside the range` : ""} (now ${gbOf(diskNow)})`));
+    // room_gb: what the engine will allow for this model (free for models, plus its served slices, less
+    // the load headroom). Older engines only send mem_free_gb.
+    const need = p.n * lb / GB, room = inf.room_gb ?? (inf.mem_free_gb + memNow * lb / GB) * 0.95, fit = lb ? Math.floor(room * GB / lb) : N;
+    const tooBig = !!lb && need > room;
+    err.hidden = !tooBig;
+    if (tooBig) {
+      text(errText, `Layers ${fmt.layers(lo, hi)} need about ${fmt.gb(need)} of memory, and this machine has ${fmt.gb(room)} for them. ${fit > 0 ? `Up to ${fit} layers fit.` : "Not even one layer fits."}`);
+      fitBtn.hidden = fit <= 0;
+      text(fitBtn.querySelector("span"), `Use ${fit} layers`);
+      fitBtn.onclick = () => { lo = Math.max(lo, hi - fit); paint(); };   // keep the top of the range
+    }
+    // Free: while serving a different range, serve the new one first, then free (old layers are in use until then).
+    const both = p.changes && loaded.length > 0;
+    free.hidden = both ? !p.extraAfter : !p.extra;
+    text(free.querySelector("span"), both ? `Serve and free ${gbOf(p.extraAfter)}` : `Free ${gbOf(p.extra)}`);
+    free.disabled = both && !err.hidden;
+    go.hidden = !p.changes;
+    text(go.querySelector("span"), `Serve ${fmt.layers(lo, hi)}`);
+    go.disabled = !err.hidden;
+  }
+  const serve = async trim => {
+    go.disabled = free.disabled = true;
+    if (await serveSlice(repo, lo, hi, null, { replace: true, trim })) { s.close(); setTimeout(refreshLocal, 1500); } else paint();
+  };
+  go.onclick = () => serve(false);
+  free.onclick = async () => {
+    if (plan().changes && loaded.length > 0) return serve(true);
+    free.disabled = true;
+    if (await catalogTrim(repo, lo, hi)) { s.close(); refreshLocal(); } else paint();
+  };
+  body.replaceChildren(
+    h("div.small.muted", `${loaded.length ? `Serving layers ${rangesText(loaded.map(x => [x.lo, x.hi]))}` : "Not serving"}; on disk: ${disk.length ? rangesText(disk) : "nothing"}. Pick the range to keep: more layers take more memory, fewer free it.`),
+    h("div.row", { style: { gap: "24px" } }, from.el, thru.el), bar, rows, err);
+  paint();
+}
+
+/** "On this machine" card. Returns { mine, update(s) }, placed by the view. */
 export function catalogSection() {
-  const q = h("input.input", { type: "search", placeholder: "Search MLX models on Hugging Face, like qwen3 or llama", spellcheck: "false", "aria-label": "Search models" });
-  const results = h("div.cat-list");
-  const status = h("div.small.muted");
-  const chips = h("div.cat-chips", h("span.faint.small", "Try"),
-    ...["qwen3", "llama", "gemma", "mistral", "deepseek", "phi"].map(w =>
-      h("button.chip-btn", { type: "button", onclick: () => { q.value = w; run(); } }, w)));
-  const finder = h("section.card.cat-card",
-    secHead("search", "Find models", status),
-    h("div.cat-search", icon("search"), q), chips, results);
   const localList = h("div.cat-list");
   const mine = h("section.card.cat-card", secHead("memory", "On this machine", h("span.small.muted.disk")), localList);
-
-  let items = [], seq = 0, t, searched = false;
-  async function run() {
-    const my = ++seq;
-    text(status, "Searching…");
-    const r = await catalogSearch(q.value.trim());
-    if (my !== seq) return;
-    if (r.error) { items = []; text(status, r.error); } else { items = r.results; text(status, items.length ? "" : "No MLX models match"); }
-    renderResults();
-  }
-  q.addEventListener("input", () => { clearTimeout(t); t = setTimeout(run, 350); });
 
   function row(repo, sub, badges, actions, bar = null) {
     return h("div.list-row",
       h("div.grow", h("div.t", shortModel(repo), h("span.faint.small", " " + repo.split("/")[0])), sub ? h("div.d", sub) : null, bar),
       h("div.row.wrap", ...badges), ...actions);
-  }
-  function renderResults() {
-    results.replaceChildren(...items.map(it => row(it.repo, `${fmt.compact(it.downloads)} downloads · ${fmt.compact(it.likes)} likes`,
-      statusBadges(it.repo),
-      [button(localOf(it.repo)?.complete ? "Serve…" : "Get…", { icon: "download", size: "cat-get", onclick: () => openGet(it.repo) })])));
   }
   const bars = new Map();   // "model:lo:hi" -> update fn for that slice's progress line
   function renderLocal() {
@@ -188,22 +289,23 @@ export function catalogSection() {
         [m.serving.length ? badge(`Serving ${rangesText(m.serving)}`, "serving", { dot: true }) : null,
           pend.length ? badge(`Downloading ${rangesText(fetching)}`, "active", { dot: true }) : null,
           !m.serving.length && !pend.length ? badge("Not serving", "neutral") : null].filter(Boolean),
-        [m.serving.length || pend.length || !m.repo.includes("/") ? null : button("Serve…", { size: "sm", icon: "play", onclick: () => openGet(m.repo) }),
+        // Play / stop sit on the model's row in the swarm; here only for models the swarm doesn't list.
+        [swarmOf(m.repo) ? null : playStop(m.repo),
+          running && m.repo.includes("/") && m.layers.length && !pend.length ? button("Adjust", { size: "sm", icon: "layers", onclick: () => openAdjust(m.repo) }) : null,
           running && m.dir && armedButton("Delete", pend.length ? "Cancel and delete files?" : "Delete files?", async () => { if (await catalogDelete(m)) refreshLocal(); }, { size: "sm" })].filter(Boolean),
         layerBar(m.n_layers, m.layers, m.serving, fetching));
       if (pend.length) r.querySelector(".grow").append(...pend.map(s => pendingRow(s, bars)));
       return r;
     }));
   }
-  onLocal = () => { renderLocal(); renderResults(); };
+  onLocal = renderLocal;
 
   let slicesKey = null, swarmKey = null, running = null;
   return {
-    finder, mine,
+    mine,
     update(s) {
       const was = running;
       running = s.source === "live" && s.engine.phase === "running";
-      if (!searched) { searched = true; run(); }   // browsing works with the node stopped (straight to Hugging Face)
       if (s.source !== "live") { mine.hidden = true; return; }
       if (running !== was) { slicesKey = null; if (!running) refreshLocal(); }   // stopped: read the disk natively
       if (!running) return;
@@ -212,8 +314,8 @@ export function catalogSection() {
       const k = JSON.stringify(s.slices.map(x => [x.model, x.lo, x.hi, x.loaded, x.phase]));
       if (k !== slicesKey) { slicesKey = k; refreshLocal(); }
       else for (const x of s.slices) bars.get(`${x.model}:${x.lo}:${x.hi}`)?.(x);
-      const sk = models(s).map(m => m.model + m.state + m.gaps).join("|");
-      if (sk !== swarmKey) { swarmKey = sk; renderResults(); }
+      const sk = models(s).map(m => m.model).join("|");   // which rows get play / stop here
+      if (sk !== swarmKey) { swarmKey = sk; renderLocal(); }
     },
   };
 }

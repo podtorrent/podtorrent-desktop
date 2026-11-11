@@ -3,13 +3,12 @@
 import { h, text, fmt, cls } from "../dom.js";
 import { state, settings, setSetting, history, selfNode, nodeState, nodeStateLabel, shortModel } from "../store.js";
 import { valuation, valuationError, bases, basis, usdFor, kwh, usd } from "../valuation.js";
-import { button, armedButton, toggle, badge, setBadge, ticker } from "../ui.js";
+import { button, armedButton, ticker } from "../ui.js";
 import { icon } from "../icons.js";
 import { areaChart, barChart } from "../viz/chart.js";
 import { startHost, stopNode, unserveSlice, cancelDownload, encoderStatus, videoStatus } from "../engine.js";
-import { openServe } from "../serve.js";
 import { isTauri } from "../native.js";
-import { setDemo, go } from "../actions.js";
+import { setDemo } from "../actions.js";
 
 // CUDA 12.8 PyTorch needs this NVIDIA driver or newer (backend.MIN_NVIDIA_DRIVER).
 const MIN_NVIDIA_DRIVER = 570;
@@ -27,6 +26,13 @@ function gauge() {
 }
 
 const PRESS = { normal: ["Normal", "serving"], warn: ["Elevated", "degraded"], critical: ["Critical", "gap"], unknown: ["Unknown", "neutral"] };
+// Status as a small dot and quiet text: color marks the state, not the whole label.
+const DOT = { serving: "serving", active: "active", degraded: "degraded", gap: "gap" };
+const status = (label, kind) => h("span.q-status", h(`span.statedot.${DOT[kind] || "off"}`), label);
+function setStatus(el, label, kind) { el.replaceChildren(h(`span.statedot.${DOT[kind] || "off"}`), label); }
+// Destructive actions stay neutral until armed; the confirm click is red.
+const calm = { variant: "danger.calm" };
+
 const THERM = { nominal: ["Nominal", "serving"], fair: ["Fair", "degraded"], serious: ["Serious", "gap"], critical: ["Critical", "gap"], unknown: ["Unknown", "neutral"] };
 
 export default {
@@ -66,22 +72,21 @@ export default {
     // ---- running ----
     const g = gauge();
     const gv = h("b.num"), gs = h("span.small.faint");
-    const chipEl = h("h1.hero-chip"), roleB = h("span.badge"), stateB = h("span.badge.dot");
+    const chipEl = h("h1.hero-chip"), stateB = h("span.q-status");
     const hv = { layers: h("b.num"), today: h("b.num"), all: h("b.num"), req: h("b.num"), up: h("b.num") };
     const sliceList = h("div.col.slice-list");
     const freeNote = h("span.small.faint");
-    const serveBtn = button("Serve text layers…", { icon: "download", size: "sm", onclick: () => openServe() });
-    // Everything this machine gives the swarm, text and video, on one memory budget.
+    // What this machine serves and the memory it takes. Serving more is done from Models.
     const memBar = h("div.mem-bar", { role: "img" }), memKey = h("div.mem-key.small");
     const videoList = h("div.col.slice-list"), memNote = h("div.small.faint");
-    const videoBtn = button("Video layers…", { icon: "video", size: "sm", tip: "Choose this machine's video encoder layers and set up rendering", onclick: () => go("models", "video") });
+    // Video shows only when this machine holds encoder layers or renders.
+    const videoSect = h("div.col", { style: { gap: "6px" }, hidden: true }, h("b", "Video (MiniMax-H3)"), videoList);
     const slicesCard = h("section.card",
-      h("div.card-h", h("h2", "What this machine contributes"), h("span.spacer"), serveBtn, videoBtn),
+      h("div.card-h", h("h2", "What this machine contributes")),
       h("div.card-b.col", { style: { gap: "14px" } },
-        h("div.col", { style: { gap: "6px" } }, h("div.row", h("span.caps", "Memory for models · shared by text and video"), h("span.spacer"), freeNote), memBar, memKey, memNote),
-        h("div.col", { style: { gap: "6px" } }, h("div.row", h("span.wl-tag.text", "Text"), h("b", "Text models"), h("span.small.faint", "Layers kept in memory, used by every chat that routes through this machine")), sliceList),
-        h("div.col", { style: { gap: "6px" } }, h("div.row", h("span.wl-tag.video", "Video"), h("b", "Video (MiniMax-H3)"), h("span.small.faint", "Prompt encoder layers and rendering, used by video jobs")), videoList),
-        h("p.small.muted.policy", "Both kinds of work run side by side. They share this machine's memory, so a new download is checked against what the other already uses. Requests are handled as they arrive, so a video job and a chat at the same moment both run, each a little slower.")));
+        h("div.col", { style: { gap: "6px" } }, h("div.row", h("span.caps", "Memory for models"), h("span.spacer"), freeNote), memBar, memKey, memNote),
+        h("div.col", { style: { gap: "6px" } }, h("b", "Text models"), sliceList),
+        videoSect));
     let askedVideo = false, slicesKey = "";
     function paintVideo(s) {
       const enc = s.video.encoder, st = s.video.status;
@@ -89,30 +94,33 @@ export default {
       for (const x of enc?.slices || []) rows.push(h("div.list-row",
         h("div.grow", h("div.t", h("b", "Prompt encoder"), ` · layers ${fmt.layers(x.lo, x.hi)}`, h("span.faint", ` (${x.hi - x.lo} of ${enc.n_layers})`)),
           h("div.d", `${fmt.bytes(x.bytes)} · ${enc.device === "cpu" ? "runs on the CPU from system RAM" : "runs on this machine's GPU"} · ${x.loaded ? "in memory" : "on disk, loads on the next video job"}`)),
-        badge(x.loaded ? "Ready" : "On disk", x.loaded ? "serving" : "neutral", { dot: true })));
+        status(x.loaded ? "Ready" : "On disk", x.loaded ? "serving" : "neutral")));
       if (enc?.fetching && !enc.fetching.error) rows.push(h("div.list-row", h("div.grow", h("div.t", h("b", "Prompt encoder"), ` · layers ${fmt.layers(enc.fetching.lo, enc.fetching.hi)}`),
-        h("div.d", `${fmt.bytes(enc.fetching.done)} of ${fmt.bytes(enc.fetching.total)}`)), badge(`Downloading ${fmt.pct(enc.fetching.done / (enc.fetching.total || 1))}`, "degraded", { dot: true, pulse: true })));
-      if (st) {
-        const cap = st.capability || {};
+        h("div.d", `${fmt.bytes(enc.fetching.done)} of ${fmt.bytes(enc.fetching.total)}`)), status(`Downloading ${fmt.pct(enc.fetching.done / (enc.fetching.total || 1))}`, "active")));
+      // Rendering only when this machine renders or is being set up to; otherwise it isn't its job.
+      const settingUp = st?.setup?.phase === "install" || st?.setup?.phase === "models";
+      if (st && (st.paused || st.render_ready || settingUp)) {
         const [label, kind, d] = st.paused ? ["Paused", "degraded", st.paused]
           : st.render_ready ? ["Renders", "serving", `Renders video jobs on ${st.gpu?.name || "this machine's GPU"}`]
-          : cap.ok ? [st.setup?.phase === "install" || st.setup?.phase === "models" ? "Setting up" : "Not set up", "neutral", "This machine can render video. Set it up in Models › Video."]
-          : ["Not on this machine", "neutral", `${cap.reason || "No suitable GPU."} Another machine or peer in the swarm renders.`];
-        rows.push(h("div.list-row", h("div.grow", h("div.t", h("b", "Rendering")), h("div.d", d)), badge(label, kind, { dot: true })));
+          : ["Setting up", "active", "Getting this machine ready to render video."];
+        rows.push(h("div.list-row", h("div.grow", h("div.t", h("b", "Rendering")), h("div.d", d)), status(label, kind)));
       }
       const k = JSON.stringify([enc?.slices, enc?.fetching, enc?.device, st?.render_ready, st?.paused, st?.capability, st?.setup?.phase]);
       if (videoList.dataset.k !== k) {
         videoList.dataset.k = k;
-        videoList.replaceChildren(...(rows.length ? rows : [h("div.small.muted", "No video work on this machine yet.")]));
+        videoList.replaceChildren(...rows);
       }
-      // memory bar: text layers | video encoder layers (when they share the GPU budget) | free
-      const budget = enc?.mem_budget_gb, textGb = enc?.text_gb || 0, vidGb = enc?.shares_budget ? enc.held_gb || 0 : 0;
+      videoSect.hidden = !rows.length;
+      // memory bar: text layers | loaded video encoder layers (when they share the GPU budget) | free
+      // Encoder layers count only while loaded: on disk they hold no memory (text first).
+      const loadedEnc = (enc?.slices || []).filter(x => x.loaded).reduce((a, x) => a + x.bytes, 0) / 2 ** 30;
+      const budget = enc?.mem_budget_gb, textGb = enc?.text_gb || 0, vidGb = enc?.shares_budget ? loadedEnc : 0;
       memBar.hidden = memKey.hidden = !budget;
       if (budget) {
         const free = Math.max(budget - textGb - vidGb, 0), pct = v => `${Math.min(100, 100 * v / budget)}%`;
         memBar.replaceChildren(h("i.text", { style: { width: pct(textGb) } }), h("i.video", { style: { width: pct(vidGb) } }));
         memBar.setAttribute("aria-label", `Memory budget ${fmt.gb(budget)}: text models ${fmt.gb(textGb)}, video ${fmt.gb(vidGb)}, ${fmt.gb(free)} free`);
-        memKey.replaceChildren(h("span", h("i.text"), `Text models ${fmt.gb(textGb)}`), h("span", h("i.video"), `Video encoder ${fmt.gb(vidGb)}`),
+        memKey.replaceChildren(h("span", h("i.text"), `Text models ${fmt.gb(textGb)}`), vidGb ? h("span", h("i.video"), `Video encoder ${fmt.gb(vidGb)}`) : null,
           h("span", h("i"), `Free ${fmt.gb(free)} of ${fmt.gb(budget)}`));
       }
       text(memNote, enc && !enc.shares_budget && enc.held_gb ? `Video encoder layers (${fmt.gb(enc.held_gb)}) run on the CPU from system RAM, outside this budget: the GPU is kept for rendering.` : "");
@@ -121,8 +129,7 @@ export default {
     const hero = h("section.card.hero",
       h("div.hero-l", h("div.gauge-wrap", g, h("div.gauge-c", gv, gs))),
       h("div.hero-m",
-        h("div.row", h("span.you-pill", icon("person"), "This machine"), roleB, stateB),
-        chipEl, h("div.small.muted.hero-sub"),
+        chipEl, h("div.row.hero-sub-row", stateB, h("span.small.muted.hero-sub")),
         h("div.hero-stats",
           h("div", h("span.caps", "Text layers served"), hv.layers),
           h("div", h("span.caps", "Tokens today"), hv.today),
@@ -130,19 +137,13 @@ export default {
           h("div", h("span.caps", "Requests helped"), hv.req),
           h("div", h("span.caps", "Uptime"), hv.up))),
       h("div.hero-r",
-        armedButton("Stop node", "Click again to stop", () => stopNode(), { icon: "stop", size: "lg" })));
+        armedButton("Stop node", "Click again to stop", () => stopNode(), { ...calm, icon: "stop" })));
     const tiles = { press: h("div.tile"), therm: h("div.tile"), power: h("div.tile"), lp: h("div.tile"), gpu: h("div.tile") };
     const tile = (el, ic, label) => el.replaceChildren(h("div.row", icon(ic), h("span.small.muted", label)), h("div.tile-v"), h("div.small.faint.tile-s"));
     tile(tiles.press, "memory", "Memory pressure"); tile(tiles.therm, "thermo", "Thermal state"); tile(tiles.power, "plug", "Power"); tile(tiles.lp, "bolt", "Low Power Mode"); tile(tiles.gpu, "layers", "GPU load");
     tiles.gpu.hidden = true;
     const relabel = (el, label) => text(el.querySelector(".row .small"), label);
     const setTile = (el, v, kind, sub) => { const x = el.querySelector(".tile-v"); x.className = `tile-v ${kind}`; text(x, v); text(el.querySelector(".tile-s"), sub || " "); };
-    const rules = h("section.card",
-      h("div.card-h", h("h2", "Contribution rules"), h("span.spacer"), badge("Needs engine support", "neutral")),
-      ...[["Pause contributing", "Stop serving without leaving the swarm"], ["Only when plugged in", "Pause automatically on battery"], ["Only when idle", "Pause while you're using this machine"]].map(([t, d]) =>
-        h("div.list-row", h("div.grow", h("div.t", t), h("div.d", d)), toggle(false, () => {}, t))),
-      h("div.card-b.small.faint", { style: { paddingTop: "10px" } }, "To stop serving a slice, use Stop serving above; Stop node leaves the swarm. Slices that won't fit in this machine's GPU memory are refused before downloading (cap it with PODTORRENT_MEM_BUDGET_GB)."));
-    rules.querySelectorAll(".toggle").forEach(t => { t.disabled = true; });
     const contrib = contributionCard(), payback = paybackCard();
     const tpsChart = areaChart({ color: "you", labels: ["2 min ago", "now"] });
     const dayChart = barChart({ color: "you" });
@@ -152,8 +153,7 @@ export default {
       h("div.two.contrib-row", contrib, payback),
       h("div.two",
         h("section.card", h("div.card-h", h("h2", "Tokens per second"), h("span.spacer"), h("span.small.faint", "this machine")), h("div.card-b", tpsChart)),
-        h("section.card", h("div.card-h", h("h2", "Contribution history"), h("span.spacer"), dayNote), h("div.card-b", dayChart))),
-      rules);
+        h("section.card", h("div.card-h", h("h2", "Contribution history"), h("span.spacer"), dayNote), h("div.card-b", dayChart))));
 
     root.append(setup, starting, running);
 
@@ -179,9 +179,9 @@ export default {
             h("div.t", h("b", shortModel(x.model)), ` · layers ${fmt.layers(x.lo, x.hi)}`, h("span.faint", ` (${x.hi - x.lo} of ${x.n_layers || "?"})`)),
             h("div.d", pc != null ? `${fmt.bytes(x.done)} of ${fmt.bytes(x.total)}` : x.model),
             pc != null ? h("div.progress", { style: { marginTop: "6px" } }, h("i", { style: { width: pc * 100 + "%" } })) : null),
-          badge(pc != null ? `${label} ${fmt.pct(pc)}` : label, kind, { dot: true, pulse: !x.loaded }),
-          x.loaded ? armedButton("Stop serving", "Click to confirm", () => unserveSlice(x.model, x.lo, x.hi), { size: "sm", icon: "stop" })
-            : armedButton("Cancel download", "Click to confirm", () => cancelDownload(x.model, x.lo, x.hi), { size: "sm", icon: "x", disabled: x.phase === "loading" }));
+          status(pc != null ? `${label} ${fmt.pct(pc)}` : label, x.loaded ? kind : kind === "gap" ? "gap" : "active"),
+          x.loaded ? armedButton("Stop serving", "Click to confirm", () => unserveSlice(x.model, x.lo, x.hi), { ...calm, size: "sm" })
+            : armedButton("Cancel download", "Click to confirm", () => cancelDownload(x.model, x.lo, x.hi), { ...calm, size: "sm", disabled: x.phase === "loading" }));
       }));
     }
 
@@ -197,7 +197,6 @@ export default {
         offErr.hidden = !(off && s.engine.error);
         if (off && s.engine.error) offErr.replaceChildren(icon("alert"), h("div.grow", h("b", "The engine stopped"), h("div.mono.small", s.engine.error.split("\n").slice(-3).join("\n"))));
         running.querySelector(".hero-r").hidden = off;
-        serveBtn.disabled = off;
         if (off) sliceList.dataset.off = "1"; else delete sliceList.dataset.off;
         if (show === "setup") {
           startBtn.disabled = !isTauri;
@@ -220,9 +219,8 @@ export default {
         text(gs, m ? `of ${fmt.gb(m.total_gb)} in use` : "");
         text(chipEl, me?.chip || hl?.chip || "This machine");
         text(running.querySelector(".hero-sub"), [me?.name, s.source === "demo" ? "Demo Mode" : off ? "Not in the swarm" : "Peer in the global swarm"].filter(Boolean).join(" · "));
-        setBadge(roleB, "Peer", "you");
         const st = me ? nodeState(me, s) : "idle";
-        if (off) setBadge(stateB, "Offline", "neutral", { dot: true }); else setBadge(stateB, phase === "unreachable" ? "Not responding" : me ? nodeStateLabel(me, s) : "Starting", phase === "unreachable" ? "gap" : st === "idle" ? "neutral" : st, { dot: true, pulse: st === "active" });
+        if (off) setStatus(stateB, "Offline", "neutral"); else setStatus(stateB, phase === "unreachable" ? "Not responding" : me ? nodeStateLabel(me, s) : "Starting", phase === "unreachable" ? "gap" : st === "idle" ? "neutral" : st);
         const loaded = s.slices.filter(x => x.loaded);
         text(hv.layers, loaded.length ? String(loaded.reduce((a, x) => a + x.hi - x.lo, 0)) : "None yet");
         paintSlices(s);
@@ -230,7 +228,7 @@ export default {
           const sk = JSON.stringify(s.slices.map(x => [x.model, x.lo, x.hi, x.loaded]));
           if (!askedVideo || sk !== slicesKey) { askedVideo = true; slicesKey = sk; encoderStatus(); videoStatus(); }
           paintVideo(s);
-        } else { askedVideo = false; videoList.replaceChildren(h("div.small.muted", "Shown while your node runs.")); memBar.hidden = memKey.hidden = true; }
+        } else { askedVideo = false; videoSect.hidden = true; memBar.hidden = memKey.hidden = true; }
         const day = new Date().toISOString().slice(0, 10);
         const days = s.source === "demo" ? demoDays() : history.days;
         tk.today.set(days[day] || 0);

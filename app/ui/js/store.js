@@ -7,7 +7,7 @@ const HISTORY_KEY = "pt.history";
 const DEFAULT_SETTINGS = {
   theme: "system", reduceEffects: false, demo: false, demoPreset: "swarm", demoAutoplay: true,
   sidebarCollapsed: false, swarmLayout: "graph", inspector: true, maxTokens: 256, onboarded: false,
-  peerName: "", pendingServe: null, notifications: true,
+  peerName: "", pendingServe: null, pendingPod: null, notifications: true,
   valuationBasis: null, macPrice: null, amortMonths: null,
 };
 
@@ -136,9 +136,12 @@ export function applyEvent(ev) {
         if (ev.phase === "ready") feed("load", `${ev.node} is serving ${what || "its layers"}`, "", "success", ts);
         if (ev.phase === "cancelled") feed("load", `${ev.node} cancelled the download of ${what || "its layers"}`, "", "info", ts);
         if (ev.phase === "error") feed("load", `${ev.node} couldn't serve ${what || "its layers"}`, ev.message || "", "error", ts);
+        // This machine's own download or load failing must not look like it finished: say so.
+        if (ev.phase === "error" && ev.node === state.self) emit("toast", { text: `Couldn't serve ${what || "those layers"}`, detail: ev.message || "The download stopped. Try again.", kind: "gap" });
       }
       break;
     }
+    case "disk": emit("disk", ev); break;   // layers removed from disk: the catalog re-reads it
     case "slices":
       state.slices = ev.slices || [];
       if (ev.mem_free_gb != null) state.memFree = ev.mem_free_gb;

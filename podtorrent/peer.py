@@ -125,9 +125,6 @@ class Slices:
         self.last_compute_ms = 0.0
         self.last_forward_ts = 0.0
         self._load_lock = threading.Lock()
-        # Memory promised to other work on the same GPU budget: video encoder layers on disk that
-        # load on the next video job. Set by run_peer.
-        self.reserved: Callable[[], float] = lambda: 0.0
 
     def held_gb(self) -> float:
         """Memory these text-model slices take (or will, once loaded)."""
@@ -204,13 +201,23 @@ class Slices:
         for k in [k for k, (_, ts) in self.caches.items() if now - ts > CACHE_IDLE_S]:
             self.caches.pop(k, None)
 
-    def load(self, model: str, lo: int, hi: int, progress=lambda phase, done=0, total=0, msg="": None) -> Served:
+    def load(self, model: str, lo: int, hi: int, progress=lambda phase, done=0, total=0, msg="": None,
+             replace: bool = False) -> Served:
         """Download and load `model` layers [lo, hi) next to whatever is already served. Slices of the
-        same model that the new one contains are dropped once it's ready. Raises MemoryError up front
-        when the slice won't fit in this Mac's GPU budget."""
+        same model that the new one contains are dropped once it's ready; with `replace` (a resize, which
+        may also shrink), every other slice of the model is. Raises MemoryError up front when the slice
+        won't fit in this machine's GPU budget."""
         with self._load_lock:
-            have = self.find(model, lo, hi)
+            have = (next((s for s in self.loaded(model) if (s.lo, s.hi) == (lo, hi)), None) if replace
+                    else self.find(model, lo, hi))
             if have is not None:
+                if replace:
+                    with MLX:
+                        for r in self.loaded(model):
+                            if r is not have:
+                                r.shard = None
+                                self.items.pop((r.model, r.lo, r.hi), None)
+                        B.clear_cache()
                 progress("ready", 1, 1)
                 return have
             d = self.model_dir(model)
@@ -221,15 +228,16 @@ class Slices:
             n = cfg["num_hidden_layers"]
             if not 0 <= lo < hi <= n:
                 raise ValueError(f"layers [{lo},{hi}) out of range: {model} has {n} layers")
-            replaced = [s for s in self.loaded(model) if lo <= s.lo and s.hi <= hi]
+            replaced = [s for s in self.loaded(model) if replace or (lo <= s.lo and s.hi <= hi)]
+            # Text first: video encoder layers on disk hold no memory here; a video job checks for room
+            # when it loads them (EncoderNode.check_load).
             need = gb(d, lo, hi)
-            video = self.reserved()
-            free = mem_free_gb() - video + sum(gb(d, s.lo, s.hi) for s in replaced)
+            free = mem_free_gb() + sum(gb(d, s.lo, s.hi) for s in replaced)
             if need + MEM_HEADROOM_GB > free:
-                raise MemoryError(f"{model.split('/')[-1]} layers [{lo},{hi}) need ~{need:.1f} GB, "
-                                  f"but this machine has {max(free, 0):.1f} GB free for models"
-                                  + (f" ({video:.1f} GB is kept for its video encoder layers: remove some in the Video view "
-                                     "to make room)" if video >= 0.1 else ""))
+                fit = int(max(free - MEM_HEADROOM_GB, 0) // (need / (hi - lo))) if need else 0
+                raise MemoryError(f"{model.split('/')[-1]} layers {lo}–{hi - 1} need ~{need:.1f} GB plus {MEM_HEADROOM_GB:.0f} GB "
+                                  f"headroom, but this machine has {max(free, 0):.1f} GB free for models. "
+                                  f"Serve {fit} layers or fewer.")
             s = self.items[(model, lo, hi)] = Served(model, lo, hi, n)
 
             def emit(phase, done=0, total=0, msg=""):
@@ -466,8 +474,9 @@ class PeerApp:
                 threading.Thread(target=self._try, args=([], "pod plan", self.ensure_head, model), daemon=True).start()
 
     def free_for_models(self) -> float:
-        """Room for more text-model layers: free GPU budget minus what video encoder layers will need."""
-        return max(mem_free_gb() - self.slices.reserved(), 0.0)
+        """Room for more text-model layers: the free GPU budget. Video encoder layers on disk don't
+        hold any of it (text first); a video job checks for room when it loads them."""
+        return mem_free_gb()
 
     def model_dir(self, model: str) -> Path:
         return self._dirs.get(model) or default_dir(model)
@@ -651,7 +660,16 @@ class PeerApp:
                     self.slices.release(req.session_id)
                 else:
                     sessions.add(req.session_id)
-                    resp = await asyncio.to_thread(self.slices.forward, req)
+                    t = time.perf_counter()
+                    try:
+                        resp = await asyncio.to_thread(self.slices.forward, req)
+                    except Exception as e:  # noqa: BLE001 - say why, or the caller waits until it times out
+                        resp = pb.ForwardResponse(session_id=req.session_id, error=f"{type(e).__name__}: {e}")
+                    secs = time.perf_counter() - t
+                    if resp.error or secs > 2:
+                        print(f"forward: layers [{req.layer_lo},{req.layer_hi}) x{req.shape[1] if len(req.shape) > 1 else '?'} "
+                              f"for {self.net._name(conn.peer_id)} "
+                              f"took {secs:.1f}s" + (f": {resp.error}" if resp.error else ""), flush=True)
                     writer.write(_frame(resp.SerializeToString()))
                 try:
                     body = await _read_frame(reader)
@@ -691,7 +709,7 @@ class PeerApp:
                 break
         await asyncio.gather(task, return_exceptions=True)
 
-    def _load_local(self, model, lo, hi, progress=lambda *a: None):
+    def _load_local(self, model, lo, hi, progress=lambda *a: None, replace=False):
         last = [None]
 
         def report(phase, done=0, total=0, msg=""):
@@ -707,7 +725,7 @@ class PeerApp:
                       assignments=[{"node": NAME, "lo": lo, "hi": hi, "roles": []}])
         self._announce()  # the new slice shows up as "checking" / "downloading"
         try:
-            s = self.slices.load(model, lo, hi, report)
+            s = self.slices.load(model, lo, hi, report, replace=replace)
         except Cancelled:
             # The UI gets "cancelled"; a requesting peer gets "error", which every version understands.
             self.emit("load_progress", node=NAME, model=model, lo=lo, hi=hi, phase="cancelled", done=0, total=0,
@@ -719,7 +737,7 @@ class PeerApp:
             report("error", msg=str(e))
             self._announce()
             raise
-        save_slices(lambda cur: [c for c in cur if not (c.get("model") == model and lo <= c["lo"] and c["hi"] <= hi)]
+        save_slices(lambda cur: [c for c in cur if not (c.get("model") == model and (replace or lo <= c["lo"] and c["hi"] <= hi))]
                     + [{"model": model, "lo": s.lo, "hi": s.hi}])
         self._announce()
 
@@ -837,6 +855,8 @@ class PeerApp:
                             resp = self._call(self._hop(streams, k, hop, req),
                                               HOP_TIMEOUT_S if h.shape[1] > 1 else DECODE_HOP_TIMEOUT_S)
                         except Exception as e:  # noqa: BLE001
+                            print(f"route: {hop.name} [{hop.lo},{hop.hi}) x{h.shape[1]} gave no answer in "
+                                  f"{time.perf_counter() - t:.1f}s ({len(payload) // 1024} KB sent)", flush=True)
                             raise HopFailed(hop, str(e) or type(e).__name__) from e
                         if resp.error:
                             raise HopFailed(hop, resp.error)
@@ -1003,7 +1023,9 @@ class PeerApp:
 
     async def serve(self, request):
         """Serve {model?, lo, hi} next to what's already served. With `peer` (a name or peer_id),
-        ask that direct peer to serve it instead. Progress arrives as `load_progress` events."""
+        ask that direct peer to serve it instead. Progress arrives as `load_progress` events.
+        Here only: `replace` makes it a resize (the model's other slices go once it's loaded), and
+        `trim` then deletes the model's layers outside what's served from disk."""
         b = await request.json()
         args = self._slice_args(b)
         if isinstance(args, str):
@@ -1015,13 +1037,16 @@ class PeerApp:
                 return web.json_response({"error": f"no direct peer {b['peer']}"}, status=404)
             fn, who, fargs = self.remote_load, self.net._name(pid), (pid, model, lo, hi)
         else:
-            fn, who, fargs = self._load_local, "serve", (model, lo, hi)
+            replace, trim = bool(b.get("replace")), bool(b.get("trim"))
+            fn, who, fargs = (lambda *a: self._load_local(*a, replace=replace)), "serve", (model, lo, hi)
         errors: list[str] = []
 
         def go():
             self._try(errors, who, fn, *fargs)
             if errors:
                 self.emit("error", message=errors[0])
+            elif not b.get("peer") and trim:
+                self._try(errors, "trim", self._trim, model)
         if b.get("wait"):
             await asyncio.to_thread(go)
             return web.json_response({"error": errors[0]} if errors else {"ok": True, "slices": self.slices.slices()},
@@ -1061,7 +1086,9 @@ class PeerApp:
         self._n_layers.setdefault(repo, inf["n_layers"])
         m = next((m for m in self.models() if m["model"] == repo), None)
         have = [[s.lo, s.hi] for s in self.slices.items.values() if s.model == repo]
-        free = mem_free_gb()
+        # Room for this model: free for models (video encoder layers keep theirs), plus what its served
+        # slices hold, since a resize swaps them out. room_gb is that less the load headroom.
+        free = self.free_for_models() + sum(self.slice_gb(repo, s.lo, s.hi) for s in self.slices.loaded(repo))
         # Only suggest layers no online peer serves or is loading, so we don't duplicate their work.
         n = inf["n_layers"]
         taken = [c > 0 for c in m["online_coverage"]] if m else [False] * n
@@ -1078,6 +1105,7 @@ class PeerApp:
                                            in_swarm=bool(m and m["state"] != "offline"))
         inf["swarm"] = m
         inf["mem_free_gb"] = round(free, 1)
+        inf["room_gb"] = round(max(free - MEM_HEADROOM_GB, 0.0), 2)
         return web.json_response(inf)
 
     async def catalog_local(self, _):
@@ -1089,6 +1117,26 @@ class PeerApp:
             it["downloading"] = [{"lo": s.lo, "hi": s.hi, "phase": s.phase, "done": s.done, "total": s.total}
                                  for s in slices if s.model == it["repo"] and s.shard is None]
         return web.json_response({"models": items})
+
+    def _trim(self, model: str, keep: list[tuple[int, int]] = ()) -> int:
+        """Delete `model` layers from disk outside `keep` and every slice served or on its way here."""
+        ranges = [*keep, *((s.lo, s.hi) for s in self.slices.items.values() if s.model == model)]
+        freed = catalog.trim(self.model_dir(model), ranges)
+        self.emit("disk", model=model, freed=freed)
+        return freed
+
+    async def catalog_trim(self, request):
+        """Delete {repo}'s layers outside [lo, hi) from disk; layers being served are always kept."""
+        b = await request.json()
+        args = self._slice_args({**b, "model": b.get("repo")})
+        if isinstance(args, str):
+            return web.json_response({"error": args}, status=400)
+        model, lo, hi = args
+        try:
+            freed = await asyncio.to_thread(self._trim, model, [(lo, hi)])
+        except (OSError, ValueError) as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response({"ok": True, "freed": freed})
 
     async def catalog_delete(self, request):
         """Stop serving a model and remove its files from this Mac."""
@@ -1358,6 +1406,7 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
                     web.get("/api/catalog/info", app_state.catalog_info),
                     web.get("/api/catalog/local", app_state.catalog_local),
                     web.post("/api/catalog/delete", app_state.catalog_delete),
+                    web.post("/api/catalog/trim", app_state.catalog_trim),
                     web.post("/api/start", app_state.start), web.post("/api/serve", app_state.serve),
                     web.post("/api/unserve", app_state.unserve),
                     web.post("/api/chat", app_state.chat), web.post("/api/complete", app_state.complete),
@@ -1370,7 +1419,6 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
     enc.renders = lambda: app_state.video.gpu.get("vram_gb", 0) >= MIN_VRAM_GB  # a video machine, set up or not
     # Text-model slices and video encoder layers share one memory budget (unless the encoder runs on the CPU).
     enc.text_gb = app_state.slices.held_gb
-    app_state.slices.reserved = enc.reserved_gb
     if B.NAME == "torch" and B.CUDA:  # text layers on this GPU pause rendering (see VideoService.paused)
         app_state.video.gpu_text_gb = app_state.slices.held_gb
     app_state.video_swarm = VideoSwarm(app_state.net, app_state.video, enc, app_state.me)
