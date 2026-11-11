@@ -232,8 +232,7 @@ export async function openAdjust(repo) {
     const tooBig = !!lb && need > room;
     err.hidden = !tooBig;
     if (tooBig) {
-      text(errText, `Layers ${fmt.layers(lo, hi)} need about ${fmt.gb(need)} of memory, and this machine has ${fmt.gb(room)} for them`
-        + (inf.video_gb >= 0.1 ? ` (${fmt.gb(inf.video_gb)} is kept for its video encoder layers; remove some in Models › Video to make room)` : "") + `. ${fit > 0 ? `Up to ${fit} layers fit.` : "Not even one layer fits."}`);
+      text(errText, `Layers ${fmt.layers(lo, hi)} need about ${fmt.gb(need)} of memory, and this machine has ${fmt.gb(room)} for them. ${fit > 0 ? `Up to ${fit} layers fit.` : "Not even one layer fits."}`);
       fitBtn.hidden = fit <= 0;
       text(fitBtn.querySelector("span"), `Use ${fit} layers`);
       fitBtn.onclick = () => { lo = Math.max(lo, hi - fit); paint(); };   // keep the top of the range

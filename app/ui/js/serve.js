@@ -32,7 +32,9 @@ export function openServe(pre = {}) {
     const enc = state.video.encoder, vs = state.video.status, here = !where.value;
     const msgs = [];
     if (here && vs?.render_ready && !vs.paused) msgs.push("This machine renders video. Serving text layers here pauses rendering until you stop serving them: video needs all of the GPU's memory. To keep rendering, serve text layers on another machine.");
-    if (here && enc?.shares_budget && enc.held_gb) msgs.push(`${fmt.gb(enc.held_gb)} of this machine's memory is kept for its video encoder layers, so less is free for text layers. To serve more text layers, remove some encoder layers in the Video view.`);
+    // Encoder layers hold memory only while loaded (for a video job); on disk they leave it to text.
+    const encLoaded = (enc?.slices || []).filter(x => x.loaded).reduce((a, x) => a + x.bytes, 0) / 2 ** 30;
+    if (here && enc?.shares_budget && encLoaded >= 0.1) msgs.push(`${fmt.gb(encLoaded)} of this machine's memory is in use by video encoder layers right now, so less is free for text layers until the video job ends.`);
     clash.hidden = !msgs.length;
     clash.replaceChildren(icon("alert"), h("div.col", { style: { gap: "4px" } }, ...msgs.map(m => h("span", m))));
   };

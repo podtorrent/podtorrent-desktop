@@ -125,9 +125,6 @@ class Slices:
         self.last_compute_ms = 0.0
         self.last_forward_ts = 0.0
         self._load_lock = threading.Lock()
-        # Memory promised to other work on the same GPU budget: video encoder layers on disk that
-        # load on the next video job. Set by run_peer.
-        self.reserved: Callable[[], float] = lambda: 0.0
 
     def held_gb(self) -> float:
         """Memory these text-model slices take (or will, once loaded)."""
@@ -232,16 +229,15 @@ class Slices:
             if not 0 <= lo < hi <= n:
                 raise ValueError(f"layers [{lo},{hi}) out of range: {model} has {n} layers")
             replaced = [s for s in self.loaded(model) if replace or (lo <= s.lo and s.hi <= hi)]
+            # Text first: video encoder layers on disk hold no memory here; a video job checks for room
+            # when it loads them (EncoderNode.check_load).
             need = gb(d, lo, hi)
-            video = self.reserved()
-            free = mem_free_gb() - video + sum(gb(d, s.lo, s.hi) for s in replaced)
+            free = mem_free_gb() + sum(gb(d, s.lo, s.hi) for s in replaced)
             if need + MEM_HEADROOM_GB > free:
                 fit = int(max(free - MEM_HEADROOM_GB, 0) // (need / (hi - lo))) if need else 0
                 raise MemoryError(f"{model.split('/')[-1]} layers {lo}–{hi - 1} need ~{need:.1f} GB plus {MEM_HEADROOM_GB:.0f} GB "
-                                  f"headroom, but this machine has {max(free, 0):.1f} GB free for models"
-                                  + (f" ({video:.1f} GB is kept for its video encoder layers)" if video >= 0.1 else "")
-                                  + f". Serve {fit} layers or fewer" + (" or remove video encoder layers in Models › Video" if video >= 0.1 else "")
-                                  + ".")
+                                  f"headroom, but this machine has {max(free, 0):.1f} GB free for models. "
+                                  f"Serve {fit} layers or fewer.")
             s = self.items[(model, lo, hi)] = Served(model, lo, hi, n)
 
             def emit(phase, done=0, total=0, msg=""):
@@ -478,8 +474,9 @@ class PeerApp:
                 threading.Thread(target=self._try, args=([], "pod plan", self.ensure_head, model), daemon=True).start()
 
     def free_for_models(self) -> float:
-        """Room for more text-model layers: free GPU budget minus what video encoder layers will need."""
-        return max(mem_free_gb() - self.slices.reserved(), 0.0)
+        """Room for more text-model layers: the free GPU budget. Video encoder layers on disk don't
+        hold any of it (text first); a video job checks for room when it loads them."""
+        return mem_free_gb()
 
     def model_dir(self, model: str) -> Path:
         return self._dirs.get(model) or default_dir(model)
@@ -1098,7 +1095,6 @@ class PeerApp:
         inf["swarm"] = m
         inf["mem_free_gb"] = round(free, 1)
         inf["room_gb"] = round(max(free - MEM_HEADROOM_GB, 0.0), 2)
-        inf["video_gb"] = round(self.slices.reserved(), 1)
         return web.json_response(inf)
 
     async def catalog_local(self, _):
@@ -1412,7 +1408,6 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
     enc.renders = lambda: app_state.video.gpu.get("vram_gb", 0) >= MIN_VRAM_GB  # a video machine, set up or not
     # Text-model slices and video encoder layers share one memory budget (unless the encoder runs on the CPU).
     enc.text_gb = app_state.slices.held_gb
-    app_state.slices.reserved = enc.reserved_gb
     if B.NAME == "torch" and B.CUDA:  # text layers on this GPU pause rendering (see VideoService.paused)
         app_state.video.gpu_text_gb = app_state.slices.held_gb
     app_state.video_swarm = VideoSwarm(app_state.net, app_state.video, enc, app_state.me)

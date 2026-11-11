@@ -111,8 +111,10 @@ export default {
         videoList.replaceChildren(...rows);
       }
       videoSect.hidden = !rows.length;
-      // memory bar: text layers | video encoder layers (when they share the GPU budget) | free
-      const budget = enc?.mem_budget_gb, textGb = enc?.text_gb || 0, vidGb = enc?.shares_budget ? enc.held_gb || 0 : 0;
+      // memory bar: text layers | loaded video encoder layers (when they share the GPU budget) | free
+      // Encoder layers count only while loaded: on disk they hold no memory (text first).
+      const loadedEnc = (enc?.slices || []).filter(x => x.loaded).reduce((a, x) => a + x.bytes, 0) / 2 ** 30;
+      const budget = enc?.mem_budget_gb, textGb = enc?.text_gb || 0, vidGb = enc?.shares_budget ? loadedEnc : 0;
       memBar.hidden = memKey.hidden = !budget;
       if (budget) {
         const free = Math.max(budget - textGb - vidGb, 0), pct = v => `${Math.min(100, 100 * v / budget)}%`;
