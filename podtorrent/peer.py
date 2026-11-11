@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import platform
+import sys
 import threading
 import time
 import uuid
@@ -53,6 +54,9 @@ SUPPORTED = {"qwen3_moe"}  # architectures Shard can run
 PLAN_RETRY_S = 60          # a plan hop that failed to load is tried again after this long
 SUPPLY_REFRESH_S = 60      # how often the lobby supply rescans the models on disk
 MEM_HEADROOM_GB = 1.0      # keep this much of the GPU budget free after loading a slice
+TRUSTED_OWNERS = ("mlx-community",)  # Hugging Face orgs any linked peer may ask this machine to load from
+MAX_POSITIONS = 32768      # longest sequence a peer's session may push through a slice (Qwen3's native context)
+MAX_PEER_SESSIONS = 8      # live KV-cache sessions one peer may hold on this machine
 HEAD_ROLES = ["tokenizer", "embeddings", "lm_head"]
 
 
@@ -120,6 +124,8 @@ class Slices:
         self.model_dir = model_dir
         self.items: dict[tuple[str, int, int], Served] = {}
         self.caches: dict[str, tuple[list, float]] = {}   # "session:model:lo:hi" -> (KV cache, last used)
+        self.positions: dict[str, int] = {}   # session -> positions pushed through it so far
+        self._hidden: dict[str, int] = {}     # model -> hidden size, from its config
         self.served = self.tokens = 0
         self.busy = False
         self.last_compute_ms = 0.0
@@ -182,11 +188,34 @@ class Slices:
         self.last_compute_ms, self.last_forward_ts = ms, time.time()
         return h, ms
 
+    def hidden_size(self, model: str) -> int:
+        if model not in self._hidden:
+            cfg = json.loads((self.model_dir(model) / "config.json").read_text())
+            self._hidden[model] = cfg.get("text_config", cfg)["hidden_size"]
+        return self._hidden[model]
+
+    def check(self, req: pb.ForwardRequest, model: str):
+        """Refuse a peer's forward before it costs memory: one sequence, this model's hidden size, the bytes
+        to match, and no more than MAX_POSITIONS positions over the session's life (attention grows with T²)."""
+        shape = list(req.shape)
+        if len(shape) != 3 or shape[0] != 1 or shape[1] < 1:
+            raise ValueError(f"expected hidden states of shape [1, T, hidden], got {shape}")
+        if shape[2] != self.hidden_size(model):
+            raise ValueError(f"hidden size {shape[2]} does not match {model} ({self.hidden_size(model)})")
+        if len(req.hidden) != 2 * shape[1] * shape[2]:
+            raise ValueError(f"{len(req.hidden)} bytes of hidden states for shape {shape}")
+        if self.positions.get(req.session_id, 0) + shape[1] > MAX_POSITIONS:
+            raise ValueError(f"session is longer than {MAX_POSITIONS} positions")
+
     def forward(self, req: pb.ForwardRequest) -> pb.ForwardResponse:
         model = req.model or next((s.model for s in self.loaded()), "")
         try:
+            if not self.loaded(model):
+                raise ValueError(f"not serving {model}")
+            self.check(req, model)
             out, ms = self.run(req.session_id, model, req.layer_lo, req.layer_hi,
                                from_wire(req.hidden, list(req.shape)))
+            self.positions[req.session_id] = self.positions.get(req.session_id, 0) + req.shape[1]
         except ValueError as e:
             return pb.ForwardResponse(session_id=req.session_id, error=str(e))
         return pb.ForwardResponse(session_id=req.session_id, hidden=to_wire(out), shape=list(out.shape),
@@ -195,11 +224,19 @@ class Slices:
     def release(self, session: str):
         for k in [k for k in self.caches if k.startswith(session + ":")]:
             self.caches.pop(k, None)
+        self.positions.pop(session, None)
 
     def evict_idle(self):
         now = time.time()
         for k in [k for k, (_, ts) in self.caches.items() if now - ts > CACHE_IDLE_S]:
             self.caches.pop(k, None)
+        live = {k.rsplit(":", 3)[0] for k in self.caches}
+        for s in [s for s in self.positions if s not in live]:
+            self.positions.pop(s, None)
+
+    def sessions_of(self, prefix: str) -> set[str]:
+        """Live sessions whose id starts with `prefix` (a peer's namespace)."""
+        return {k.rsplit(":", 3)[0] for k in self.caches if k.startswith(prefix)}
 
     def load(self, model: str, lo: int, hi: int, progress=lambda phase, done=0, total=0, msg="": None,
              replace: bool = False) -> Served:
@@ -653,18 +690,26 @@ class PeerApp:
     # ---- serving RPCs (QUIC) ----
     async def _serve_forward(self, conn, body, reader, writer):
         sessions = set()
+        # Session ids come from the peer: keep each peer's in its own namespace so none can reach another's KV cache.
+        ns = f"{conn.peer_id}/"
         try:
             while True:
                 req = pb.ForwardRequest.FromString(body)
+                theirs = req.session_id
+                req.session_id = ns + theirs
                 if req.release:
                     self.slices.release(req.session_id)
                 else:
                     sessions.add(req.session_id)
                     t = time.perf_counter()
+                    held = self.slices.sessions_of(ns)
                     try:
+                        if req.session_id not in held and len(held) >= MAX_PEER_SESSIONS:
+                            raise ValueError(f"this machine already holds {MAX_PEER_SESSIONS} sessions for that peer")
                         resp = await asyncio.to_thread(self.slices.forward, req)
                     except Exception as e:  # noqa: BLE001 - say why, or the caller waits until it times out
-                        resp = pb.ForwardResponse(session_id=req.session_id, error=f"{type(e).__name__}: {e}")
+                        resp = pb.ForwardResponse(error=f"{type(e).__name__}: {e}")
+                    resp.session_id = theirs
                     secs = time.perf_counter() - t
                     if resp.error or secs > 2:
                         print(f"forward: layers [{req.layer_lo},{req.layer_hi}) x{req.shape[1] if len(req.shape) > 1 else '?'} "
@@ -679,12 +724,29 @@ class PeerApp:
             for s in sessions:
                 self.slices.release(s)
 
+    def _may_load_for_peer(self, model: str) -> bool:
+        """Outside a pod any linked peer can ask for layers, so only fetch repos from a trusted publisher
+        or ones this machine's user already chose (the default model, a configured slice, a model on disk)."""
+        if model.split("/")[0] in TRUSTED_OWNERS or model == self.repo:
+            return True
+        if any(c.get("model") == model for c in configured_slices()):
+            return True
+        try:
+            return (self.model_dir(model) / ".repo").read_text().strip() == model
+        except OSError:
+            return False
+
     async def _serve_load(self, conn, body, reader, writer):
         req = pb.LoadRequest.FromString(body)
         model = req.repo or self.repo
+        msg = ""
         if self.pod and conn.peer_id != pod.owner_id(self.pod):
             # In a pod, layers come from the plan; only the owner may ask for more directly.
             msg = "this machine is in a pod: only its owner can ask it to load layers"
+        elif not self.pod and not self._may_load_for_peer(model):
+            msg = (f"this machine only loads {', '.join(TRUSTED_OWNERS)} models, or ones it already has, "
+                   f"for other peers; add {model} on this machine first")
+        if msg:
             writer.write(_frame(pb.LoadProgress(phase="error", message=msg).SerializeToString()))
             return
         q: asyncio.Queue = asyncio.Queue()
@@ -698,7 +760,8 @@ class PeerApp:
 
         def load():
             try:
-                self._load_local(model, req.layer_lo, req.layer_hi, progress)
+                # A peer's request lasts until restart; only this machine's user (or its pod plan) makes it stick.
+                self._load_local(model, req.layer_lo, req.layer_hi, progress, persist=bool(self.pod))
             except Exception:  # noqa: BLE001 - _load_local already sent it as an error progress
                 pass
         task = asyncio.create_task(asyncio.to_thread(load))
@@ -709,7 +772,7 @@ class PeerApp:
                 break
         await asyncio.gather(task, return_exceptions=True)
 
-    def _load_local(self, model, lo, hi, progress=lambda *a: None, replace=False):
+    def _load_local(self, model, lo, hi, progress=lambda *a: None, replace=False, persist=True):
         last = [None]
 
         def report(phase, done=0, total=0, msg=""):
@@ -737,8 +800,9 @@ class PeerApp:
             report("error", msg=str(e))
             self._announce()
             raise
-        save_slices(lambda cur: [c for c in cur if not (c.get("model") == model and (replace or lo <= c["lo"] and c["hi"] <= hi))]
-                    + [{"model": model, "lo": s.lo, "hi": s.hi}])
+        if persist:
+            save_slices(lambda cur: [c for c in cur if not (c.get("model") == model and (replace or lo <= c["lo"] and c["hi"] <= hi))]
+                        + [{"model": model, "lo": s.lo, "hi": s.hi}])
         self._announce()
 
     def _unserve_local(self, model, lo=None, hi=None) -> list[Served]:
@@ -928,9 +992,11 @@ class PeerApp:
         try:
             n, errors, model = self.n_layers, [], self.repo
             mine = [(s.lo, s.hi) for s in self.slices.loaded(model)] or [(0, k)]
-            threads = [threading.Thread(target=self._try, args=(errors, "this machine", self._load_local, model, *r))
+            threads = [threading.Thread(target=self._try, args=(errors, "this machine", self._load_local, model, *r),
+                                        daemon=True)
                        for r in mine if not self.slices.find(model, *r)]
-            threads.append(threading.Thread(target=self._try, args=(errors, "this machine", self.ensure_head, model)))
+            threads.append(threading.Thread(target=self._try, args=(errors, "this machine", self.ensure_head, model),
+                                            daemon=True))
             # Layers nobody reachable serves (besides what this Mac is about to load): ask a peer.
             others = [o for o in self.offers(model) if o.peer_id != self.me] + [Offer(self.me, NAME, *r) for r in mine]
             _, gaps = plan(n, others)
@@ -940,7 +1006,8 @@ class PeerApp:
                     errors.append(f"layers {lo}–{hi - 1} have no peer, and no other connected machine has room to serve them")
                     continue
                 threads.append(threading.Thread(target=self._try, args=(errors, self.net._name(pid),
-                                                                         self.remote_load, pid, model, lo, hi)))
+                                                                         self.remote_load, pid, model, lo, hi),
+                                                daemon=True))
             for t in threads:
                 t.start()
             for t in threads:
@@ -1458,3 +1525,8 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
         threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{port}")).start()
     print(f"peer {NAME} ({app_state.me[:8]}): local API on http://127.0.0.1:{port}", flush=True)
     web.run_app(app, host="127.0.0.1", port=port, print=None)
+    # A download in progress runs in worker threads that Python would join at exit, so quitting would wait for
+    # the whole download. on_cleanup has already stopped the video engine; nothing else needs a clean exit.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

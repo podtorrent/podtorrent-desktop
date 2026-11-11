@@ -1,0 +1,73 @@
+# Linux build for AMD Ryzen AI Max / "Strix Halo" machines (Radeon 8060S, gfx1151): the same AppImage and .deb,
+# but first launch installs ROCm PyTorch instead of CUDA. Artifact only; the public download stays the CUDA build.
+# The user needs a recent kernel (6.14+) with amdgpu, and to be in the video and render groups.
+name: Linux AMD build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    # The app doesn't change with the downloads site or docs. Tag pushes always build (GitHub skips path filters for tags).
+    paths-ignore: ['downloads/**', 'docs/**']
+  pull_request:
+    paths-ignore: ['downloads/**', 'docs/**']
+  workflow_dispatch:
+
+concurrency:
+  group: linux-amd-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      # One build per AMD GPU family: each has its own PyTorch wheels. To support another family, add a row
+      # with the index AMD publishes for it. The repo variable ROCM_TORCH_INDEX overrides every row if AMD moves
+      # its indexes.
+      matrix:
+        include:
+          - target: gfx1151  # Ryzen AI Max / Max+ / Max PRO 4xx (Radeon 8050S/8060S/8065S)
+            index: https://repo.amd.com/rocm/whl/gfx1151/
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      # uv is bundled into the app; it installs Python and ROCm PyTorch on first launch.
+      - uses: astral-sh/setup-uv@v6
+
+      - run: npm ci
+
+      # Not `npm run build`: that bumps the version in tauri.conf.json, which CI shouldn't do.
+      - run: node scripts/bundle-backend.js
+        env:
+          PODTORRENT_TORCH_INDEX: ${{ vars.ROCM_TORCH_INDEX || matrix.index }}
+
+      - run: npx tauri build --bundles appimage,deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: podtorrent-linux-amd-${{ matrix.target }}
+          path: |
+            app/src-tauri/target/release/bundle/appimage/*.AppImage
+            app/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error

@@ -6,6 +6,7 @@ tensor (linear outputs, norms, attention, the KV cache) is cast to bfloat16 here
 states from a PyTorch peer can be handed to an MLX peer mid-chain and vice versa.
 """
 import json
+import sys
 from pathlib import Path
 
 import torch
@@ -15,8 +16,20 @@ from safetensors import safe_open
 DTYPE = torch.bfloat16  # what MLX keeps activations in
 
 
+def gpu_works() -> bool:
+    """Run one small kernel. A GPU can report itself available and still fail at the first real call
+    (ROCm PyTorch built without this chip's architecture says "invalid device function")."""
+    try:
+        a = torch.randn(64, 64, device="cuda", dtype=DTYPE)
+        torch.cuda.synchronize()
+        return bool(torch.isfinite((a @ a).float().sum()).item())
+    except Exception as e:  # noqa: BLE001
+        print(f"PodTorrent: the GPU failed a test calculation ({e}); running on the CPU.", file=sys.stderr)
+        return False
+
+
 def default_device() -> str:
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and gpu_works():
         return "cuda"
     return "cpu"
 

@@ -53,7 +53,8 @@ ALPN = "podtorrent/1"
 PROBE = b"\x00PTP"
 PUNCH_S = 4.0
 PROBE_EVERY_S = 0.2
-RETRY_S = 60          # an unreachable pair is retried after this long
+RETRY_S = (2, 5, 15, 60)  # an unreachable pair is retried after these delays, the last one repeating
+MISSED_BEATS = 3          # consecutive failed heartbeats before a link is declared lost
 RELAY = "relay."      # host part of a relayed peer's address: ("relay.<peer_id>", 0)
 HEARTBEAT_S = 2
 INFO_S = 10
@@ -192,6 +193,8 @@ class Link:
         self.conn: Conn | None = None
         self.got_probe = asyncio.Event()
         self.punch_task: asyncio.Task | None = None
+        self.missed = 0         # consecutive failed heartbeats
+        self.failures = 0       # consecutive times this link became unreachable; picks the retry delay
 
     def snapshot(self) -> dict:
         return {"state": self.state, "error": self.error, "rtt_ms": self.rtt_ms, "via": self.via,
@@ -322,6 +325,10 @@ class PeerNet(asyncio.DatagramProtocol):
     def _set(self, link: Link, state: str, error: str = ""):
         if link.state != state:
             link.since = time.time()
+            if state == "direct":
+                link.failures, link.missed = 0, 0
+            elif state == "unreachable":
+                link.failures += 1
             print(f"p2p: {self._name(link.peer_id)} {state}{' (' + error + ')' if error else ''}", flush=True)
         link.state, link.error = state, error
         if state != "direct":
@@ -371,7 +378,8 @@ class PeerNet(asyncio.DatagramProtocol):
             if rec.get("protocol", 1) < 2 or self.ident.peer_id > pid or not self.allowed(pid):
                 continue  # old client without QUIC, the other side initiates, or not in this pod
             l = self.link(pid)
-            if l.state == "idle" or (l.state == "unreachable" and now - l.since > RETRY_S):
+            retry = RETRY_S[min(l.failures, len(RETRY_S)) - 1] if l.failures else RETRY_S[0]
+            if l.state == "idle" or (l.state == "unreachable" and now - l.since > retry):
                 self._set(l, "connecting")
                 asyncio.ensure_future(self.signal({"type": "punch", "to": pid, "nonce": os.urandom(8).hex()}))
 
@@ -582,11 +590,16 @@ class PeerNet(asyncio.DatagramProtocol):
         try:
             rtt = await self.heartbeat(l)
         except Exception:  # noqa: BLE001
+            # One slow beat (lid closed, Wi-Fi roam) isn't a lost link; QUIC rides out short outages.
+            l.missed += 1
+            if l.missed < MISSED_BEATS:
+                return
             if l.conn:
                 l.conn.close()
             l.conn = None
-            self._set(l, "unreachable", "heartbeat timed out")
+            self._set(l, "unreachable", f"{l.missed} heartbeats timed out")
             return
+        l.missed = 0
         l.rtt_ms = round(rtt if l.rtt_ms is None else 0.7 * l.rtt_ms + 0.3 * rtt, 2)
         if refresh:
             await self._refresh_info(l)

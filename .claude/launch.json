@@ -25,6 +25,15 @@
         "8788"
       ],
       "port": 8788
+    },
+    {
+      "name": "ui-alt",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "app/scripts/serve-ui.py",
+        "27185"
+      ],
+      "port": 27185
     }
   ]
 }

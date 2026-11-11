@@ -11,7 +11,15 @@ DEFAULT_PORT = int(os.environ.get("PODTORRENT_PORT", "27183"))
 
 
 def default_dir(repo):
-    return Path(os.environ.get("PODTORRENT_HOME", Path.home() / ".podtorrent")) / "models" / repo.split("/")[-1]
+    """models/<name>, unless that folder already holds a different repo with the same name (its `.repo`
+    says so): then models/<owner>--<name>, so one repo's cached config and weights never stand in for another's."""
+    home = Path(os.environ.get("PODTORRENT_HOME", Path.home() / ".podtorrent")) / "models"
+    d = home / repo.split("/")[-1]
+    try:
+        owner = (d / ".repo").read_text().strip()
+    except OSError:
+        return d
+    return d if owner == repo else home / repo.replace("/", "--")
 
 
 def parse_slice(spec: str) -> tuple[str | None, int, int]:

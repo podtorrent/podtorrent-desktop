@@ -31,7 +31,18 @@ const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 fn kill_group(child: &mut Child) {
     let pid = child.id();
     #[cfg(unix)]
-    let _ = Command::new("kill").args(["-TERM", &format!("-{pid}")]).status();
+    {
+        let _ = Command::new("kill").args(["-TERM", &format!("-{pid}")]).status();
+        // Give it 3 s to exit cleanly, then kill the group so Quit never hangs.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let _ = Command::new("kill").args(["-KILL", &format!("-{pid}")]).status();
+    }
     #[cfg(windows)]
     let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"])
         .creation_flags(CREATE_NO_WINDOW).status();
@@ -551,7 +562,7 @@ fn system_health() -> serde_json::Value {
     let avail = sys.available_memory() as f64 / sys.total_memory().max(1) as f64;
     let pressure = if avail < 0.05 { "critical" } else if avail < 0.15 { "warn" } else { "normal" };
     let (power, battery_pct, low_power) = power_status();
-    let gpu = nvidia_gpu();
+    let gpu = gpu_stats();
     let thermal = match gpu.as_ref().and_then(|g| g["temp_c"].as_f64()) {
         Some(t) if t >= 93.0 => "critical", Some(t) if t >= 87.0 => "serious",
         Some(t) if t >= 80.0 => "fair", Some(_) => "nominal", None => "unknown",
@@ -615,6 +626,45 @@ fn nvidia_gpu() -> Option<serde_json::Value> {
         "mem_used_gb": num(3).map(|m| m / 1024.0), "mem_total_gb": num(4).map(|m| m / 1024.0),
         "driver": f.get(5),
     }))
+}
+
+/// The first AMD GPU's name, temperature, load and memory from the amdgpu driver's sysfs files
+/// (no rocm-smi needed), or None. `drm` is /sys/class/drm. An integrated GPU (a Ryzen APU) keeps its
+/// data in system RAM, so when the GTT pool is larger than the BIOS-reserved VRAM it is the one shown.
+#[cfg(any(target_os = "linux", test))]
+fn amd_gpu_at(drm: &std::path::Path) -> Option<serde_json::Value> {
+    let read = |p: PathBuf| std::fs::read_to_string(p).ok().map(|s| s.trim().to_string());
+    let num = |p: PathBuf| read(p).and_then(|s| s.parse::<f64>().ok());
+    let mut cards: Vec<PathBuf> = std::fs::read_dir(drm).ok()?.flatten().map(|e| e.path())
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("card") && n[4..].chars().all(|c| c.is_ascii_digit())))
+        .collect();
+    cards.sort();
+    let dev = cards.into_iter().map(|c| c.join("device"))
+        .find(|d| read(d.join("vendor")).as_deref() == Some("0x1002") && d.join("mem_info_vram_total").exists())?;
+    let gb = |b: f64| b / (1u64 << 30) as f64;
+    let (vram, gtt) = (num(dev.join("mem_info_vram_total")).unwrap_or(0.0), num(dev.join("mem_info_gtt_total")).unwrap_or(0.0));
+    let (total, used) = if gtt > vram {
+        (gtt, num(dev.join("mem_info_gtt_used")))
+    } else {
+        (vram, num(dev.join("mem_info_vram_used")))
+    };
+    let temp_c = std::fs::read_dir(dev.join("hwmon")).ok()?.flatten()
+        .find_map(|h| num(h.path().join("temp1_input"))).map(|t| t / 1000.0);
+    Some(serde_json::json!({
+        "name": read(dev.join("product_name")).unwrap_or_else(|| "AMD Radeon".into()),
+        "temp_c": temp_c, "util_pct": num(dev.join("gpu_busy_percent")),
+        "mem_used_gb": used.map(gb), "mem_total_gb": gb(total),
+        "driver": read(PathBuf::from("/sys/module/amdgpu/version")),
+    }))
+}
+
+/// The machine's GPU for the Hardware tab: NVIDIA via nvidia-smi, else AMD via sysfs.
+#[cfg(not(target_os = "macos"))]
+fn gpu_stats() -> Option<serde_json::Value> {
+    #[cfg(target_os = "linux")]
+    { nvidia_gpu().or_else(|| amd_gpu_at(std::path::Path::new("/sys/class/drm"))) }
+    #[cfg(not(target_os = "linux"))]
+    { nvidia_gpu() }
 }
 
 // ---- tray ----
@@ -831,4 +881,61 @@ fn main() {
             RunEvent::Reopen { .. } => show_main(app),
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn put(p: &std::path::Path, text: &str) {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+
+    /// A fake /sys/class/drm with one card: vendor, VRAM/GTT sizes, load and a temperature.
+    fn card(root: &std::path::Path, vendor: &str, vram: u64, gtt: u64) {
+        let d = root.join("card1/device");
+        put(&d.join("vendor"), vendor);
+        put(&d.join("mem_info_vram_total"), &vram.to_string());
+        put(&d.join("mem_info_vram_used"), "1073741824");
+        put(&d.join("mem_info_gtt_total"), &gtt.to_string());
+        put(&d.join("mem_info_gtt_used"), "4294967296");
+        put(&d.join("gpu_busy_percent"), "37");
+        put(&d.join("hwmon/hwmon3/temp1_input"), "51000");
+    }
+
+    fn tmp(name: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("podtorrent-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        p
+    }
+
+    #[test]
+    fn amd_apu_shows_the_shared_pool_not_the_bios_slice() {
+        let root = tmp("apu");
+        card(&root, "0x1002\n", 4 << 30, 96 << 30);
+        let g = amd_gpu_at(&root).unwrap();
+        assert_eq!(g["mem_total_gb"], 96.0);
+        assert_eq!(g["mem_used_gb"], 4.0);
+        assert_eq!(g["util_pct"], 37.0);
+        assert_eq!(g["temp_c"], 51.0);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn amd_discrete_card_shows_vram() {
+        let root = tmp("dgpu");
+        card(&root, "0x1002", 16 << 30, 8 << 30);
+        assert_eq!(amd_gpu_at(&root).unwrap()["mem_total_gb"], 16.0);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn other_vendors_and_missing_dirs_give_none() {
+        let root = tmp("nv");
+        card(&root, "0x10de", 16 << 30, 8 << 30);
+        assert!(amd_gpu_at(&root).is_none());
+        assert!(amd_gpu_at(&root.join("nope")).is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
