@@ -35,9 +35,11 @@ const torchIndex = process.env.PODTORRENT_TORCH_INDEX;
 if (torchIndex) {
   const pp = path.join(out, "pyproject.toml");
   const src = fs.readFileSync(pp, "utf8");
-  const next = src.replace(/(name = "pytorch-cu128"\nurl = )"[^"]*"/, `$1"${torchIndex}"`);
+  // ROCm PyTorch depends on rocm[libraries] packages that AMD's index serves too, so the index can't be
+  // `explicit` (torch-only) and uv has to search all indexes, not stop at the first that has a name.
+  const next = src.replace(/(name = "pytorch-cu128"\nurl = )"[^"]*"\nexplicit = true/, `$1"${torchIndex}"\nexplicit = false`);
   if (next === src) throw new Error("pyproject.toml has no pytorch-cu128 index to replace");
-  fs.writeFileSync(pp, next);
+  fs.writeFileSync(pp, `${next}\n[tool.uv]\nindex-strategy = "unsafe-best-match"\n`);
   execFileSync(path.join(out, uvName), ["lock", "--project", out], { stdio: "inherit" });
   console.log(`torch index: ${torchIndex}`);
 }
