@@ -173,6 +173,9 @@ def main():
     sw.add_argument("--name", default=platform.node().split(".")[0])
     sw.add_argument("--watch", action="store_true", help="keep listening and print changes")
 
+    from .pod_cli import add_parser as add_pod_parser
+    add_pod_parser(sub)
+
     a = ap.parse_args()
     if a.cmd in ("peer", "host"):
         from .peer import run_peer
@@ -206,6 +209,9 @@ def main():
     elif a.cmd == "download":
         from .download import run_download
         run_download(a.role, a.model, a.model_dir or default_dir(a.model), a.split, a.layers)
+    elif a.cmd == "pod":
+        from .pod_cli import run as run_pod
+        run_pod(a)
     elif a.cmd == "swarm":
         from .net.cli import run_swarm
         run_swarm(a.name, a.watch)

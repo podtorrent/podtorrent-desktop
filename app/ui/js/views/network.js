@@ -4,6 +4,8 @@
 import { h, text } from "../dom.js";
 import { button, toast, empty, segmented } from "../ui.js";
 import { invoke, isTauri } from "../native.js";
+import { podView } from "./pod.js";
+import { go } from "../actions.js";
 
 let status = null; // last network_status, for the toolbar subtitle and the sidebar
 
@@ -19,6 +21,23 @@ export function networkState() {
 }
 
 const netName = s => s?.config?.network || "production";
+
+/** Why the agent isn't connected, in words, from its last "link down" log line; null when connected
+ *  or there is nothing to explain yet. */
+function problem(s) {
+  if (!s?.running || s.connected) return null;
+  const line = (s.log || "").split("\n").reverse().find(l => l.includes("msg=connected") || l.includes("link down"));
+  if (!line || line.includes("msg=connected")) return `Reaching the ${netName(s)} network…`;
+  const retry = line.match(/ in=(\S+)/)?.[1];
+  const next = retry ? ` Trying again in ${retry}.` : "";
+  const code = line.match(/got (\d{3})/)?.[1];
+  if (code === "401") return `The ${netName(s)} network doesn't accept this node token. It may be revoked, or from the other network. Get a new token from the dashboard, then Leave, paste it below and join again.`;
+  if (code === "403") return `The ${netName(s)} network knows this token but hasn't approved node ${s.config?.node} with it. Check the node id matches the one you registered.`;
+  if (/no such host|network is unreachable|connection refused|i\/o timeout|deadline exceeded/.test(line))
+    return `Can't reach the ${netName(s)} network from this machine. Check the internet connection.${next}`;
+  if (/engine|models/.test(line)) return `The network agent can't use this machine's models yet. Make sure the chat box works, then Leave and join again.${next}`;
+  return `Connecting to the ${netName(s)} network didn't work.${next} Details are in the agent log below.`;
+}
 
 const field = (label, input, hint) => h("div.field", h("label", label), input, hint ? h("div.small.faint", hint) : null);
 
@@ -38,6 +57,9 @@ export default {
     const pout = h("input.input.num", { type: "number", min: "0", step: "0.01", placeholder: "0.40", "aria-label": "Price per million output tokens" });
     const state = h("span.badge");
     const routes = h("div");
+    // In a pod, only a plan's head joins the network: the pod is one node.
+    const podNote = h("div.card-b.small");
+    const why = h("div.next.small", { hidden: true });
     const log = h("pre.small.mono.faint.net-log");
     let busy = false, filled = false, net = "production", editToken = false;
     const which = segmented([{ value: "production", label: "Production" }, { value: "staging", label: "Staging" }], net, v => { net = v; label(); }, "Network");
@@ -88,8 +110,18 @@ export default {
       show();
       label();
       text(state, !s.available ? "Agent missing" : s.connected ? `Online · ${netName(s)}` : s.running ? "Connecting…" : s.config ? "Not connected" : "Not joined");
+      const p = problem(s);
+      why.hidden = !p; text(why, p || "");
       state.className = `badge dot ${s.connected ? "serving" : s.running ? "degraded pulse" : ""}`;
-      join.hidden = s.running || !s.available; leave.hidden = !s.running && !s.config;
+      const pv = podView(), inPod = !!pv?.pod, isHead = !!pv?.heads?.length;
+      const names = Object.fromEntries((pv?.members || []).map(m => [m.peer_id, m.name]));
+      const heads = [...new Set((pv?.pod?.plans || []).map(p => names[p.head] || p.head.slice(0, 8)))];
+      podNote.hidden = !inPod;
+      podNote.replaceChildren(!inPod ? "" : isHead
+        ? `This machine is the head of ${pv.heads.map(m => m.split("/").pop()).join(", ")} in the pod ${pv.pod.name}: it serves the pod on the network as one node.`
+        : h("span", `This machine is in the pod ${pv.pod.name}. `, heads.length ? `The pod is served on the network through ${heads.join(", ")}.` : "The pod has no model plan yet.", " ",
+          h("a", { href: "#", onclick: e => { e.preventDefault(); go("pod"); } }, "Open Pod")));
+      join.hidden = s.running || !s.available || (inPod && !isHead); leave.hidden = !s.running && !s.config;
       const ms = s.manifest?.models || [];
       routes.replaceChildren(...(ms.length ? ms.map(m => h("div.list-row",
         h("div.grow", h("div.t.mono", m.id),
@@ -103,7 +135,9 @@ export default {
     root.append(h("div.page.network",
       h("section.card", h("div.card-h", h("h2", "Join the PodTorrent network"), h("span.spacer"), dashboard, state),
         h("div.card-b",
-          h("p.small.muted", "Offer the models your swarm fully covers to network clients, with this Mac as the head of each route. Needs an approved node id and token."),
+          h("p.small.muted", "Offer the models your swarm fully covers to network clients, with this machine as the head of each route. Needs an approved node id and token."),
+          podNote,
+          why,
           h("div.net-grid",
             field("Network", which, "Where your node was approved. A staging token doesn't work on production."),
             field("Node id", node, "Lower case, as approved."),

@@ -19,18 +19,20 @@ import webbrowser
 from pathlib import Path
 from typing import Callable
 
+import aiohttp
 from aiohttp import WSMsgType, web
 
 from . import backend as B
 from . import catalog
 from . import openai_api
+from . import pod
 from . import pipeline_pb2 as pb
 from .cli import default_dir
 from .backend import CHIP, GB, from_wire, load_tokenizer, mem_free_gb, mem_total_gb, to_wire
 from .common import cors
 from .net.identity import home, load_identity
 from .net.quic import M_FORWARD, M_LOAD, PeerNet, Stream, _frame, _read_frame
-from .net.rendezvous import SwarmClient
+from .net.rendezvous import RoomError, SwarmClient, join_pod
 from .route import Hop, Offer, coverage, plan
 from .backend import Shard
 from .slicer import download_slice, estimate_slice_bytes, fetch_meta
@@ -48,6 +50,8 @@ MAX_REROUTES = 3
 DECODE_HOP_TIMEOUT_S = 10  # one token's hop; a dead peer sends no close, so don't wait for the QUIC idle timeout
 LOAD_TIMEOUT_S = 3600
 SUPPORTED = {"qwen3_moe"}  # architectures Shard can run
+PLAN_RETRY_S = 60          # a plan hop that failed to load is tried again after this long
+SUPPLY_REFRESH_S = 60      # how often the lobby supply rescans the models on disk
 MEM_HEADROOM_GB = 1.0      # keep this much of the GPU budget free after loading a slice
 HEAD_ROLES = ["tokenizer", "embeddings", "lm_head"]
 
@@ -294,6 +298,17 @@ class Slices:
 # ---------------------------------------------------------------- the peer
 
 
+def pod_summary(r: dict | None) -> dict | None:
+    """What the UI and CLI show about a roster (no keys or signature)."""
+    if not r:
+        return None
+    return {"pod_id": r["pod_id"], "name": r["name"], "kind": r["kind"], "version": r["version"],
+            "owner": pod.owner_id(r),
+            "members": [{"peer_id": m["peer_id"], "name": m["name"], "public": m.get("public", False)}
+                        for m in r["members"]],
+            "plans": r["plans"], "expires": r["expires"]}
+
+
 class HopFailed(Exception):
     def __init__(self, hop: Hop, reason: str):
         super().__init__(reason)
@@ -309,6 +324,12 @@ class PeerApp:
         self.me = self.ident.peer_id
         self.slices = Slices(self.model_dir)
         self.net = PeerNet(self.ident, info=self.slices.info)
+        self.net.allowed = self.allows
+        self.pod: dict | None = pod.load_roster()   # None: no pod, every peer is fair game (the public swarm)
+        self._pod_mtime = self._roster_mtime()
+        self._plan_tries: dict[tuple[str, int, int], float] = {}   # plan hop -> when this Mac last started it
+        self._on_disk: list[dict] = []   # catalog.local's complete models, for the matchmaker
+        self._supply_ts = 0.0
         self.net.handlers[M_FORWARD] = self._serve_forward
         self.net.handlers[M_LOAD] = self._serve_load
         self.swarm: SwarmClient | None = None
@@ -325,6 +346,124 @@ class PeerApp:
         self._known: set[str] = set()
         self._names: dict[str, str] = {}   # peer_id -> display name, for peers that vanish
         self.peers: list[dict] = []   # swarm records, each with this Mac's `link` to it
+
+    # ---- pod ----
+    def allows(self, peer_id: str) -> bool:
+        """Whether this Mac links with and serves `peer_id`: its pod's members, or anyone outside a pod."""
+        return self.pod is None or pod.is_member(self.pod, peer_id)
+
+    @staticmethod
+    def _roster_mtime() -> float:
+        try:
+            return pod.roster_path().stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def reload_pod(self):
+        """Pick up a changed pod.json: drop links to machines no longer in the pod, dial new members."""
+        mtime = self._roster_mtime()
+        if mtime == self._pod_mtime and not (self.pod and self.pod["expires"] and time.time() >= self.pod["expires"]):
+            return
+        self._pod_mtime = mtime
+        self._set_pod(pod.load_roster())
+
+    def _set_pod(self, new: dict | None):
+        if new == self.pod:
+            return
+        old, self.pod = self.pod, new
+        print(f"pod: {new['name']} v{new['version']}, {len(new['members'])} machines" if new else "pod: none", flush=True)
+        self.net.prune()
+        self._announce()
+        self.emit("pod", key="pod", pod=pod_summary(new))
+        if (old or {}).get("pod_id") != (new or {}).get("pod_id") and self.swarm and self.loop:
+            asyncio.run_coroutine_threadsafe(self.swarm.reconnect(), self.loop)   # into the new pod's room
+
+    def _save_pod(self, r: dict):
+        """Keep `r` as this machine's roster, act on it, and give it to the pod's room."""
+        pod.save_roster(r)
+        self._pod_mtime = self._roster_mtime()
+        same_room = (self.pod or {}).get("pod_id") == r["pod_id"]
+        self._set_pod(r)
+        if same_room:
+            self._room_send({"type": "roster", "roster": r})
+
+    def _forget_pod(self):
+        pod.roster_path().unlink(missing_ok=True)
+        self._pod_mtime = 0.0
+        self._set_pod(None)
+
+    def on_dissolved(self):
+        """The matchmaker gave up on this machine's public pod: back to the lobby."""
+        if self.pod and self.pod["kind"] == "public":
+            print(f"pod: {self.pod['name']} dissolved", flush=True)
+            self._forget_pod()
+
+    def supply(self) -> dict:
+        """What this machine offers the matchmaker from the lobby: every model it has on disk in full,
+        with the layers it already serves, and its free memory (docs/PODS_PLAN.md, 3)."""
+        if time.time() - self._supply_ts > SUPPLY_REFRESH_S:
+            known = [self.repo, *{s.model for s in self.slices.items.values()}]
+            self._on_disk = [m for m in catalog.local(known) if m["complete"] and m["n_layers"]]
+            self._supply_ts = time.time()
+        models = [{"model": m["repo"], "layers": m["n_layers"], "gb": round(m["disk_bytes"] / 1e9, 1),
+                   "held": [[s.lo, s.hi] for s in self.slices.loaded(m["repo"])]} for m in self._on_disk]
+        return {"name": NAME, "chip": CHIP, "mem_total_gb": round(mem_total_gb(), 1),
+                "mem_free_gb": round(self.free_for_models() * 2) / 2, "node": (home() / "network.json").exists(),
+                "models": models}
+
+    def _room_send(self, msg: dict):
+        if self.swarm and self.loop:
+            asyncio.run_coroutine_threadsafe(self.swarm.send(msg), self.loop)
+
+    def on_roster(self, r: dict):
+        """A roster from the pod's room: adopt it if it's newer; a roster without this machine means
+        the owner removed it, so it goes back to the public swarm."""
+        new = pod.newer(self.pod, r)
+        if new is None:
+            return
+        if pod.is_member(new, self.me):
+            pod.save_roster(new)
+            self._pod_mtime = self._roster_mtime()
+            self._set_pod(new)
+        else:
+            self.emit("error", message=f"This machine was removed from the pod {new['name']}; it's back in the public swarm.")
+            self._forget_pod()
+
+    def on_owner_request(self, msg: dict):
+        """As the owner: add a machine whose proof answers one of this owner's pending invites, or sign
+        out a member that left."""
+        if not self.pod or pod.owner_id(self.pod) != self.me:
+            return
+        if msg.get("type") == "leave_request":
+            pid = str(msg.get("from") or "")
+            if pid != self.me and pod.is_member(self.pod, pid):
+                name = next(m["name"] for m in self.pod["members"] if m["peer_id"] == pid)
+                self._save_pod(pod.sign(pod.remove_member(self.pod, pid), self.ident))
+                print(f"pod: {name} left", flush=True)
+            return
+        pubkey, name = str(msg.get("pubkey", "")), str(msg.get("name") or "")[:64] or "machine"
+        try:
+            ok = pod.take_invite(self.pod["pod_id"], pubkey, str(msg.get("proof", "")))
+        except ValueError:
+            ok = False
+        if not ok:
+            self._room_send({"type": "join_failed", "to": msg.get("from"), "reason": "invalid or expired invite code"})
+            return
+        self._save_pod(pod.sign(pod.add_member(self.pod, pod.member(pubkey, name)), self.ident))
+        self.emit("pod_joined", node=name)
+        print(f"pod: {name} joined", flush=True)
+
+    def apply_plan(self):
+        """Load the head of every plan this Mac heads in its pod. Layers come from the Models tab for
+        now: a plan's hops don't load or unload anything."""
+        if not self.pod:
+            return
+        now = time.time()
+        for p in self.pod["plans"]:
+            model, hkey = p["model"], (p["model"], -1, -1)
+            if p["head"] == self.me and model not in self.heads and now - self._plan_tries.get(hkey, 0.0) >= PLAN_RETRY_S:
+                self._plan_tries[hkey] = now
+                threading.Thread(target=self._try, args=([], "pod plan", self.ensure_head, model), daemon=True).start()
 
     def free_for_models(self) -> float:
         """Room for more text-model layers: free GPU budget minus what video encoder layers will need."""
@@ -392,7 +531,10 @@ class PeerApp:
         return {"name": NAME, "chip": CHIP, "mem_total_gb": round(mem_total_gb(), 1),
                 "mem_free_gb": round(mem_free_gb() * 2) / 2,  # half-GB steps, so idle drift doesn't republish
                 "slices": [{k: v for k, v in r.items() if k != "phase"} for r in self.slices.slices()],
-                "has_head": {m: True for m in self.heads}}
+                "has_head": {m: True for m in self.heads},
+                # For the census: this machine heads a plan and serves it on the network.
+                "on_network": bool(self.pod) and (home() / "network.json").exists()
+                and any(p["head"] == self.me for p in self.pod["plans"])}
 
     def on_swarm(self, peers: list[dict], status: str):
         self.peers = peers
@@ -446,7 +588,7 @@ class PeerApp:
         out = [Offer(self.me, NAME, s.lo, s.hi, 0.0) for s in self.slices.loaded(model)]
         for p in self.peers:
             link = p.get("link") or {}
-            if p["peer_id"] == self.me or (reachable and link.get("state") != "direct"):
+            if p["peer_id"] == self.me or not self.allows(p["peer_id"]) or (reachable and link.get("state") != "direct"):
                 continue
             for s in self.peer_slices(p):
                 if s.get("loaded") and s.get("model") == model:
@@ -522,6 +664,11 @@ class PeerApp:
     async def _serve_load(self, conn, body, reader, writer):
         req = pb.LoadRequest.FromString(body)
         model = req.repo or self.repo
+        if self.pod and conn.peer_id != pod.owner_id(self.pod):
+            # In a pod, layers come from the plan; only the owner may ask for more directly.
+            msg = "this machine is in a pod: only its owner can ask it to load layers"
+            writer.write(_frame(pb.LoadProgress(phase="error", message=msg).SerializeToString()))
+            return
         q: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()
 
@@ -810,7 +957,7 @@ class PeerApp:
         cands = []
         for p in self.peers:
             link = p.get("link") or {}
-            if p["peer_id"] in exclude or link.get("state") != "direct":
+            if p["peer_id"] in exclude or not self.allows(p["peer_id"]) or link.get("state") != "direct":
                 continue
             free = (link.get("info") or {}).get("mem_free_gb", p.get("mem_free_gb"))
             if free is not None and free < need_gb + MEM_HEADROOM_GB:
@@ -1040,7 +1187,135 @@ class PeerApp:
             "head_loaded": self.repo in self.heads, "route": [[h.name, h.lo, h.hi] for h in hops], "gaps": gaps,
             "links": {self.net._name(k): {kk: v[kk] for kk in ("state", "rtt_ms", "via", "addr", "error")}
                       for k, v in self.net.snapshot().items()},
-            "served": s.served, "tokens": s.tokens, "active_requests": len(s.caches)})
+            "served": s.served, "tokens": s.tokens, "active_requests": len(s.caches),
+            "pod": pod_summary(self.pod)})
+
+    # ---- pod API (the Pod tab) ----
+    def pod_view(self) -> dict:
+        """This machine's pod for the UI: the roster summary plus each member's live state."""
+        r = self.pod
+        if not r:
+            return {"pod": None, "me": self.me, "name": NAME}
+        recs = {p["peer_id"]: p for p in self.peers}
+        links = self.net.snapshot()
+        members = []
+        for m in r["members"]:
+            rec, link = recs.get(m["peer_id"], {}), links.get(m["peer_id"]) or {}
+            me = m["peer_id"] == self.me
+            slices = self.slices.slices() if me else self.peer_slices({**rec, "link": link})
+            members.append({**m, "me": me, "online": me or bool(rec), "state": "you" if me else link.get("state", "offline"), "via": link.get("via", ""),
+                            "rtt_ms": link.get("rtt_ms"), "chip": CHIP if me else rec.get("chip"),
+                            "mem_total_gb": round(mem_total_gb(), 1) if me else rec.get("mem_total_gb"),
+                            "slices": [{k: x.get(k) for k in ("model", "lo", "hi", "loaded")} for x in slices]})
+        owner = pod.owner_id(r)
+        return {"pod": pod_summary(r), "me": self.me, "name": NAME, "owner": owner == self.me, "members": members,
+                "invites": pod.pending_invites(r["pod_id"]) if owner == self.me else 0,
+                "heads": [p["model"] for p in r["plans"] if p["head"] == self.me]}
+
+    def _owner_or_error(self):
+        if not self.pod:
+            return web.json_response({"error": "this machine is in no pod"}, status=409)
+        if pod.owner_id(self.pod) != self.me:
+            return web.json_response({"error": "only the pod's owner can change it"}, status=403)
+        return None
+
+    async def pod_get(self, _):
+        return web.json_response(self.pod_view())
+
+    async def pod_create(self, request):
+        b = await request.json()
+        name, kind = str(b.get("name") or "").strip(), b.get("kind", "private")
+        if not name:
+            return web.json_response({"error": "give the pod a name"}, status=400)
+        try:
+            r = pod.new_pod(self.ident, name[:64], NAME, kind=kind)
+        except pod.RosterError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        self._save_pod(r)
+        return web.json_response(self.pod_view())
+
+    async def pod_invite(self, _):
+        if err := self._owner_or_error():
+            return err
+        if self.pod["kind"] == "alone":
+            return web.json_response({"error": "an alone pod has no other machines"}, status=409)
+        code, expires = pod.create_invite(self.pod["pod_id"])
+        return web.json_response({"code": code, "expires": expires})
+
+    async def pod_join(self, request):
+        b = await request.json()
+        try:
+            pod_id, secret = pod.parse_invite(str(b.get("code") or ""))
+        except pod.RosterError:
+            return web.json_response({"error": "that isn't a pod invite code"}, status=400)
+        proof = pod.invite_proof(secret, pod_id, self.ident.public.hex())
+        try:
+            r = await join_pod(self.ident, pod_id, proof, NAME)
+        except (RoomError, aiohttp.ClientError, OSError, asyncio.TimeoutError) as e:
+            return web.json_response({"error": f"couldn't join: {e}"}, status=409)
+        if pod.newer(None, r) is None or r["pod_id"] != pod_id or not pod.is_member(r, self.me):
+            return web.json_response({"error": "the pod sent a roster that doesn't check out"}, status=502)
+        self._save_pod(r)
+        return web.json_response(self.pod_view())
+
+    async def pod_remove(self, request):
+        if err := self._owner_or_error():
+            return err
+        pid = str((await request.json()).get("peer_id") or "")
+        if pid == self.me or not pod.is_member(self.pod, pid):
+            return web.json_response({"error": "not a machine the owner can remove"}, status=400)
+        self._save_pod(pod.sign(pod.remove_member(self.pod, pid), self.ident))
+        return web.json_response(self.pod_view())
+
+    def auto_split(self, layers: int) -> list[tuple[str, int, int]]:
+        """Every member's share of `layers`, in proportion to its memory (this machine first)."""
+        view = {m["peer_id"]: m.get("mem_total_gb") or 0 for m in self.pod_view()["members"]}
+        ids = [self.me] + [p for p in view if p != self.me]
+        mem = [max(view.get(p) or 0, 1) for p in ids]
+        hops, at, cum, n = [], 0, 0, len(ids)
+        for i, p in enumerate(ids):
+            cum += mem[i]
+            hi = layers if i == n - 1 else min(max(round(layers * cum / sum(mem)), at + 1), layers - (n - 1 - i))
+            hops.append((p, at, hi))
+            at = hi
+        return hops
+
+    async def pod_plan(self, request):
+        if err := self._owner_or_error():
+            return err
+        b = await request.json()
+        model = str(b.get("model") or self.repo)
+        layers = int(b.get("layers") or self.layers_of(model) or 0)
+        if layers <= 0:
+            return web.json_response({"error": f"unknown layer count for {model}"}, status=400)
+        try:
+            hops = ([(str(h["peer"]), int(h["lo"]), int(h["hi"])) for h in b["hops"]] if b.get("hops")
+                    else self.auto_split(layers))
+            head = str(b.get("head") or hops[0][0])
+            r = pod.verify(pod.sign(pod.set_plan(self.pod, model, layers, head, hops), self.ident))
+        except (KeyError, TypeError, ValueError) as e:
+            return web.json_response({"error": str(e)}, status=400)
+        self._save_pod(r)
+        return web.json_response(self.pod_view())
+
+    async def pod_unplan(self, request):
+        if err := self._owner_or_error():
+            return err
+        model = str((await request.json()).get("model") or "")
+        self._save_pod(pod.sign(pod.revise(self.pod, plans=[p for p in self.pod["plans"] if p["model"] != model]), self.ident))
+        return web.json_response(self.pod_view())
+
+    async def pod_leave(self, _):
+        """A member leaves (the owner signs it out); the owner disbands the pod: a last roster with only
+        itself sends every other machine back to the public swarm."""
+        if self.pod and self.swarm:
+            if pod.owner_id(self.pod) != self.me:
+                await self.swarm.send({"type": "leave"})
+            elif len(self.pod["members"]) > 1:
+                me = [m for m in self.pod["members"] if m["peer_id"] == self.me]
+                await self.swarm.send({"type": "roster", "roster": pod.sign(pod.revise(self.pod, members=me, plans=[]), self.ident)})
+        self._forget_pod()
+        return web.json_response(self.pod_view())
 
     async def shutdown(self, _):
         self.video.stop()  # os._exit would orphan ComfyUI
@@ -1054,6 +1329,8 @@ class PeerApp:
         while True:
             await asyncio.sleep(2)
             self.slices.evict_idle()
+            self.reload_pod()
+            self.apply_plan()
             self.self_events()
             openai_api.write_network_manifest(self, home())
 
@@ -1084,7 +1361,11 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
                     web.post("/api/start", app_state.start), web.post("/api/serve", app_state.serve),
                     web.post("/api/unserve", app_state.unserve),
                     web.post("/api/chat", app_state.chat), web.post("/api/complete", app_state.complete),
-                    web.post("/api/shutdown", app_state.shutdown)])
+                    web.post("/api/shutdown", app_state.shutdown),
+                    web.get("/api/pod", app_state.pod_get), web.post("/api/pod/create", app_state.pod_create),
+                    web.post("/api/pod/invite", app_state.pod_invite), web.post("/api/pod/join", app_state.pod_join),
+                    web.post("/api/pod/remove", app_state.pod_remove), web.post("/api/pod/plan", app_state.pod_plan),
+                    web.post("/api/pod/unplan", app_state.pod_unplan), web.post("/api/pod/leave", app_state.pod_leave)])
     enc = EncoderNode(app_state.emit)
     enc.renders = lambda: app_state.video.gpu.get("vram_gb", 0) >= MIN_VRAM_GB  # a video machine, set up or not
     # Text-model slices and video encoder layers share one memory budget (unless the encoder runs on the CPU).
@@ -1110,7 +1391,10 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
     async def on_start(a):
         app_state.loop = asyncio.get_running_loop()
         await app_state.net.start()
-        app_state.swarm = SwarmClient(app_state.ident, app_state.swarm_record, app_state.on_swarm, net=app_state.net)
+        app_state.swarm = SwarmClient(app_state.ident, app_state.swarm_record, app_state.on_swarm, net=app_state.net,
+                                      room=lambda: app_state.pod, on_roster=app_state.on_roster,
+                                      on_owner_request=app_state.on_owner_request,
+                                      supply=app_state.supply, on_dissolved=app_state.on_dissolved)
         app_state.emit("node_joined", key=f"node:{NAME}", node=NAME, address=f"udp/{app_state.net.port}", role="host")
         app_state.emit("host_info", key="host_info", addresses=[], port=port, repo=repo,
                        n_layers=app_state.n_layers, chip=CHIP, name=NAME, peer_id=app_state.me)

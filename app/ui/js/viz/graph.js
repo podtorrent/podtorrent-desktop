@@ -29,7 +29,32 @@ export function swarmGraph() {
     // pipeline order: host, then by first layer
     return nodeList(state);
   }
+  function clusters(list) {
+    // Lobby census: each pod as its head with satellites in a ring, pods on a grid, idle machines below.
+    const out = new Map(), pods = new Map(), idle = [];
+    for (const nd of list) {
+      if (!nd.pod) { idle.push(nd); continue; }
+      if (!pods.has(nd.pod)) pods.set(nd.pod, []);
+      pods.get(nd.pod)[nd.podHead ? "unshift" : "push"](nd);
+    }
+    const groups = [...pods.values()], cols = Math.max(1, Math.ceil(Math.sqrt(groups.length * W / Math.max(H, 1))));
+    const rows = Math.ceil(groups.length / cols) + (idle.length ? 0.6 : 0);
+    const cw = W / cols, ch = (H * 0.92) / Math.max(rows, 1);
+    groups.forEach((g, i) => {
+      const x = cw * (i % cols + 0.5), y = ch * (Math.floor(i / cols) + 0.5) + H * 0.04;
+      const ring = Math.min(cw, ch) * 0.32;
+      out.set(g[0].name, { x, y });
+      g.slice(1).forEach((nd, k) => {
+        const a = -Math.PI / 2 + (k * 2 * Math.PI) / (g.length - 1);
+        out.set(nd.name, { x: x + Math.cos(a) * ring, y: y + Math.sin(a) * ring });
+      });
+    });
+    const iy = groups.length ? H - Math.min(60, ch * 0.3) : H / 2;
+    idle.forEach((nd, i) => out.set(nd.name, { x: W * (i + 1) / (idle.length + 1), y: iy }));
+    return out;
+  }
   function targets(list) {
+    if (list.some(nd => nd.pod)) return clusters(list);
     // Columns by pipeline stage (first layer), left to right; peers serving the same stage stack.
     const cx = W / 2, cy = H / 2, out = new Map();
     if (list.length === 1) { out.set(list[0].name, { x: cx, y: cy }); return out; }
@@ -59,6 +84,11 @@ export function swarmGraph() {
     if (!a || list.length < 2) {
       const host = list.find(n => n.role === "host");
       if (host) return list.filter(n => n !== host).map(n => [host.name, n.name, true]);
+      // Lobby census: every satellite to its pod's head.
+      if (list.some(n => n.pod)) {
+        const heads = new Map(list.filter(n => n.podHead).map(n => [n.pod, n.name]));
+        return list.filter(n => n.pod && !n.podHead && heads.has(n.pod)).map(n => [heads.get(n.pod), n.name, true]);
+      }
       // Lobby preview: link peers whose slices of a model meet end to start (the pipeline they'd form).
       const sl = list.flatMap(n => (n.slices || []).map(x => ({ ...x, node: n.name })));
       return sl.flatMap(x => sl.filter(y => y.model === x.model && y.lo === x.hi && y.node !== x.node).map(y => [x.node, y.node]));

@@ -14,8 +14,9 @@ import peers from "./views/peers.js";
 import activity, { unseen } from "./views/activity.js";
 import settingsView from "./views/settings.js";
 import networkView, { networkState } from "./views/network.js";
+import podView from "./views/pod.js";
 
-const VIEWS = { swarm, models: modelsView, playground, node, peers, activity, network: networkView, settings: settingsView };
+const VIEWS = { swarm, models: modelsView, playground, node, peers, activity, network: networkView, pod: podView, settings: settingsView };
 const NAV = [
   ["swarm", "Swarm", "swarm", "⌘1"], ["models", "Models", "models", "⌘2"], ["playground", "Playground", "playground", "⌘3"],
   ["node", "My Node", "node", "⌘4"], ["peers", "Peers", "peers", "⌘5"], ["activity", "Activity", "activity", "⌘6"],
@@ -35,7 +36,7 @@ export function mountShell() {
   const sidebar = h("aside.sidebar", { "aria-label": "Sidebar" },
     h("div.sidebar-top", { "data-tauri-drag-region": "" }, demoPill),
     h("div.brand", { "data-tauri-drag-region": "" }, h("div.logo", h("img", { src: "favicon.svg", alt: "" })), h("div", h("b", "PodTorrent"), h("div.sub", "Many machines, one swarm"))),
-    h("nav.nav", NAV.map(navItem), h("div.sect", " "), navItem(["network", "Network", "link", ""]), navItem(["settings", "Settings", "settings", "⌘,"])),
+    h("nav.nav", NAV.map(navItem), h("div.sect", " "), navItem(["pod", "Pod", "peers", ""]), navItem(["network", "Network", "link", ""]), navItem(["settings", "Settings", "settings", "⌘,"])),
     nodeCard);
 
   const title = h("h1"), subtitle = h("span.muted");

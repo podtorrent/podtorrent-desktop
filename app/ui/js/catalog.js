@@ -110,7 +110,8 @@ export async function openGet(repo) {
     else if (n > sug.fits) e = `About ${sug.fits} layers fit in free memory (${fmt.gb(inf.mem_free_gb)}).`;
     text(err, e);
     const sz = inf.layer_bytes ? fmt.bytes(n * inf.layer_bytes) : null;
-    text(est, e ? "" : sz ? `${n} layers · downloads up to ${sz} and keeps about ${sz} in memory while serving (${fmt.gb(inf.mem_free_gb)} free). Layers already on disk aren't downloaded again.`
+    const onDisk = l?.complete || (l?.layers || []).some(([x, y]) => x <= a && b < y);
+    text(est, e ? "" : onDisk ? `${n} layers, already on disk: nothing to download. Keeps ${sz ? `about ${sz}` : "them"} in memory while serving (${fmt.gb(inf.mem_free_gb)} free).` : sz ? `${n} layers · downloads up to ${sz} and keeps about ${sz} in memory while serving (${fmt.gb(inf.mem_free_gb)} free). Layers already on disk aren't downloaded again.`
       : `${n} layers. Layers already on disk aren't downloaded again.`);
     go.disabled = !!e;
   };
