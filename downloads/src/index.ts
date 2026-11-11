@@ -204,7 +204,7 @@ if (el) { el.classList.add("me"); el.parentNode.prepend(el); }
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } });
 }
 
-// The usage guide. Screenshots are from the app's Demo Mode (simulated swarm), uploaded to R2 under guide/.
+// The usage guide. Screenshots are uploaded to R2 under guide/.
 function guide(): Response {
   const fig = (file: string, alt: string, cap: string) =>
     `<figure><img src="/download/guide/${file}" alt="${alt}" width="1600" height="1000" loading="lazy"><figcaption>${cap}</figcaption></figure>`;
@@ -229,8 +229,7 @@ function guide(): Response {
         <li><b>Nothing for now</b>: join the swarm and chat with models other machines serve. You can serve layers later from Models.</li>
       </ul>
       <p>You can also choose where models are stored. On the last screen, click <b>Start My Node</b>.</p>
-      ${fig("02-serve.jpg", "Choosing which layers this machine serves", "Pick a slice. You can change it any time.")}
-      <p class="tip">Want to look around first? Click <b>Explore Demo first</b>, or press <b>⌥⌘D</b> any time. Demo Mode shows a simulated swarm and is always marked <b>Demo</b>.</p>`],
+      ${fig("02-serve.jpg", "Choosing which layers this machine serves", "Pick a slice. You can change it any time.")}`],
     ["swarm", "4. See the swarm", `
       <p>The <b>Swarm</b> view shows every machine or peer online, across any network. They find each other and connect directly: there's no address to type and no VPN. Each circle shows the layers that machine serves, and arrows show tokens moving between them.</p>
       <p>A red circle is a peer that's online but can't be reached from here, for example one behind a strict NAT. Its layers don't count until it's reachable.</p>
@@ -274,7 +273,7 @@ ${STYLE}</style></head><body><main>
 <p class="lead">PodTorrent lets machines on different networks run one large language model together. Each machine serves a slice of the model's layers, and every token hops between them. Here's how to get set up and start chatting.</p>
 <ul class="toc">${steps.map(([id, t]) => `<li><a href="#${id}">${t.replace(/^\d+\. /, "")}</a></li>`).join("")}</ul>
 ${steps.map(([id, t, body]) => `<section class="step" id="${id}"><h2>${t}</h2>${body}</section>`).join("\n")}
-<footer>Screenshots are from Demo Mode, so the machines and numbers in them are simulated.</footer>
+
 </main></body></html>`;
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } });
 }

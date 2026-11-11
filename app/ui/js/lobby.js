@@ -9,7 +9,7 @@ const PING_MS = 10_000;
 
 let ws = null, pinger = 0, retry = 0, backoff = 1000;
 
-const wanted = s => s.source === "live" && s.booted && s.engine.phase === "stopped";
+const wanted = s => s.booted && s.engine.phase === "stopped";
 
 function open() {
   const sock = ws = new WebSocket(URL_);

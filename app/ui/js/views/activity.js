@@ -7,7 +7,7 @@ import { logTail } from "../engine.js";
 import { isTauri } from "../native.js";
 import { copyText } from "../actions.js";
 
-const KIND_IC = { join: "peers", lost: "wifioff", back: "wifi", load: "download", rebalance: "layers", covered: "check", generate: "sparkle", error: "alert", engine: "power", download: "download", demo: "sparkle" };
+const KIND_IC = { join: "peers", lost: "wifioff", back: "wifi", load: "download", rebalance: "layers", covered: "check", generate: "sparkle", error: "alert", engine: "power", download: "download" };
 const LH = 19;
 let mode = "feed";
 export const unseen = { n: 0, at: 0 };

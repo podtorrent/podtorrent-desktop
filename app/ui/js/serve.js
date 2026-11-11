@@ -38,7 +38,7 @@ export function openServe(pre = {}) {
     clash.hidden = !msgs.length;
     clash.replaceChildren(icon("alert"), h("div.col", { style: { gap: "4px" } }, ...msgs.map(m => h("span", m))));
   };
-  if (state.source === "live") Promise.all([encoderStatus(), videoStatus()]).then(paintClash);
+  Promise.all([encoderStatus(), videoStatus()]).then(paintClash);
   const err = h("div.small", { style: { color: "var(--c-gap)" } });
 
   const n = () => layersOf(model.value.trim());
@@ -65,7 +65,7 @@ export function openServe(pre = {}) {
     variant: "primary", icon: "download", onclick: async () => {
       go.disabled = true;
       const ok = await serveSlice(model.value.trim(), +lo.value, +last.value + 1, where.value || null);
-      if (ok || state.source === "demo") s.close(); else go.disabled = false;
+      if (ok) s.close(); else go.disabled = false;
     },
   });
   const s = sheet({

@@ -8,7 +8,6 @@ import { icon } from "../icons.js";
 import { areaChart, barChart } from "../viz/chart.js";
 import { startHost, stopNode, unserveSlice, cancelDownload, encoderStatus, videoStatus } from "../engine.js";
 import { isTauri } from "../native.js";
-import { setDemo } from "../actions.js";
 
 // CUDA 12.8 PyTorch needs this NVIDIA driver or newer (backend.MIN_NVIDIA_DRIVER).
 const MIN_NVIDIA_DRIVER = 570;
@@ -59,8 +58,7 @@ export default {
       h("div.page-h", h("div", h("h1", "Share this machine"), h("p", "PodTorrent pools machines to run a model none of them can hold alone. Every machine runs the same node; each downloads only the slice it serves."), machine)),
       errBox,
       startCard,
-      h("div.small.faint", "Machines on different networks connect directly over encrypted QUIC (UDP hole punching). The swarm is open: any PodTorrent peer can send work to this machine. ",
-        h("a", { href: "#", onclick: e => { e.preventDefault(); setDemo(true); } }, "Explore Demo Mode first →")));
+      h("div.small.faint", "Machines on different networks connect directly over encrypted QUIC (UDP hole punching). The swarm is open: any PodTorrent peer can send work to this machine. "));
 
     // ---- starting ----
     const startLine = h("div.mono.small.muted");
@@ -188,8 +186,8 @@ export default {
     return {
       update(s) {
         const phase = s.engine.phase;
-        const off = s.source === "live" && !["running", "unreachable", "starting"].includes(phase);
-        const show = phase === "starting" && s.source !== "demo" ? "start" : "run";
+        const off = !["running", "unreachable", "starting"].includes(phase);
+        const show = phase === "starting" ? "start" : "run";
         setup.hidden = show !== "setup"; starting.hidden = show !== "start"; running.hidden = show !== "run";
         const hl = s.health;
         offline.hidden = !off;
@@ -218,19 +216,19 @@ export default {
         text(gv, m ? fmt.gb(m.active_gb) : "–");
         text(gs, m ? `of ${fmt.gb(m.total_gb)} in use` : "");
         text(chipEl, me?.chip || hl?.chip || "This machine");
-        text(running.querySelector(".hero-sub"), [me?.name, s.source === "demo" ? "Demo Mode" : off ? "Not in the swarm" : "Peer in the global swarm"].filter(Boolean).join(" · "));
+        text(running.querySelector(".hero-sub"), [me?.name, off ? "Not in the swarm" : "Peer in the global swarm"].filter(Boolean).join(" · "));
         const st = me ? nodeState(me, s) : "idle";
         if (off) setStatus(stateB, "Offline", "neutral"); else setStatus(stateB, phase === "unreachable" ? "Not responding" : me ? nodeStateLabel(me, s) : "Starting", phase === "unreachable" ? "gap" : st === "idle" ? "neutral" : st);
         const loaded = s.slices.filter(x => x.loaded);
         text(hv.layers, loaded.length ? String(loaded.reduce((a, x) => a + x.hi - x.lo, 0)) : "None yet");
         paintSlices(s);
-        if (s.source === "live" && phase === "running") {
+        if (phase === "running") {
           const sk = JSON.stringify(s.slices.map(x => [x.model, x.lo, x.hi, x.loaded]));
           if (!askedVideo || sk !== slicesKey) { askedVideo = true; slicesKey = sk; encoderStatus(); videoStatus(); }
           paintVideo(s);
         } else { askedVideo = false; videoSect.hidden = true; memBar.hidden = memKey.hidden = true; }
         const day = new Date().toISOString().slice(0, 10);
-        const days = s.source === "demo" ? demoDays() : history.days;
+        const days = history.days;
         tk.today.set(days[day] || 0);
         tk.all.set(Object.values(days).reduce((a, b) => a + b, 0));
         tk.req.set(me?.stats?.requests ?? 0);
@@ -257,9 +255,8 @@ export default {
         dayChart.set(rows);
         const sum = summarize(s, me, days, day);
         contrib.set(sum, s); payback.set(sum);
-        text(dayNote, s.source === "demo" ? "Demo data" : "tokens per day, this machine");
+        text(dayNote, "tokens per day, this machine");
         cls(running, "unreachable", phase === "unreachable");
-        running.querySelectorAll(".hero-r .btn").forEach(b => { b.disabled = s.source === "demo"; b.dataset.tip = s.source === "demo" ? "Not available in Demo Mode" : ""; });
       },
     };
   },
@@ -268,9 +265,8 @@ export default {
 // ---------- Contribution + Payback Meter ----------
 const DAY = 86400;
 function summarize(s, me, days, day) {
-  const demo = s.source === "demo";
-  const st = demo ? demoStats() : history.stats;
-  const first = demo ? Date.now() / 1000 - 14 * DAY : history.first;
+  const st = history.stats;
+  const first = history.first;
   const keys = Object.keys(st);
   const tot = keys.reduce((a, k) => { for (const f in a) a[f] += st[k][f] || 0; return a; }, { req: 0, online_s: 0, active_s: 0, block_s: 0 });
   const td = st[day] || { req: 0, online_s: 0, active_s: 0, block_s: 0 };
@@ -281,7 +277,7 @@ function summarize(s, me, days, day) {
   let tok7 = 0; for (let i = 0; i < 7; i++) tok7 += days[new Date(Date.now() - i * DAY * 1000).toISOString().slice(0, 10)] || 0;
   const span = first ? Math.min(7, Math.max(1, (now - first) / DAY)) : 1;
   return {
-    demo, chip,
+    chip,
     today: { tokens: days[day] || 0, req: td.req, up: sinceMidnight ? Math.min(1, td.online_s / sinceMidnight) : null, blocks: me?.lo != null ? me.hi - me.lo : 0, kwh: kwh(td.active_s, td.online_s, chip) },
     all: { tokens: tokAll, req: tot.req, up: first ? Math.min(1, tot.online_s / Math.max(1, now - first)) : null, blockHours: tot.block_s / 3600, kwh: kwh(tot.active_s, tot.online_s, chip) },
     tokPerDay: tok7 / span, since: first,
@@ -323,7 +319,7 @@ function contributionCard() {
     text(valT, b ? "≈ " + usd(usdFor(m.today.tokens, b)) : "–");
     text(valA, b ? "≈ " + usd(usdFor(m.all.tokens, b)) : "–");
     text(foot, !valuation ? (valuationError || "Loading price benchmarks…")
-      : `What these tokens would cost at ${b.label.toLowerCase()} prices${b.blended ? " (weighted average)" : ""}. Not earnings. Prices from config/valuation.json, last updated ${valuation.last_updated}. Energy is estimated from ${m.chip ? "an " + m.chip : "a generic"} power profile, not measured.${m.demo ? " Demo data." : ""}`);
+      : `What these tokens would cost at ${b.label.toLowerCase()} prices${b.blended ? " (weighted average)" : ""}. Not earnings. Prices from config/valuation.json, last updated ${valuation.last_updated}. Energy is estimated from ${m.chip ? "an " + m.chip : "a generic"} power profile, not measured.`);
   };
   return el;
 }
@@ -371,26 +367,8 @@ function paybackCard() {
       const need = P / (A * 30.44);
       out.push(h("div", h("span.muted", `To pay back over ${A} months `), h("b", `≈ ${usd(need)} / day`), h("span.faint.small", perDay > 0 ? ` (you're at ${fmt.pct(perDay / need)} of that pace)` : "")));
     }
-    out.push(h("div.small.faint", `Valued at ${b.label} prices. Not income: an estimate of what equivalent API usage would cost.${m.demo ? " Demo data." : ""}`));
+    out.push(h("div.small.faint", `Valued at ${b.label} prices. Not income: an estimate of what equivalent API usage would cost.`));
     lines.replaceChildren(...out);
   };
   return el;
-}
-
-let demoStatsCache = null;
-function demoStats() {
-  if (demoStatsCache) return demoStatsCache;
-  demoStatsCache = {};
-  const d = demoDays();
-  const today = new Date().toISOString().slice(0, 10), up = (Date.now() / 1000) % DAY * 0.97;
-  for (const [k, tok] of Object.entries(d)) demoStatsCache[k] = { req: Math.round(tok / 180), online_s: k === today ? up : 20 * 3600, active_s: Math.round(tok / 30), block_s: 24 * 20 * 3600 };
-  return demoStatsCache;
-}
-
-let demoCache = null;
-function demoDays() {
-  if (demoCache) return demoCache;
-  demoCache = {};
-  for (let i = 0; i < 14; i++) { const k = new Date(Date.now() - i * 864e5).toISOString().slice(0, 10); demoCache[k] = Math.round(4000 + 9000 * Math.abs(Math.sin(i * 1.7)) + (i === 0 ? 2500 : 0)); }
-  return demoCache;
 }

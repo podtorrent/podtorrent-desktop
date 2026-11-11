@@ -3,9 +3,8 @@ import { h, text, cls } from "./dom.js";
 import { state, settings, subscribe, on, emit, swarmStats, models, selfNode, nodeState, nodeStateLabel, slicesLabel } from "./store.js";
 import { icon } from "./icons.js";
 import { kbd, button } from "./ui.js";
-import { go, currentRoute, setDemo, actions, toggleSidebar } from "./actions.js";
+import { go, currentRoute, actions, toggleSidebar } from "./actions.js";
 import { fmt } from "./dom.js";
-import { presets } from "./demo.js";
 import swarm from "./views/swarm.js";
 import modelsView from "./views/models.js";
 import playground from "./views/playground.js";
@@ -36,9 +35,8 @@ export function mountShell() {
   const nodeCard = h("button.node-card", { type: "button", onclick: () => go("node"), "data-tip": "My Node  ⌘4" },
     h("div.top", h("span.you-chip", icon("person")), h("span.nc-name.ellipsis.grow"), h("span.statedot")),
     h("div.bot", h("span", h("b.nc-layers"), " layers"), h("span", h("b.nc-tps"), " tok/s")));
-  const demoPill = h("button.badge.demo.demo-pill", { type: "button", "data-tip": "Demo Mode · ⌥⌘D to turn off", onclick: () => setDemo(false) }, "Demo");
   const sidebar = h("aside.sidebar", { "aria-label": "Sidebar" },
-    h("div.sidebar-top", { "data-tauri-drag-region": "" }, demoPill),
+    h("div.sidebar-top", { "data-tauri-drag-region": "" }),
     h("div.brand", { "data-tauri-drag-region": "" }, h("div.logo", h("img", { src: "favicon.svg", alt: "" })), h("div", h("b", "PodTorrent"), h("div.sub", "Many machines, one swarm"))),
     h("nav.nav", NAV.map(navItem), h("div.sect", " "), navItem(["pod", "Pod", "peers", ""]), navItem(["network", "Network", "link", ""]), navItem(["settings", "Settings", "settings", "⌘,"]),
       h("div.nav-fill"), NAV_BOTTOM.map(navItem)),
@@ -99,7 +97,7 @@ export function mountShell() {
     const net = networkState();
     setNb("network", net === "online" ? "Online" : "", net === "online" ? "serving" : net === "rejected" ? "gap" : net === "connecting" ? "degraded" : "");
     // node card
-    const running = !!me || s.source === "demo";
+    const running = !!me;
     text(nodeCard.querySelector(".nc-name"), machineName(s));
     nodeCard.querySelector(".statedot").className = `statedot ${me ? (meSt === "idle" ? "off" : meSt) : s.engine.phase === "starting" ? "active" : s.engine.error ? "gap" : "off"}`;
     cls(nodeCard, "running", running);
@@ -111,11 +109,9 @@ export function mountShell() {
       text(nodeCard.querySelector(".nc-tps"), tps.length ? fmt.fixed(tps.reduce((a, b) => a + b, 0) / tps.length) : "0.0");
     }
     nodeCard.setAttribute("aria-label", `${machineName(s)}: ${me ? nodeStateLabel(me, s) : s.engine.phase === "starting" ? "starting" : "not running"}`);
-    demoPill.hidden = s.source !== "demo";
-    // banners: demo, offline, engine trouble
+    // banners: offline, engine trouble
     const b = [];
-    if (s.source === "demo") b.push(["demo", "sparkle", `Demo Mode · ${presets[settings.demoPreset]?.label}. Numbers are simulated.`, ["Turn off", () => setDemo(false)]]);
-    else if (s.engine.phase === "unreachable") b.push(["gap", "alert", "The engine isn't responding.", ["Restart", () => actions.startHost()]]);
+    if (s.engine.phase === "unreachable") b.push(["gap", "alert", "The engine isn't responding.", ["Restart", () => actions.startHost()]]);
     else if (s.role && s.conn === "down") b.push(["degraded", "wifioff", "Disconnected from the engine. Reconnecting…", null]);
     const key = JSON.stringify(b.map(x => x.slice(0, 3)));
     if (key !== bannerKey) {

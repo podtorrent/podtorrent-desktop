@@ -49,7 +49,6 @@ function begin(owned) {
 // ---------- start / stop ----------
 /** Start this Mac's peer. Every Mac runs the same peer and finds the others itself. */
 export async function startHost() {
-  if (state.source === "demo") return toast("Turn off Demo Mode to start a real node", "degraded");
   stopTimers();
   const my = ++epoch;
   resetState({ role: "host" });
@@ -107,7 +106,6 @@ function watchProcess(my) {
 }
 
 export async function stopNode() {
-  if (state.source === "demo") return;
   if (state.engine.phase === "stopped") return;
   epoch++;
   stopTimers();
@@ -122,9 +120,6 @@ export async function quitApp() {
   if (isTauri) return invoke("quit_app");
   await stopNode();
 }
-
-/** Stop listening (Demo Mode); the engine process itself keeps running. */
-export function detach() { epoch++; stopTimers(); }
 
 function stopTimers() {
   clearTimeout(wsTimer); clearInterval(liveTimer);
@@ -155,7 +150,6 @@ export function connectHost(addr) {
 // ---------- actions ----------
 /** Quick start for the default model: this Mac serves the first half, a connected peer the rest. */
 export async function loadModel() {
-  if (state.source === "demo") return emit("demo:load");
   if (state.engine.phase !== "running") return toast("Start your node first", "degraded");
   state.loadRequested = true; state.lastError = "";
   commit();
@@ -172,7 +166,6 @@ export async function loadModel() {
  *  opts.trim: then delete the model's layers outside what's served from disk. */
 export async function serveSlice(model, lo, hi, peer = null, opts = {}) {
   const what = `${shortModel(model)} ${fmt.layers(lo, hi)}`;
-  if (state.source === "demo") return emit("demo:serve", { model, lo, hi, peer });
   if (state.engine.phase !== "running") return toast("Start your node first", "degraded");
   try {
     const r = await post("/api/serve", { model, lo, hi, peer, ...opts });
@@ -185,7 +178,6 @@ export async function serveSlice(model, lo, hi, peer = null, opts = {}) {
 
 export async function unserveSlice(model, lo, hi) {
   const what = `${shortModel(model)} ${fmt.layers(lo, hi)}`;
-  if (state.source === "demo") return emit("demo:unserve", { model, lo, hi });
   try {
     const r = await post("/api/unserve", { model, lo, hi });
     if (!r.ok) return toast(`Couldn't stop serving ${what}`, "gap", r.body?.error || `HTTP ${r.status}`);
@@ -224,7 +216,6 @@ export async function sendPrompt(prompt, model) {
   msgs.push(a);
   state.chat.busy = true;
   commit();
-  if (state.source === "demo") return emit("demo:chat", { prompt, model });
   try {
     const r = await post("/api/chat", { prompt, model, max_tokens: settings.maxTokens, key: chatKey });
     if (!r.ok) { a.status = "error"; a.error = r.body?.error || `HTTP ${r.status}`; state.chat.busy = false; }
