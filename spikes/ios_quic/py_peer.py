@@ -3,6 +3,8 @@
     uv run python spikes/ios_quic/py_peer.py [port] [--p256]
     uv run python spikes/ios_quic/py_peer.py --make-p12 DIR     # identity + P-256 cert for `QuicSpike listen`
     uv run python spikes/ios_quic/py_peer.py --dial HOST:PORT PEER_ID   # dial a Swift listener as a client
+    uv run python spikes/ios_quic/py_peer.py --swarm URL [SECONDS]      # join a rendezvous like a real peer
+    uv run python spikes/ios_quic/py_peer.py --pod URL [SECONDS]        # own a private pod, print an invite code
 
 Prints its peer_id, logs every datagram source and every link change, and answers Info with name "py-peer".
 Uses a throwaway identity under the spike's .home/ so it never touches ~/.podtorrent.
@@ -113,7 +115,82 @@ async def dial(target: str, peer_id: str):
     await asyncio.sleep(4)
 
 
+async def swarm(url: str, seconds: float):
+    """PeerNet + SwarmClient as a real peer runs them, minus the model: it dials every smaller-id peer."""
+    from podtorrent.net.rendezvous import SwarmClient
+    ident = load_identity()
+    net = LoggingNet(ident, info=lambda: pb.NodeInfo(name="py-peer"))
+    await net.start()
+
+    def on_peers(peers, status):
+        for p in peers:
+            link = p.get("link") or {}
+            print(f"py: swarm {status}: {p.get('name')} {p['peer_id'][:8]} {link.get('state')} "
+                  f"{link.get('error') or ''} rtt={link.get('rtt_ms')} info={(link.get('info') or {}).get('name')!r}",
+                  flush=True)
+    client = SwarmClient(ident, lambda: {"name": "py-peer", "chip": "test", "slices": []}, on_peers, url=url, net=net)
+    task = asyncio.create_task(client.run())
+    await asyncio.sleep(seconds)
+    task.cancel()
+
+
+async def own_pod(url: str, seconds: float):
+    """A private pod's owner as peer.py runs it, minus the model: makes a pod (kept in .home/pod.json),
+    prints a fresh invite code, admits machines that answer it and links with every member."""
+    from podtorrent import pod
+    from podtorrent.net.rendezvous import SwarmClient
+    ident = load_identity()
+    roster = pod.load_roster() or pod.new_pod(ident, "spike", "py-peer")
+    pod.save_roster(roster)
+    state = {"roster": roster}
+    net = LoggingNet(ident, info=lambda: pb.NodeInfo(name="py-peer"))
+    net.allowed = lambda pid: pod.is_member(state["roster"], pid)
+    await net.start()
+    code, _ = pod.create_invite(roster["pod_id"])
+    print(f"py: owner of pod {roster['name']} ({roster['pod_id']}), {len(roster['members'])} members; invite: {code}", flush=True)
+
+    def on_peers(peers, status):
+        for p in peers:
+            link = p.get("link") or {}
+            print(f"py: pod {status}: {p.get('name')} {p['peer_id'][:8]} {link.get('state')} "
+                  f"{link.get('error') or ''} rtt={link.get('rtt_ms')} info={(link.get('info') or {}).get('name')!r}",
+                  flush=True)
+
+    def save(r):
+        state["roster"] = r
+        pod.save_roster(r)
+        net.prune()
+        asyncio.ensure_future(client.send({"type": "roster", "roster": r}))
+
+    def on_owner_request(msg):
+        if msg.get("type") == "leave_request":
+            pid = str(msg.get("from") or "")
+            if pod.is_member(state["roster"], pid) and pid != ident.peer_id:
+                save(pod.sign(pod.remove_member(state["roster"], pid), ident))
+                print(f"py: {pid[:8]} left the pod", flush=True)
+            return
+        pubkey, name = str(msg.get("pubkey", "")), str(msg.get("name") or "machine")[:64]
+        if not pod.take_invite(state["roster"]["pod_id"], pubkey, str(msg.get("proof", ""))):
+            asyncio.ensure_future(client.send({"type": "join_failed", "to": msg.get("from"), "reason": "invalid or expired invite code"}))
+            print(f"py: refused {name}: bad invite proof", flush=True)
+            return
+        save(pod.sign(pod.add_member(state["roster"], pod.member(pubkey, name)), ident))
+        print(f"py: {name} joined the pod (v{state['roster']['version']})", flush=True)
+
+    client = SwarmClient(ident, lambda: {"name": "py-peer", "chip": "test", "slices": []}, on_peers, url=url, net=net,
+                         room=lambda: state["roster"], on_roster=lambda r: None, on_owner_request=on_owner_request)
+    task = asyncio.create_task(client.run())
+    await asyncio.sleep(seconds)
+    task.cancel()
+
+
 async def main():
+    if "--pod" in sys.argv:
+        i = sys.argv.index("--pod")
+        return await own_pod(sys.argv[i + 1], float(sys.argv[i + 2]) if len(sys.argv) > i + 2 else 120)
+    if "--swarm" in sys.argv:
+        i = sys.argv.index("--swarm")
+        return await swarm(sys.argv[i + 1], float(sys.argv[i + 2]) if len(sys.argv) > i + 2 else 60)
     if "--make-p12" in sys.argv:
         return make_p12(Path(sys.argv[sys.argv.index("--make-p12") + 1]))
     if "--dial" in sys.argv:
