@@ -29,7 +29,8 @@ jobs:
       # Give up on a slow mirror after 30 s, retry, and cap the step.
       - timeout-minutes: 10
         run: |
-          apt="sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120"
+          apt="sudo apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120"
+          cat /etc/apt/apt-mirrors.txt; cat /etc/resolv.conf; getent ahosts azure.archive.ubuntu.com archive.ubuntu.com || true
           $apt update
           $apt install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf
 
