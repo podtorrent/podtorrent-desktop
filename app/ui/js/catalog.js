@@ -28,6 +28,16 @@ function idleRuns(repo) {
   return l.layers.filter(([a, b]) => !mine.some(x => x.lo <= a && b <= x.hi));
 }
 
+/** Whether serving `runs` of `repo` fits this machine's free memory for models, estimating a layer's
+ *  size from the disk (a little high: the folder also holds the embedding and head). True if unknown. */
+function fitsInMemory(repo, runs) {
+  const l = localOf(repo), onDisk = (l?.layers || []).reduce((a, [x, y]) => a + y - x, 0);
+  if (state.memFree == null || !onDisk || !l.disk_bytes) return true;
+  const per = l.disk_bytes / onDisk / GB, held = state.slices.filter(x => x.model === repo && x.loaded).reduce((a, x) => a + x.hi - x.lo, 0);
+  const n = runs.reduce((a, [x, y]) => a + y - x, 0);
+  return n * per + 1 <= state.memFree + held * per;   // 1 GB: the engine's load headroom
+}
+
 /** Play / stop for this machine's layers of `repo`. Play serves every run on disk that isn't served
  *  yet (nothing to download; a served slice inside the run is swapped for the whole run), stop stops
  *  serving. Null when this machine has none of it. */
@@ -35,8 +45,13 @@ export function playStop(repo) {
   const l = localOf(repo), mine = state.slices.filter(x => x.model === repo);
   if (!l?.layers.length && !mine.length) return null;
   const loaded = mine.filter(x => x.loaded).map(x => [x.lo, x.hi]), idle = idleRuns(repo);
-  const play = iconButton("play", idle.length ? `Serve layers ${rangesText(idle)} from disk` : loaded.length ? "Serving everything on disk" : "Nothing on disk",
-    () => { play.disabled = true; idle.forEach(([a, b]) => serveSlice(repo, a, b)); });
+  const play = iconButton("play", idle.length ? `Serve layers ${rangesText(idle)} from disk` : loaded.length ? "Serving everything on disk" : "Nothing on disk", () => {
+    // More than fits in memory: open Adjust, which says how many layers fit and lets you pick them.
+    if (!fitsInMemory(repo, idle)) return openAdjust(repo);
+    play.disabled = true;
+    idle.forEach(([a, b]) => serveSlice(repo, a, b));
+    setTimeout(() => { play.disabled = false; }, 2000);   // a refused load never shows up as a slice
+  });
   const stop = iconButton("stop", loaded.length ? `Stop serving layers ${rangesText(loaded)}` : "Not serving",
     () => { stop.disabled = true; loaded.forEach(([a, b]) => unserveSlice(repo, a, b)); });
   play.disabled = !idle.length; stop.disabled = !loaded.length;
@@ -185,7 +200,10 @@ export async function openAdjust(repo) {
   // From and Through are layer numbers (inclusive), like everywhere else in the app.
   const from = stepper("From layer", () => lo, x => { lo = x; }, () => 0, () => hi - 1);
   const thru = stepper("Through layer", () => hi - 1, x => { hi = x + 1; }, () => lo, () => N - 1);
-  const bar = h("div"), rows = h("div.adj-rows"), err = h("div.small", { style: { color: "var(--c-gap)" } });
+  const bar = h("div"), rows = h("div.adj-rows"), errText = h("span.grow");
+  // Too big for memory: say why, how many layers fit, and offer that range.
+  const fitBtn = button("Use what fits", { size: "sm" });
+  const err = h("div.next.err.small", { hidden: true }, icon("alert"), errText, fitBtn);
   const line = (k, v) => h("div.adj-row", h("span.muted", k), h("span", v));
   const gbOf = n => lb ? fmt.bytes(n * lb) : `${n} layers`;
   function plan() {
@@ -208,16 +226,26 @@ export async function openAdjust(repo) {
       line("Memory while serving", `${gbOf(p.n)}${memNow ? ` (now ${gbOf(memNow)})` : ""}`),
       line("Download", p.fresh ? `${p.fresh} layer${p.fresh > 1 ? "s" : ""}, ${gbOf(p.fresh)}` : "Nothing"),
       line("On disk", `${gbOf(diskNow + p.fresh)}${p.extraAfter ? `, or ${gbOf(diskNow + p.fresh - p.extraAfter)} after freeing the ${p.extraAfter} outside the range` : ""} (now ${gbOf(diskNow)})`));
-    const need = p.n * lb / GB, room = inf.mem_free_gb + memNow * lb / GB;
-    text(err, lb && need > room * 0.95 ? `Layers ${fmt.layers(lo, hi)} need about ${fmt.gb(need)} of memory; this machine has ${fmt.gb(room)} for them.` : "");
+    // room_gb: what the engine will allow for this model (free for models, plus its served slices, less
+    // the load headroom). Older engines only send mem_free_gb.
+    const need = p.n * lb / GB, room = inf.room_gb ?? (inf.mem_free_gb + memNow * lb / GB) * 0.95, fit = lb ? Math.floor(room * GB / lb) : N;
+    const tooBig = !!lb && need > room;
+    err.hidden = !tooBig;
+    if (tooBig) {
+      text(errText, `Layers ${fmt.layers(lo, hi)} need about ${fmt.gb(need)} of memory, and this machine has ${fmt.gb(room)} for them`
+        + (inf.video_gb >= 0.1 ? ` (${fmt.gb(inf.video_gb)} is kept for its video encoder layers; remove some in Models › Video to make room)` : "") + `. ${fit > 0 ? `Up to ${fit} layers fit.` : "Not even one layer fits."}`);
+      fitBtn.hidden = fit <= 0;
+      text(fitBtn.querySelector("span"), `Use ${fit} layers`);
+      fitBtn.onclick = () => { lo = Math.max(lo, hi - fit); paint(); };   // keep the top of the range
+    }
     // Free: while serving a different range, serve the new one first, then free (old layers are in use until then).
     const both = p.changes && loaded.length > 0;
     free.hidden = both ? !p.extraAfter : !p.extra;
     text(free.querySelector("span"), both ? `Serve and free ${gbOf(p.extraAfter)}` : `Free ${gbOf(p.extra)}`);
-    free.disabled = both && !!err.textContent;
+    free.disabled = both && !err.hidden;
     go.hidden = !p.changes;
     text(go.querySelector("span"), `Serve ${fmt.layers(lo, hi)}`);
-    go.disabled = !!err.textContent;
+    go.disabled = !err.hidden;
   }
   const serve = async trim => {
     go.disabled = free.disabled = true;

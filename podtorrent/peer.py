@@ -236,10 +236,12 @@ class Slices:
             video = self.reserved()
             free = mem_free_gb() - video + sum(gb(d, s.lo, s.hi) for s in replaced)
             if need + MEM_HEADROOM_GB > free:
-                raise MemoryError(f"{model.split('/')[-1]} layers [{lo},{hi}) need ~{need:.1f} GB, "
-                                  f"but this machine has {max(free, 0):.1f} GB free for models"
-                                  + (f" ({video:.1f} GB is kept for its video encoder layers: remove some in the Video view "
-                                     "to make room)" if video >= 0.1 else ""))
+                fit = int(max(free - MEM_HEADROOM_GB, 0) // (need / (hi - lo))) if need else 0
+                raise MemoryError(f"{model.split('/')[-1]} layers {lo}–{hi - 1} need ~{need:.1f} GB plus {MEM_HEADROOM_GB:.0f} GB "
+                                  f"headroom, but this machine has {max(free, 0):.1f} GB free for models"
+                                  + (f" ({video:.1f} GB is kept for its video encoder layers)" if video >= 0.1 else "")
+                                  + f". Serve {fit} layers or fewer" + (" or remove video encoder layers in Models › Video" if video >= 0.1 else "")
+                                  + ".")
             s = self.items[(model, lo, hi)] = Served(model, lo, hi, n)
 
             def emit(phase, done=0, total=0, msg=""):
@@ -1076,7 +1078,9 @@ class PeerApp:
         self._n_layers.setdefault(repo, inf["n_layers"])
         m = next((m for m in self.models() if m["model"] == repo), None)
         have = [[s.lo, s.hi] for s in self.slices.items.values() if s.model == repo]
-        free = mem_free_gb()
+        # Room for this model: free for models (video encoder layers keep theirs), plus what its served
+        # slices hold, since a resize swaps them out. room_gb is that less the load headroom.
+        free = self.free_for_models() + sum(self.slice_gb(repo, s.lo, s.hi) for s in self.slices.loaded(repo))
         # Only suggest layers no online peer serves or is loading, so we don't duplicate their work.
         n = inf["n_layers"]
         taken = [c > 0 for c in m["online_coverage"]] if m else [False] * n
@@ -1093,6 +1097,8 @@ class PeerApp:
                                            in_swarm=bool(m and m["state"] != "offline"))
         inf["swarm"] = m
         inf["mem_free_gb"] = round(free, 1)
+        inf["room_gb"] = round(max(free - MEM_HEADROOM_GB, 0.0), 2)
+        inf["video_gb"] = round(self.slices.reserved(), 1)
         return web.json_response(inf)
 
     async def catalog_local(self, _):
