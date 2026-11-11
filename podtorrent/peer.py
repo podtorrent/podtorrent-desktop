@@ -660,7 +660,16 @@ class PeerApp:
                     self.slices.release(req.session_id)
                 else:
                     sessions.add(req.session_id)
-                    resp = await asyncio.to_thread(self.slices.forward, req)
+                    t = time.perf_counter()
+                    try:
+                        resp = await asyncio.to_thread(self.slices.forward, req)
+                    except Exception as e:  # noqa: BLE001 - say why, or the caller waits until it times out
+                        resp = pb.ForwardResponse(session_id=req.session_id, error=f"{type(e).__name__}: {e}")
+                    secs = time.perf_counter() - t
+                    if resp.error or secs > 2:
+                        print(f"forward: layers [{req.layer_lo},{req.layer_hi}) x{req.shape[1] if len(req.shape) > 1 else '?'} "
+                              f"for {self.net._name(conn.peer_id)} "
+                              f"took {secs:.1f}s" + (f": {resp.error}" if resp.error else ""), flush=True)
                     writer.write(_frame(resp.SerializeToString()))
                 try:
                     body = await _read_frame(reader)
@@ -846,6 +855,8 @@ class PeerApp:
                             resp = self._call(self._hop(streams, k, hop, req),
                                               HOP_TIMEOUT_S if h.shape[1] > 1 else DECODE_HOP_TIMEOUT_S)
                         except Exception as e:  # noqa: BLE001
+                            print(f"route: {hop.name} [{hop.lo},{hop.hi}) x{h.shape[1]} gave no answer in "
+                                  f"{time.perf_counter() - t:.1f}s ({len(payload) // 1024} KB sent)", flush=True)
                             raise HopFailed(hop, str(e) or type(e).__name__) from e
                         if resp.error:
                             raise HopFailed(hop, resp.error)
