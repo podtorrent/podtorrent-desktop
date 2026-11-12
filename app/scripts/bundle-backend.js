@@ -7,7 +7,9 @@ const { execFileSync } = require("child_process");
 
 const app = path.resolve(__dirname, "..");
 const root = path.resolve(app, "..");
-const out = path.join(app, "src-tauri/resources/backend");
+// PODTORRENT_BACKEND_OUT stages it elsewhere (the headless Linux tarball, headless/package.sh).
+const out = process.env.PODTORRENT_BACKEND_OUT ? path.resolve(process.env.PODTORRENT_BACKEND_OUT)
+  : path.join(app, "src-tauri/resources/backend");
 const uvName = process.platform === "win32" ? "uv.exe" : "uv";
 
 /** uv on PATH (like `command -v uv`), else uv's default install location. */

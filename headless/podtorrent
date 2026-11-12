@@ -1,0 +1,376 @@
+#!/usr/bin/env bash
+# PodTorrent headless launcher for Linux AMD (Ryzen AI Max / Strix Halo, gfx1151). No GUI needed.
+#
+#   ./podtorrent peer               preflight, install ROCm PyTorch on first run, run this machine's peer,
+#                                   and keep it on the PodTorrent network once joined
+#   ./podtorrent join               join the PodTorrent network as a node (asks for the node token)
+#   ./podtorrent leave              stop serving the network (the peer keeps running in the swarm)
+#   ./podtorrent preflight          check the kernel, GPU driver and permissions only
+#   ./podtorrent gpu-check          run a computation on the GPU with the installed PyTorch
+#   ./podtorrent install-service    run the peer as a systemd --user service (survives logout and reboot)
+#   ./podtorrent uninstall-service  remove that service
+#
+# Data (models, venv, logs) lives in ~/.podtorrent, or the folder named in ~/.podtorrent/location,
+# the same place the desktop app uses. Extra arguments after `peer` go to `podtorrent peer`.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+BACKEND="$HERE/backend"
+UV="$BACKEND/uv"
+AGENT="$BACKEND/podtorrent-agent"
+PORT="${PODTORRENT_PORT:-27183}"
+DEFAULT_DIR="$HOME/.podtorrent"
+SERVICE=podtorrent.service
+MIN_KERNEL=6.14
+# ROCm PyTorch plus Python and the venv come to about 15 GB; leave room for the cache too.
+NEED_GB=25
+
+say() { printf 'podtorrent: %s\n' "$*"; }
+die() { printf 'podtorrent: %s\n' "$*" >&2; exit 1; }
+
+data_dir() {
+  local loc
+  if [[ -f "$DEFAULT_DIR/location" ]] && loc="$(head -n1 "$DEFAULT_DIR/location")" && [[ "$loc" == /* ]]; then
+    printf '%s\n' "$loc"
+  else
+    printf '%s\n' "$DEFAULT_DIR"
+  fi
+}
+DATA="$(data_dir)"
+
+# ---- preflight ----
+
+# version_ge A B: A >= B for dotted versions (only the leading numeric parts count).
+version_ge() {
+  local a b i
+  IFS=. read -r -a a <<<"${1%%[!0-9.]*}"
+  IFS=. read -r -a b <<<"$2"
+  for i in 0 1 2; do
+    (( ${a[i]:-0} > ${b[i]:-0} )) && return 0
+    (( ${a[i]:-0} < ${b[i]:-0} )) && return 1
+  done
+  return 0
+}
+
+# Paths are overridable so the checks can be tested on another machine.
+PF_KERNEL="${PODTORRENT_PF_KERNEL:-$(uname -r)}"
+PF_SYS="${PODTORRENT_PF_SYS:-/sys}"
+PF_KFD="${PODTORRENT_PF_KFD:-/dev/kfd}"
+
+preflight() {
+  local fail=0 groups g missing=() free_kb
+  ok() { printf '  ok    %s\n' "$*"; }
+  bad() { printf '  FAIL  %s\n' "$1"; printf '        fix: %s\n' "$2"; fail=1; }
+  warn() { printf '  warn  %s\n' "$*"; }
+  say "checking this machine"
+
+  [[ "$(uname -s)" == Linux ]] || bad "this launcher is for Linux (found $(uname -s))" "use the desktop app on this machine"
+  [[ "$(uname -m)" == x86_64 ]] || bad "this build is for x86_64 (found $(uname -m))" "use a Ryzen AI Max (Strix Halo) machine"
+
+  if version_ge "$PF_KERNEL" "$MIN_KERNEL"; then
+    ok "kernel $PF_KERNEL"
+  else
+    bad "kernel $PF_KERNEL is older than $MIN_KERNEL, which Strix Halo needs for ROCm" \
+        "install a $MIN_KERNEL+ kernel (Ubuntu 24.04: sudo apt install linux-generic-hwe-24.04, or Ubuntu 25.04+), then reboot"
+  fi
+
+  if [[ -d "$PF_SYS/module/amdgpu" ]]; then
+    ok "amdgpu driver loaded"
+  else
+    bad "the amdgpu kernel driver is not loaded" \
+        "sudo modprobe amdgpu (and check dmesg | grep amdgpu); if it is blacklisted, remove the blacklist and reboot"
+  fi
+
+  if [[ -r "$PF_KFD" && -w "$PF_KFD" ]]; then
+    ok "$PF_KFD is accessible"
+  elif [[ -e "$PF_KFD" ]]; then
+    bad "$PF_KFD exists but $(id -un) can't open it" "add yourself to the render and video groups (below), then log out and back in"
+  else
+    bad "$PF_KFD is missing, so ROCm can't reach the GPU" "load amdgpu with a $MIN_KERNEL+ kernel; /dev/kfd appears with it"
+  fi
+
+  groups=" $(id -nG) "
+  for g in video render; do [[ "$groups" == *" $g "* ]] || missing+=("$g"); done
+  if (( ${#missing[@]} == 0 )); then
+    ok "$(id -un) is in the video and render groups"
+  else
+    bad "$(id -un) is not in: ${missing[*]}" \
+        "sudo usermod -aG video,render $(id -un), then log out and back in (or reboot)"
+  fi
+
+  # Informational: the build's PyTorch wheels are for gfx1151 only.
+  if ! grep -qs 'gfx_target_version 110501' "$PF_SYS"/class/kfd/kfd/topology/nodes/*/properties; then
+    warn "no gfx1151 GPU found in the KFD topology; this build's PyTorch is for Ryzen AI Max (Radeon 8050S/8060S)"
+  fi
+
+  mkdir -p "$DATA"
+  if [[ -x "$DATA/venv/bin/python" ]]; then
+    ok "PyTorch already installed in $DATA/venv"
+  else
+    free_kb="$(df -Pk "$DATA" | awk 'NR==2 {print $4}')"
+    if (( free_kb / 1024 / 1024 >= NEED_GB )); then
+      ok "$(( free_kb / 1024 / 1024 )) GB free in $DATA"
+    else
+      bad "only $(( free_kb / 1024 / 1024 )) GB free in $DATA; the first run downloads about $NEED_GB GB (ROCm PyTorch)" \
+          "free up space, or put the data elsewhere: echo /big/disk/podtorrent > $DEFAULT_DIR/location"
+    fi
+  fi
+
+  if (( fail )); then
+    say "fix the above and run again (PODTORRENT_SKIP_PREFLIGHT=1 skips these checks)"
+    return 1
+  fi
+  say "this machine is ready"
+}
+
+# ---- Python backend ----
+
+uv_env() {
+  export PODTORRENT_HOME="$DATA"
+  export UV_PROJECT_ENVIRONMENT="$DATA/venv"
+  export UV_PYTHON_PREFERENCE=only-managed
+  export UV_CACHE_DIR="$DATA/uv-cache"
+  [[ "$DATA" == "$DEFAULT_DIR" ]] || export UV_PYTHON_INSTALL_DIR="$DATA/python"
+  export PODTORRENT_NAME="${PODTORRENT_NAME:-$(hostname -s)}"
+}
+
+# Install Python and ROCm PyTorch (from the gfx1151 index this bundle is locked to) if they aren't yet.
+# A no-op once installed; on the first run this downloads several GB.
+setup_backend() {
+  [[ -x "$DATA/venv/bin/python" ]] || say "first run: installing Python and ROCm PyTorch into $DATA/venv (several GB, this takes a while)"
+  "$UV" sync --frozen --project "$BACKEND"
+  local hip
+  hip="$("$DATA/venv/bin/python" -c 'import torch; print(torch.version.hip or "")' 2>/dev/null || true)"
+  if [[ -z "$hip" ]]; then
+    die "the installed PyTorch is not a ROCm build; remove $DATA/venv and run again"
+  fi
+  say "PyTorch with ROCm (HIP $hip)"
+}
+
+# Run a real computation on the GPU and compare it with the CPU. Without this a broken ROCm setup falls
+# back to CPU silently (shard_torch.default_device) and the node slows every chain it is part of.
+gpu_check() {
+  say "checking the GPU with PyTorch"
+  if ! "$DATA/venv/bin/python" - <<'EOF'
+import sys
+import torch
+if not torch.cuda.is_available():
+    sys.exit("  FAIL  PyTorch can't see the GPU (torch.cuda.is_available() is False)\n"
+             "        fix: run ./podtorrent preflight; check rocminfo lists gfx1151 and HIP_VISIBLE_DEVICES is unset")
+dev = torch.device("cuda")
+a = torch.randn(1024, 1024, generator=torch.Generator().manual_seed(0))
+b = torch.randn(1024, 1024, generator=torch.Generator().manual_seed(1))
+want = a @ b
+try:
+    got = (a.to(dev, torch.bfloat16) @ b.to(dev, torch.bfloat16)).float()
+    torch.cuda.synchronize(dev)
+except Exception as e:
+    sys.exit(f"  FAIL  a matrix multiply on the GPU failed: {e}\n"
+             "        fix: check dmesg | grep amdgpu, and that the kernel is 6.14+")
+err = ((got.cpu() - want).norm() / want.norm()).item()
+if err > 0.02:
+    sys.exit(f"  FAIL  the GPU gave a wrong result (relative error {err:.3g})\n"
+             "        fix: this PyTorch build may not match the GPU; send engine.log to support")
+free, total = torch.cuda.mem_get_info(dev)
+print(f"  ok    {torch.cuda.get_device_name(dev) or 'AMD GPU'}: matmul matches the CPU "
+      f"(error {err:.2g}), {free / 2**30:.0f} of {total / 2**30:.0f} GB GPU memory free")
+EOF
+  then
+    if [[ "${PODTORRENT_ALLOW_CPU:-}" == 1 ]]; then
+      say "GPU check failed; continuing on CPU because PODTORRENT_ALLOW_CPU=1 (do not join the network like this)"
+      return 0
+    fi
+    die "the GPU check failed, so the peer won't start (it would run on CPU and slow the swarm down)"
+  fi
+}
+
+# ---- network agent (same rules as the desktop app) ----
+
+network_url() {
+  case "$1" in
+    production) echo wss://api.podtorrent.com/v0/node/connect ;;
+    staging) echo wss://staging-api.podtorrent.com/v0/node/connect ;;
+    *) return 1 ;;
+  esac
+}
+
+node_up() { (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; }
+
+# Whether the peer's network-manifest.json lists at least one model the swarm fully covers.
+covered() {
+  "$DATA/venv/bin/python" - "$DATA/network-manifest.json" <<'EOF' 2>/dev/null
+import json, sys
+sys.exit(0 if json.load(open(sys.argv[1])).get("models") else 1)
+EOF
+}
+
+network_name() {
+  "$DATA/venv/bin/python" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("network","production"))' \
+    "$DATA/network.json" 2>/dev/null || echo production
+}
+
+AGENT_PID=""
+agent_running() { [[ -n "$AGENT_PID" ]] && kill -0 "$AGENT_PID" 2>/dev/null; }
+
+stop_group() {  # stop_group PID: TERM its process group, KILL after 5 s
+  local pid="$1" i
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || return 0
+  for i in $(seq 50); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.1; done
+  kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+}
+
+start_agent() {
+  local token url
+  [[ -x "$AGENT" ]] || { say "this bundle has no podtorrent-agent; running in the swarm only"; return 1; }
+  node_up || return 1
+  [[ -s "$DATA/node-token" ]] || return 1
+  covered || return 1
+  url="$(network_url "$(network_name)")" || return 1
+  token="$(tr -d '[:space:]' <"$DATA/node-token")"
+  : >"$DATA/agent.log"
+  # Its own process group, so stopping it stops tee too. Output goes to journald (stdout) and agent.log.
+  PODTORRENT_ENGINE="http://127.0.0.1:$PORT" PODTORRENT_NODE_TOKEN="$token" PODTORRENT_NETWORK="$url" \
+    setsid "$AGENT" -manifest "$DATA/network-manifest.json" </dev/null > >(tee -a "$DATA/agent.log") 2>&1 &
+  AGENT_PID=$!
+  say "network agent started (pid $AGENT_PID)"
+}
+
+stop_agent() {
+  if [[ -n "$AGENT_PID" ]]; then stop_group "$AGENT_PID"; wait "$AGENT_PID" 2>/dev/null || true; AGENT_PID=""; fi
+}
+
+# ---- commands ----
+
+cmd_peer() {
+  [[ -x "$UV" ]] || die "missing $UV: run this from the extracted podtorrent-headless folder"
+  if [[ "${PODTORRENT_SKIP_PREFLIGHT:-}" != 1 ]]; then preflight || exit 1; fi
+  uv_env
+  setup_backend
+  gpu_check
+
+  : >"$DATA/engine.log"
+  say "starting this machine's peer on 127.0.0.1:$PORT (dashboard: http://127.0.0.1:$PORT)"
+  setsid "$UV" run --frozen --project "$BACKEND" podtorrent peer --port "$PORT" "$@" \
+    </dev/null > >(tee -a "$DATA/engine.log") 2>&1 &
+  local peer=$! last=0 now
+  trap 'stop_agent; stop_group '"$peer"'; exit 0' INT TERM
+  trap 'stop_agent; stop_group '"$peer" EXIT
+
+  # Like the desktop app: start the agent once joined and the swarm covers a model, at most every 30 s,
+  # and stop it whenever the peer's API is down, so it never dials the network without a node.
+  while kill -0 "$peer" 2>/dev/null; do
+    if agent_running && ! node_up; then
+      say "peer API is down; stopping the network agent"
+      stop_agent
+    elif [[ -f "$DATA/network.json" ]] && ! agent_running; then
+      now=$(date +%s)
+      if (( now - last >= 30 )) && start_agent; then last=$now; fi
+    fi
+    sleep 5
+  done
+  local code=0
+  wait "$peer" || code=$?
+  say "peer exited (code $code)"
+  exit "$code"
+}
+
+cmd_join() {
+  local node="" network=production price_in=0 price_out=0 token=""
+  while (( $# )); do
+    case "$1" in
+      --node) node="$2"; shift 2 ;;
+      --network) network="$2"; shift 2 ;;
+      --price-in) price_in="$2"; shift 2 ;;
+      --price-out) price_out="$2"; shift 2 ;;
+      *) die "join: unknown option $1 (options: --node ID --network production|staging --price-in N --price-out N)" ;;
+    esac
+  done
+  [[ -n "$node" ]] || read -r -p "node id (letters, digits, - and _): " node
+  node="$(tr '[:upper:]' '[:lower:]' <<<"$node")"
+  [[ "$node" =~ ^[a-z0-9_-]+$ ]] || die "node id: letters, digits, - and _ only"
+  network_url "$network" >/dev/null || die "network: production or staging"
+  [[ "$price_in" =~ ^[0-9]+(\.[0-9]+)?$ && "$price_out" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "prices must be numbers >= 0"
+  mkdir -p "$DATA"
+  # Read the token from the terminal without echo (or from stdin when piped), never from the command line.
+  if [[ -t 0 ]]; then
+    read -r -s -p "node token (Enter keeps the saved one): " token; echo
+  else
+    read -r token || true
+  fi
+  token="$(tr -d '[:space:]' <<<"$token")"
+  if [[ -n "$token" ]]; then
+    (umask 077; printf '%s' "$token" >"$DATA/node-token"); chmod 600 "$DATA/node-token"
+  elif [[ ! -s "$DATA/node-token" ]]; then
+    die "no saved node token: paste the one you were given"
+  fi
+  cat >"$DATA/network.json" <<EOF
+{
+  "node": "$node",
+  "network": "$network",
+  "tiers": ["interactive", "batch"],
+  "price": { "per_mtok_in": $price_in, "per_mtok_out": $price_out }
+}
+EOF
+  say "joined as $node on $network; a running peer connects within 30 s once the swarm covers a model"
+}
+
+cmd_leave() {
+  rm -f "$DATA/network.json"
+  say "left the network; restart the peer (or the service) to stop a running agent now"
+}
+
+unit_path() { echo "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$SERVICE"; }
+
+cmd_install_service() {
+  command -v systemctl >/dev/null || die "systemctl not found: this needs systemd"
+  local unit; unit="$(unit_path)"
+  mkdir -p "$(dirname "$unit")"
+  cat >"$unit" <<EOF
+[Unit]
+Description=PodTorrent peer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart="$HERE/podtorrent" peer${*:+ $*}
+Environment=PODTORRENT_PORT=$PORT
+Restart=on-failure
+RestartSec=10
+# The first start installs ROCm PyTorch (several GB).
+TimeoutStartSec=infinity
+KillMode=control-group
+
+[Install]
+WantedBy=default.target
+EOF
+  systemctl --user daemon-reload
+  systemctl --user enable --now "$SERVICE"
+  say "installed $unit and started it"
+  say "logs:    journalctl --user -u podtorrent -f"
+  say "status:  systemctl --user status podtorrent"
+  if [[ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" != yes ]]; then
+    say "to keep the peer running after you log out and start it at boot, run once:"
+    say "  sudo loginctl enable-linger $(id -un)"
+  fi
+}
+
+cmd_uninstall_service() {
+  systemctl --user disable --now "$SERVICE" 2>/dev/null || true
+  rm -f "$(unit_path)"
+  systemctl --user daemon-reload 2>/dev/null || true
+  say "removed the podtorrent service"
+}
+
+usage() { sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+case "${1:-}" in
+  peer) shift; cmd_peer "$@" ;;
+  join) shift; cmd_join "$@" ;;
+  leave) cmd_leave ;;
+  preflight) preflight ;;
+  gpu-check) uv_env; setup_backend; gpu_check ;;
+  install-service) shift; cmd_install_service "$@" ;;
+  uninstall-service) cmd_uninstall_service ;;
+  -h|--help|help|"") usage ;;
+  *) usage; exit 2 ;;
+esac

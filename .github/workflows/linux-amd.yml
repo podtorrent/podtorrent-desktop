@@ -11,9 +11,9 @@ on:
     # Build only when something that goes into the installer changes, or this workflow itself: not for the
     # downloads site, docs, tests, iOS, the rendezvous, or another platform's workflow.
     # Tag pushes always build (GitHub skips path filters for tags).
-    paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', '.github/workflows/linux-amd.yml']
+    paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', 'headless/**', '.github/workflows/linux-amd.yml']
   pull_request:
-    paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', '.github/workflows/linux-amd.yml']
+    paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', 'headless/**', '.github/workflows/linux-amd.yml']
   # A manual run with "publish" ticked uploads the build like a tag does: for a release whose tag build
   # failed, or when the artifact quota is full and there is nothing to download and publish by hand.
   workflow_dispatch:
@@ -111,3 +111,51 @@ jobs:
           dst="${src%_amd64.AppImage}_amd64-rocm.AppImage"
           mv "$src" "$dst"
           node scripts/publish.js linux-amd "$dst"
+
+  # The headless build for an SSH-only machine: a tarball with uv, the backend locked to ROCm PyTorch
+  # (gfx1151), podtorrent-agent and the `podtorrent` launcher. No Tauri or GTK. On a v* tag (or a manual run
+  # that asks for it) it is uploaded to this repo's GitHub release for the tag.
+  headless:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: astral-sh/setup-uv@v6
+
+      # The latest released agent, or the one in the repo variable PODTORRENT_AGENT_VERSION (e.g. v0.5.0).
+      - name: Download podtorrent-agent
+        run: |
+          tag="${{ vars.PODTORRENT_AGENT_VERSION }}"
+          gh release download $tag -R Munerate/podtorrent-agent -p 'podtorrent-agent-v*-linux-amd64' -p SHA256SUMS -D agent
+          (cd agent && sha256sum -c --ignore-missing SHA256SUMS)
+          echo "PODTORRENT_AGENT_BIN=$(ls "$PWD"/agent/podtorrent-agent-v*-linux-amd64)" >> "$GITHUB_ENV"
+
+      - name: Build tarball
+        env:
+          PODTORRENT_TORCH_INDEX: ${{ vars.ROCM_TORCH_INDEX || 'https://repo.amd.com/rocm/whl/gfx1151/' }}
+        run: |
+          [[ "$GITHUB_REF" == refs/tags/v* ]] && export VERSION="${GITHUB_REF_NAME#v}"
+          headless/package.sh dist
+          tar -tzf dist/*.tar.gz | sort
+
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: podtorrent-headless-linux-amd64-rocm
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+      - if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        name: Upload to the GitHub release
+        run: |
+          tag="$GITHUB_REF_NAME"
+          [[ "$GITHUB_REF" == refs/tags/v* ]] || tag="v$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n1)"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --verify-tag --title "$tag" --notes ""
+          gh release upload "$tag" dist/*.tar.gz --clobber

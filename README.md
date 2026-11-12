@@ -68,6 +68,27 @@ This Mac becomes the head of each route: the agent forwards network requests to 
 - Building the app stages the agent: `PODTORRENT_AGENT_BIN=/path/to/podtorrent-agent`, or a
   `podtorrent-agent` checkout next to this repo and Go 1.24+ (`PODTORRENT_GO` to pick a `go`).
 
+## Headless Linux (AMD)
+
+For a Ryzen AI Max / Strix Halo machine (Radeon 8050S/8060S, gfx1151) you reach over SSH: no GUI. It needs a
+6.14+ kernel with amdgpu, and your user in the `video` and `render` groups; `./podtorrent peer` checks these
+first and says how to fix what's missing. The first run installs ROCm PyTorch (about 25 GB free disk).
+
+```bash
+curl -LO https://github.com/Munerate/PodTorrent/releases/download/vX.Y.Z/podtorrent-headless-vX.Y.Z-linux-amd64-rocm.tar.gz && tar xzf podtorrent-headless-vX.Y.Z-linux-amd64-rocm.tar.gz && cd podtorrent-headless-vX.Y.Z-linux-amd64-rocm
+./podtorrent peer
+./podtorrent install-service
+```
+
+`peer` runs in the foreground; `install-service` runs it as a systemd user service instead (logs:
+`journalctl --user -u podtorrent -f`; `sudo loginctl enable-linger $USER` keeps it running after logout and
+starts it at boot). `./podtorrent join` puts the peer on the PodTorrent network with a node token. For the
+dashboard, forward the port from your own computer and open http://127.0.0.1:27183:
+
+```bash
+ssh -L 27183:127.0.0.1:27183 user@halo-box
+```
+
 ## Options
 
 | Command | Flag | Default |
