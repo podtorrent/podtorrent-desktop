@@ -75,18 +75,21 @@ For a Ryzen AI Max / Strix Halo machine (Radeon 8050S/8060S, gfx1151) you reach 
 first and says how to fix what's missing. The first run installs ROCm PyTorch (about 25 GB free disk).
 
 ```bash
-curl -LO https://github.com/Munerate/PodTorrent/releases/download/vX.Y.Z/podtorrent-headless-vX.Y.Z-linux-amd64-rocm.tar.gz && tar xzf podtorrent-headless-vX.Y.Z-linux-amd64-rocm.tar.gz && cd podtorrent-headless-vX.Y.Z-linux-amd64-rocm
+curl -L -o podtorrent.tar.gz https://podtorrent.com/download/linux-amd-cli
+tar xzf podtorrent.tar.gz && cd podtorrent-headless-*
 ./podtorrent setup
 ```
 
 `setup` walks through the first run: it checks the machine, installs ROCm PyTorch and checks the GPU,
 asks for the name other peers see, starts the peer as a systemd user service, suggests a model and the
 layers this machine should serve (the swarm's missing layers, sized to free GPU memory), downloads them,
-and offers to join the network (staging by default). Run it again any time to add a slice. For a scripted
+and offers to join the PodTorrent network (production; `--network staging` for staging). Run it again any time to add a slice. For a scripted
 install: `./podtorrent setup --yes --name halo-1 --model OWNER/NAME --serve 0:24 --no-join`.
 Afterwards `./podtorrent top` shows this machine and the swarm live: what it serves, tokens/s, each
 model's coverage and route, and every peer (Ctrl-C quits). `./podtorrent status` prints it once, and
-`status --json` gives the raw snapshot for scripts and monitoring.
+`status --json` gives the raw snapshot for scripts and monitoring. When something goes wrong, `./podtorrent doctor` checks
+everything and writes one file to send to support (no node token in it). `headless/README.md` is the
+guide for the person running the machine; it ships in the tarball.
 
 Without the wizard, `./podtorrent peer` runs in the foreground; `install-service` runs it as a systemd user service instead (logs:
 `journalctl --user -u podtorrent -f`; `sudo loginctl enable-linger $USER` keeps it running after logout and

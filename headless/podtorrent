@@ -8,6 +8,7 @@
 #   ./podtorrent leave              stop serving the network (the peer keeps running in the swarm)
 #   ./podtorrent preflight          check the kernel, GPU driver and permissions only
 #   ./podtorrent gpu-check          run a computation on the GPU with the installed PyTorch
+#   ./podtorrent doctor             check everything and write a bundle to send us (no token in it)
 #   ./podtorrent install-service    run the peer as a systemd --user service (survives logout and reboot)
 #   ./podtorrent uninstall-service  remove that service
 #   ./podtorrent top                live view of this machine and the swarm (status: once; status --json)
@@ -30,6 +31,9 @@ NEED_GB=25
 
 say() { printf 'podtorrent: %s\n' "$*"; }
 die() { printf 'podtorrent: %s\n' "$*" >&2; exit 1; }
+# A failure the user can't fix from the message alone: point them at doctor.
+HELP="if this keeps happening, run ./podtorrent doctor and send us the file it writes"
+stuck() { printf 'podtorrent: %s\npodtorrent: %s\n' "$*" "$HELP" >&2; exit 1; }
 
 data_dir() {
   local loc
@@ -121,6 +125,7 @@ preflight() {
 
   if (( fail )); then
     say "fix the above and run again (PODTORRENT_SKIP_PREFLIGHT=1 skips these checks)"
+    say "$HELP"
     return 1
   fi
   say "this machine is ready"
@@ -141,11 +146,12 @@ uv_env() {
 # A no-op once installed; on the first run this downloads several GB.
 setup_backend() {
   [[ -x "$DATA/venv/bin/python" ]] || say "first run: installing Python and ROCm PyTorch into $DATA/venv (several GB, this takes a while)"
-  "$UV" sync --frozen --project "$BACKEND"
+  "$UV" sync --frozen --project "$BACKEND" \
+    || stuck "installing Python and PyTorch failed (above); check the network and free disk, then run again"
   local hip
   hip="$("$DATA/venv/bin/python" -c 'import torch; print(torch.version.hip or "")' 2>/dev/null || true)"
   if [[ -z "$hip" ]]; then
-    die "the installed PyTorch is not a ROCm build; remove $DATA/venv and run again"
+    stuck "the installed PyTorch is not a ROCm build; remove $DATA/venv and run again"
   fi
   say "PyTorch with ROCm (HIP $hip)"
 }
@@ -183,7 +189,7 @@ EOF
       say "GPU check failed; continuing on CPU because PODTORRENT_ALLOW_CPU=1 (do not join the network like this)"
       return 0
     fi
-    die "the GPU check failed, so the peer won't start (it would run on CPU and slow the swarm down)"
+    stuck "the GPU check failed, so the peer won't start (it would run on CPU and slow the swarm down)"
   fi
 }
 
@@ -284,7 +290,7 @@ wait_for_peer() {
 }
 
 cmd_setup() {
-  local name="" network=staging use_service=1 join=ask yes=0 pass=() old
+  local name="" network=production use_service=1 join=ask yes=0 pass=() old
   while (( $# )); do
     case "$1" in
       --name) name="$2"; shift 2 ;;
@@ -294,10 +300,10 @@ cmd_setup() {
       --no-join) join=no; shift ;;
       --yes) yes=1; pass+=(--yes); shift ;;
       --model|--serve) pass+=("$1" "$2"); shift 2 ;;
-      *) die "setup: unknown option $1 (options: --name N --model REPO --serve LO:HI --network staging|production --no-service --join --no-join --yes)" ;;
+      *) die "setup: unknown option $1 (options: --name N --model REPO --serve LO:HI --network production|staging --no-service --join --no-join --yes)" ;;
     esac
   done
-  network_url "$network" >/dev/null || die "network: staging or production"
+  network_url "$network" >/dev/null || die "network: production or staging"
   [[ -x "$UV" ]] || die "missing $UV: run this from the extracted podtorrent-headless folder"
   if (( use_service )) && ! command -v systemctl >/dev/null; then
     say "systemd not found: running the peer just for setup (start it later with ./podtorrent peer)"
@@ -355,15 +361,15 @@ cmd_setup() {
       log="$DATA/setup-peer.log"
     elif service_active || systemctl --user is-failed --quiet "$SERVICE" 2>/dev/null; then
       journalctl --user -u "$SERVICE" -n 20 --no-pager >&2 2>/dev/null || true
-      die "the peer didn't start; its log is above (all of it: journalctl --user -u podtorrent)"
+      stuck "the peer didn't start; its log is above (all of it: journalctl --user -u podtorrent)"
     fi
     tail -n 20 "$log" >&2 2>/dev/null || true
-    die "the peer didn't start; its log is above (all of it: $log)"
+    stuck "the peer didn't start; its log is above (all of it: $log)"
   fi
 
   say "step 5/5: model and layers"
   "$UV" run --frozen --project "$BACKEND" podtorrent setup --port "$PORT" ${pass[@]+"${pass[@]}"} \
-    || die "setup didn't finish; run ./podtorrent setup again to pick up where it stopped"
+    || stuck "setup didn't finish; run ./podtorrent setup again to pick up where it stopped"
 
   if [[ -f "$DATA/network.json" ]]; then
     say "already joined the PodTorrent network as $(network_name) node; ./podtorrent leave to stop"
@@ -389,6 +395,186 @@ cmd_setup() {
     say "logs:    $DATA/engine.log"
   fi
   say "watch:   ./podtorrent top       (this machine and the swarm, live)"
+}
+
+# ---- doctor ----
+
+# t SECONDS CMD...: run with a time limit where coreutils' timeout exists.
+t() { local n="$1"; shift; if command -v timeout >/dev/null; then timeout "$n" "$@"; else "$@"; fi; }
+
+# The bundle never carries secrets: the saved node token, and anything that looks like a token or key.
+redact() {
+  local tok=""
+  [[ -s "$DATA/node-token" ]] && tok="$(tr -d '[:space:]' <"$DATA/node-token")"
+  if [[ -n "$DOCTOR_PY" ]]; then
+    TOK="$tok" "$DOCTOR_PY" - "$1" <<'EOF'
+import os, re, sys
+from pathlib import Path
+tok = os.environ.get("TOK", "")
+rules = [
+    (re.compile(r"(PODTORRENT_NODE_TOKEN|HF_TOKEN|HUGGING_FACE_HUB_TOKEN)=[^\s\"]+"), r"\1=[REDACTED]"),
+    (re.compile(r"(\"?(?:token|api_key|apikey|secret|password)\"?\s*[:=]\s*\"?)[^\",\s]+", re.I), r"\1[REDACTED]"),
+    (re.compile(r"(Bearer )[A-Za-z0-9._~+/=-]+"), r"\1[REDACTED]"),
+    (re.compile(r"hf_[A-Za-z0-9]{20,}"), "hf_[REDACTED]"),
+]
+for f in Path(sys.argv[1]).iterdir():
+    s = f.read_text(errors="replace")
+    if tok:
+        s = s.replace(tok, "[REDACTED]")
+    for rx, sub in rules:
+        s = rx.sub(sub, s)
+    f.write_text(s)
+EOF
+  else
+    local f
+    for f in "$1"/*; do
+      [[ -n "$tok" ]] && { grep -vF "$tok" "$f" >"$f.tmp" || true; mv "$f.tmp" "$f"; }
+      sed -E -i \
+        -e 's/(PODTORRENT_NODE_TOKEN|HF_TOKEN|HUGGING_FACE_HUB_TOKEN)=[^[:space:]"]+/\1=[REDACTED]/g' \
+        -e 's/("?(token|api_key|apikey|secret|password)"?[[:space:]]*[:=][[:space:]]*"?)[^",[:space:]]+/\1[REDACTED]/Ig' \
+        -e 's/(Bearer )[A-Za-z0-9._~+\/=-]+/\1[REDACTED]/g' \
+        -e 's/hf_[A-Za-z0-9]{20,}/hf_[REDACTED]/g' "$f"
+    done
+  fi
+  if [[ -n "$tok" ]] && grep -rqF "$tok" "$1"; then
+    rm -rf "$1"
+    die "couldn't remove the node token from the bundle, so it wasn't written"
+  fi
+}
+
+cmd_doctor() {
+  local stamp dir out ok=() bad=() py
+  # A diagnostic keeps going whatever fails: every probe below is allowed to fail and is checked explicitly.
+  set +e +o pipefail
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$DATA"
+  dir="$DATA/doctor-$stamp"
+  out="$DATA/podtorrent-doctor-$(hostname -s 2>/dev/null || echo host)-$stamp.tar.gz"
+  mkdir -p "$dir"
+  uv_env
+  py="$DATA/venv/bin/python"
+  DOCTOR_PY="$(command -v python3 || true)"
+  [[ -n "$DOCTOR_PY" || ! -x "$py" ]] || DOCTOR_PY="$py"
+  say "checking this machine; this takes up to a minute"
+
+  {
+    echo "date: $(date -Is 2>/dev/null || date)"
+    echo "bundle: $(basename "$HERE")"
+    echo "backend: $(sed -n 's/^version = "\(.*\)"/\1/p' "$BACKEND/pyproject.toml" 2>/dev/null | head -n1)"
+    echo "torch index: $(grep -o 'https://repo.amd.com/rocm[^"]*' "$BACKEND/pyproject.toml" 2>/dev/null | head -n1)"
+    echo "agent: $("$AGENT" -version 2>/dev/null || echo "${AGENT##*/} $([[ -x "$AGENT" ]] && echo present || echo missing)")"
+    echo "uname: $(uname -a)"
+    cat /etc/os-release 2>/dev/null | grep -E '^(PRETTY_NAME|VERSION_ID)='
+    echo "uptime: $(uptime 2>/dev/null)"
+    echo "user: $(id)"
+    echo "data: $DATA"
+    echo "port: $PORT"
+  } >"$dir/about.txt" 2>&1
+
+  if PODTORRENT_PF_KERNEL="$PF_KERNEL" preflight >"$dir/preflight.txt" 2>&1; then
+    ok+=("machine checks (kernel, amdgpu, /dev/kfd, groups, disk)")
+  else
+    bad+=("machine checks failed: $(grep -m1 FAIL "$dir/preflight.txt" | sed 's/^ *FAIL *//')")
+  fi
+
+  {
+    echo "== memory"; free -g 2>/dev/null || vm_stat 2>/dev/null
+    echo "== disk"; df -h "$DATA" 2>/dev/null
+    echo "== data folder"; t 20 du -sh "$DATA"/* 2>/dev/null
+    echo "== amdgpu parameters"
+    for f in gttsize vm_size; do echo "$f: $(cat "$PF_SYS/module/amdgpu/parameters/$f" 2>/dev/null || echo ?)"; done
+    echo "ttm pages_limit: $(cat "$PF_SYS/module/ttm/parameters/pages_limit" 2>/dev/null || echo ?)"
+    echo "== devices"; ls -l /dev/kfd /dev/dri 2>&1
+    echo "== kfd topology"; grep -hE 'gfx_target_version|simd_count|mem_banks_count' "$PF_SYS"/class/kfd/kfd/topology/nodes/*/properties 2>/dev/null
+    echo "== rocminfo"; t 30 rocminfo 2>&1 | grep -E 'Marketing Name|Name: +gfx|Compute Unit|Size:' | head -40 || echo "rocminfo not installed (not needed: PyTorch brings its own ROCm)"
+    echo "== dmesg amdgpu (may need root)"; t 10 dmesg 2>/dev/null | grep -iE 'amdgpu|kfd' | tail -40 || echo "dmesg not readable"
+  } >"$dir/gpu-system.txt" 2>&1
+
+  if [[ -x "$py" ]]; then
+    t 120 "$py" - >"$dir/torch.txt" 2>&1 <<'EOF' || true
+import torch
+print("torch", torch.__version__, "hip", torch.version.hip, "cuda available", torch.cuda.is_available())
+if torch.cuda.is_available():
+    d = torch.device("cuda")
+    p = torch.cuda.get_device_properties(d)
+    print("device", torch.cuda.get_device_name(d), "reported GB", round(p.total_memory / 2**30, 1))
+    free, total = torch.cuda.mem_get_info(d)
+    print("mem_get_info GB free/total", round(free / 2**30, 1), round(total / 2**30, 1))
+EOF
+    if t 180 "$HERE/podtorrent" gpu-check >>"$dir/torch.txt" 2>&1; then
+      ok+=("GPU check: $(grep -m1 '  ok ' "$dir/torch.txt" | sed 's/^ *ok *//')")
+    else
+      bad+=("GPU check failed: $(grep -m1 FAIL "$dir/torch.txt" | sed 's/^ *FAIL *//')")
+    fi
+  else
+    echo "no venv yet at $DATA/venv" >"$dir/torch.txt"
+    bad+=("PyTorch isn't installed yet: run ./podtorrent setup")
+  fi
+
+  if node_up; then
+    ok+=("peer running on 127.0.0.1:$PORT")
+    if [[ -x "$py" ]]; then
+      for ep in status api/swarm; do
+        t 15 "$py" -c 'import sys,urllib.request
+print(urllib.request.urlopen(sys.argv[1], timeout=10).read().decode())' "http://127.0.0.1:$PORT/$ep" \
+          >"$dir/${ep//\//-}.json" 2>&1 || true
+      done
+      t 30 "$UV" run --frozen --project "$BACKEND" podtorrent status >"$dir/status.txt" 2>&1 || true
+      if grep -q '"slices": \[\]' "$dir/status.json" 2>/dev/null; then
+        bad+=("the peer serves no layers: run ./podtorrent setup to pick some")
+      fi
+    fi
+  else
+    bad+=("no peer running on 127.0.0.1:$PORT: start it with ./podtorrent setup (or ./podtorrent peer)")
+  fi
+
+  if command -v systemctl >/dev/null; then
+    {
+      echo "== unit"; cat "$(unit_path)" 2>/dev/null || echo "not installed"
+      echo "== status"; t 10 systemctl --user status "$SERVICE" --no-pager 2>&1 | head -20
+      echo "== linger: $(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null || echo ?)"
+      echo "== journal"; t 20 journalctl --user -u "$SERVICE" -n 300 --no-pager 2>&1
+    } >"$dir/service.txt" 2>&1
+    if [[ -f "$(unit_path)" ]] && ! service_active; then
+      bad+=("the podtorrent service is installed but not running: journalctl --user -u podtorrent")
+    fi
+  fi
+
+  {
+    if [[ -f "$DATA/network.json" ]]; then echo "== network.json"; cat "$DATA/network.json"
+    else echo "not joined"; fi
+    echo "== node token saved: $([[ -s "$DATA/node-token" ]] && echo yes || echo no)"
+    echo "== agent processes"; pgrep -fl "$AGENT" 2>/dev/null || echo none
+  } >"$dir/network.txt" 2>&1
+  if [[ -f "$DATA/network.json" ]]; then
+    if pgrep -f "$AGENT" >/dev/null 2>&1; then
+      ok+=("joined $(network_name) and the network agent is running")
+    else
+      bad+=("joined $(network_name) but the network agent isn't running (it starts once the swarm covers a model)")
+    fi
+  fi
+
+  for f in engine.log agent.log setup-peer.log config.json; do
+    [[ -f "$DATA/$f" ]] && tail -n 2000 "$DATA/$f" >"$dir/$f" 2>/dev/null
+  done
+  ls -la "$DATA" >"$dir/data-folder.txt" 2>&1
+
+  {
+    echo "ok:"; for x in "${ok[@]+"${ok[@]}"}"; do echo "  $x"; done
+    echo "problems:"; for x in "${bad[@]+"${bad[@]}"}"; do echo "  $x"; done
+  } >"$dir/summary.txt"
+
+  redact "$dir"
+  COPYFILE_DISABLE=1 tar -C "$DATA" -czf "$out" "$(basename "$dir")"
+  rm -rf "$dir"
+  chmod 600 "$out"
+
+  echo
+  for x in "${ok[@]+"${ok[@]}"}"; do printf '  ok    %s\n' "$x"; done
+  for x in "${bad[@]+"${bad[@]}"}"; do printf '  FAIL  %s\n' "$x"; done
+  echo
+  say "wrote $out"
+  say "send that file to PodTorrent support; it has logs and system details, and no node token or keys"
 }
 
 # ---- commands ----
@@ -423,6 +609,7 @@ cmd_peer() {
   local code=0
   wait "$peer" || code=$?
   say "peer exited (code $code)"
+  (( code == 0 )) || say "$HELP"
   exit "$code"
 }
 
@@ -513,7 +700,7 @@ cmd_uninstall_service() {
   say "removed the podtorrent service"
 }
 
-usage() { sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 case "${1:-}" in
   setup) shift; cmd_setup "$@" ;;
@@ -522,6 +709,7 @@ case "${1:-}" in
   leave) cmd_leave ;;
   preflight) preflight ;;
   gpu-check) uv_env; setup_backend; gpu_check ;;
+  doctor) cmd_doctor ;;
   install-service) shift; cmd_install_service "$@" ;;
   uninstall-service) cmd_uninstall_service ;;
   # The engine's own commands, against the running peer: models, swarm, serve, unserve, pod, video.

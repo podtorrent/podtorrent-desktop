@@ -1,6 +1,7 @@
 // podtorrent.com/download — serves builds from R2.
 //   /download                    page with the latest Mac, Windows, Linux and Linux AMD links and notes
 //   /download/mac|windows|linux|linux-amd latest installer for that platform
+//   /download/linux-amd-cli      the headless tarball for SSH-only Linux AMD machines (not on the page)
 //   /download/latest.json        manifest (also for in-app update checks)
 //   /download/v/<ver>/<platform> a specific older build
 //   /download/guide              how to use the app, with screenshots
@@ -10,10 +11,13 @@ interface Env {
 }
 
 type Build = { key: string; file: string; sha256: string; size: number };
-type Release = { version: string; date: string; notes: string; mac?: Build; windows?: Build; linux?: Build; "linux-amd"?: Build };
+type Release = { version: string; date: string; notes: string; mac?: Build; windows?: Build; linux?: Build; "linux-amd"?: Build;
+  "linux-amd-cli"?: Build };
 
 const PLATFORMS = ["mac", "windows", "linux", "linux-amd"] as const;
 type Platform = (typeof PLATFORMS)[number];
+// Builds served by URL but without a card on the page.
+type Served = Platform | "linux-amd-cli";
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -28,19 +32,19 @@ export default {
       });
     }
 
-    const latest = path.match(/^\/download\/(mac|windows|linux-amd|linux)$/);
+    const latest = path.match(/^\/download\/(mac|windows|linux-amd-cli|linux-amd|linux)$/);
     if (latest) {
       const rel = await latestRelease(env);
-      const build = rel?.[latest[1] as Platform];
+      const build = rel?.[latest[1] as Served];
       if (!rel || !build) return new Response(`No ${latest[1]} build yet`, { status: 404 });
       return serveBuild(env, req, build.key, build.file, false);
     }
 
-    const pinned = path.match(/^\/download\/v\/([\w.-]+)\/(mac|windows|linux-amd|linux)$/);
+    const pinned = path.match(/^\/download\/v\/([\w.-]+)\/(mac|windows|linux-amd-cli|linux-amd|linux)$/);
     if (pinned) {
       const obj = await env.RELEASES.get(`releases/v${pinned[1]}/release.json`);
       if (!obj) return new Response("Unknown version", { status: 404 });
-      const build = (await obj.json<Release>())[pinned[2] as Platform];
+      const build = (await obj.json<Release>())[pinned[2] as Served];
       if (!build) return new Response(`No ${pinned[2]} build for v${pinned[1]}`, { status: 404 });
       return serveBuild(env, req, build.key, build.file, true);
     }
