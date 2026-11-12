@@ -112,12 +112,15 @@ endgroup
 
 group "status, status --json, top"
 ./podtorrent status --json >status.json || fail "status --json failed"
-python3 - status.json "$model" <<'EOF' || fail "status --json is missing this machine's slice or the model"
+python3 - status.json "$model" "$lo" "$hi" <<'EOF' || fail "status --json is missing this machine's slice or the model"
 import json, sys
 d = json.load(open(sys.argv[1]))
+lo, hi = int(sys.argv[3]), int(sys.argv[4])
 assert d["me"]["name"] == "ci-e2e" and d["me"]["slices"][0]["model"] == sys.argv[2], d["me"]
 m = next(m for m in d["models"] if m["model"] == sys.argv[2])
-assert m["state"] == "available", m
+# Alone in the swarm with one slice: the model is partial, missing everything outside it.
+assert m["coverage"][lo:hi] == [1] * (hi - lo) and sum(m["coverage"]) == hi - lo, m
+assert m["state"] == ("available" if (lo, hi) == (0, m["n_layers"]) else "partial"), m
 assert d["network"] == {"joined": False}, d["network"]
 EOF
 ./podtorrent top | tee top.txt
