@@ -185,6 +185,8 @@ def main():
     add_pod_parser(sub)
     from .setup_cli import add_parser as add_setup_parser
     add_setup_parser(sub)
+    from .top_cli import add_parsers as add_top_parsers
+    add_top_parsers(sub)
 
     a = ap.parse_args()
     if a.cmd in ("peer", "host"):
@@ -222,6 +224,12 @@ def main():
     elif a.cmd == "pod":
         from .pod_cli import run as run_pod
         run_pod(a)
+    elif a.cmd == "top":
+        from .top_cli import run_top
+        raise SystemExit(run_top(a))
+    elif a.cmd == "status":
+        from .top_cli import run_status
+        raise SystemExit(run_status(a))
     elif a.cmd == "setup":
         from .setup_cli import run as run_setup
         raise SystemExit(run_setup(a))

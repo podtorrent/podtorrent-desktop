@@ -84,7 +84,9 @@ asks for the name other peers see, starts the peer as a systemd user service, su
 layers this machine should serve (the swarm's missing layers, sized to free GPU memory), downloads them,
 and offers to join the network (staging by default). Run it again any time to add a slice. For a scripted
 install: `./podtorrent setup --yes --name halo-1 --model OWNER/NAME --serve 0:24 --no-join`.
-Afterwards `./podtorrent models` shows the swarm's coverage and what this machine serves.
+Afterwards `./podtorrent top` shows this machine and the swarm live: what it serves, tokens/s, each
+model's coverage and route, and every peer (Ctrl-C quits). `./podtorrent status` prints it once, and
+`status --json` gives the raw snapshot for scripts and monitoring.
 
 Without the wizard, `./podtorrent peer` runs in the foreground; `install-service` runs it as a systemd user service instead (logs:
 `journalctl --user -u podtorrent -f`; `sudo loginctl enable-linger $USER` keeps it running after logout and
