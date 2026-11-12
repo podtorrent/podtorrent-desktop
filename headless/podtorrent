@@ -502,7 +502,8 @@ if torch.cuda.is_available():
     free, total = torch.cuda.mem_get_info(d)
     print("mem_get_info GB free/total", round(free / 2**30, 1), round(total / 2**30, 1))
 EOF
-    if t 180 "$HERE/podtorrent" gpu-check >>"$dir/torch.txt" 2>&1; then
+    # The real answer, even where PODTORRENT_ALLOW_CPU lets the peer run on the CPU.
+    if PODTORRENT_ALLOW_CPU= t 180 "$HERE/podtorrent" gpu-check >>"$dir/torch.txt" 2>&1; then
       ok+=("GPU check: $(grep -m1 '  ok ' "$dir/torch.txt" | sed 's/^ *ok *//')")
     else
       bad+=("GPU check failed: $(grep -m1 FAIL "$dir/torch.txt" | sed 's/^ *FAIL *//')")

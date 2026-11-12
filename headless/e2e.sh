@@ -137,6 +137,8 @@ bundle="$(ls -t "$data"/podtorrent-doctor-*.tar.gz | head -n1)"
 mkdir -p doctor-out && tar -C doctor-out -xzf "$bundle"
 if grep -rqF "$token" doctor-out; then fail "the doctor bundle contains the node token"; fi
 grep -rq "peer running" doctor-out/*/summary.txt || fail "doctor didn't see the running peer"
+grep -q "FAIL  GPU check failed: PyTorch can't see the GPU" doctor.txt \
+  || fail "doctor didn't report the missing GPU (it must ignore PODTORRENT_ALLOW_CPU)"
 rm -f "$data/node-token"
 endgroup
 
