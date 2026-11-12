@@ -76,11 +76,17 @@ first and says how to fix what's missing. The first run installs ROCm PyTorch (a
 
 ```bash
 curl -LO https://github.com/Munerate/PodTorrent/releases/download/vX.Y.Z/podtorrent-headless-vX.Y.Z-linux-amd64-rocm.tar.gz && tar xzf podtorrent-headless-vX.Y.Z-linux-amd64-rocm.tar.gz && cd podtorrent-headless-vX.Y.Z-linux-amd64-rocm
-./podtorrent peer
-./podtorrent install-service
+./podtorrent setup
 ```
 
-`peer` runs in the foreground; `install-service` runs it as a systemd user service instead (logs:
+`setup` walks through the first run: it checks the machine, installs ROCm PyTorch and checks the GPU,
+asks for the name other peers see, starts the peer as a systemd user service, suggests a model and the
+layers this machine should serve (the swarm's missing layers, sized to free GPU memory), downloads them,
+and offers to join the network (staging by default). Run it again any time to add a slice. For a scripted
+install: `./podtorrent setup --yes --name halo-1 --model OWNER/NAME --serve 0:24 --no-join`.
+Afterwards `./podtorrent models` shows the swarm's coverage and what this machine serves.
+
+Without the wizard, `./podtorrent peer` runs in the foreground; `install-service` runs it as a systemd user service instead (logs:
 `journalctl --user -u podtorrent -f`; `sudo loginctl enable-linger $USER` keeps it running after logout and
 starts it at boot). `./podtorrent join` puts the peer on the PodTorrent network with a node token. For the
 dashboard, forward the port from your own computer and open http://127.0.0.1:27183:
