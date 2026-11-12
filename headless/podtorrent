@@ -137,6 +137,7 @@ uv_env() {
   export PODTORRENT_HOME="$DATA"
   export UV_PROJECT_ENVIRONMENT="$DATA/venv"
   export UV_PYTHON_PREFERENCE=only-managed
+  export PYTHONUNBUFFERED=1   # Python's output in order with the launcher's, in the terminal and engine.log
   export UV_CACHE_DIR="$DATA/uv-cache"
   [[ "$DATA" == "$DEFAULT_DIR" ]] || export UV_PYTHON_INSTALL_DIR="$DATA/python"
   [[ -z "${PODTORRENT_NAME:-}" ]] || export PODTORRENT_NAME

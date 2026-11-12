@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 # End-to-end test of an extracted headless tarball on Linux with no GPU (CI runs it before publishing).
 # Everything a user runs, for real: the ROCm PyTorch install, `setup` (which starts a peer just for
-# setup), a real model download, a restart that reloads the saved slice, a completion, status / top,
-# and `doctor` (whose bundle must not contain the node token). Only the GPU itself is missing, so
-# preflight is skipped and the GPU check is allowed to fall back to the CPU, after checking that it
-# does block without that override.
+# setup) refusing a model the engine can't run before downloading it, then a real slice of the model
+# a user serves, a restart that reloads the saved slice, a forward pass through those layers on
+# the installed PyTorch, status / top, and `doctor` (whose bundle must not contain the node token).
+# Only the GPU itself is missing, so preflight is skipped and the GPU check is allowed to fall back to
+# the CPU, after checking that it does block without that override. A full completion needs all of a
+# model's layers (17 GB for the default model), more than a CI runner's memory, so the forward pass
+# stands in for it.
 #
 #   headless/e2e.sh <extracted podtorrent-headless-… folder>
 #
-# E2E_MODEL / E2E_LAYERS pick the model (default: a 0.6B Qwen3, 28 layers, about 350 MB).
+# E2E_MODEL / E2E_LO / E2E_HI pick the slice (default: layers 0–3 of Qwen3-30B-A3B-4bit, about 1.4 GB).
 # It uses ~/.podtorrent, so run it on a throwaway machine or user.
 set -euo pipefail
 
 dir="$(cd "${1:?usage: e2e.sh <extracted podtorrent-headless folder>}" && pwd)"
-model="${E2E_MODEL:-mlx-community/Qwen3-0.6B-4bit}"
-layers="${E2E_LAYERS:-28}"
+model="${E2E_MODEL:-mlx-community/Qwen3-30B-A3B-4bit}"
+lo="${E2E_LO:-0}"
+hi="${E2E_HI:-4}"
+dense="mlx-community/Qwen3-0.6B-4bit"   # a qwen3 (dense) model: the engine runs qwen3_moe only
 export PODTORRENT_PORT="${PODTORRENT_PORT:-27183}" PODTORRENT_SKIP_PREFLIGHT=1
 data="$HOME/.podtorrent"
 api="http://127.0.0.1:$PODTORRENT_PORT"
@@ -53,14 +58,24 @@ fi
 endgroup
 export PODTORRENT_ALLOW_CPU=1
 
+group "setup refuses a model the engine can't run, before downloading it"
+if ./podtorrent setup --yes --no-service --no-join --name ci-e2e --model "$dense" >dense.log 2>&1; then
+  cat dense.log; fail "setup accepted $dense"
+fi
+cat dense.log
+grep -q "can't run here" dense.log || fail "setup didn't say why it refused $dense"
+if ls "$data/models" 2>/dev/null | grep -q "Qwen3-0.6B"; then fail "setup downloaded $dense before refusing it"; fi
+endgroup
+
 group "setup (peer just for setup, real download)"
-./podtorrent setup --yes --no-service --no-join --name ci-e2e --model "$model" --serve "0:$layers" | tee setup.log
-grep -q "Serving layers 0–$((layers - 1)) of $model" setup.log || fail "setup didn't report serving the slice"
-python3 - "$data/config.json" "$model" "$layers" <<'EOF' || fail "config.json doesn't hold the name and slice"
+./podtorrent setup --yes --no-service --no-join --name ci-e2e --model "$model" --serve "$lo:$hi" | tee setup.log
+grep -q "Serving layers $lo–$((hi - 1)) of $model" setup.log || fail "setup didn't report serving the slice"
+python3 - "$data/config.json" "$model" "$lo" "$hi" <<'EOF' || fail "config.json doesn't hold the name and slice"
 import json, sys
 c = json.load(open(sys.argv[1]))
 assert c.get("name") == "ci-e2e", c
-assert {"model": sys.argv[2], "lo": 0, "hi": int(sys.argv[3])} in [{k: s[k] for k in ("model", "lo", "hi")} for s in c["serve"]], c
+want = {"model": sys.argv[2], "lo": int(sys.argv[3]), "hi": int(sys.argv[4])}
+assert want in [{k: s[k] for k in ("model", "lo", "hi")} for s in c["serve"]], c
 EOF
 if curl -sf "$api/status" >/dev/null; then fail "the setup peer is still running after setup"; fi
 endgroup
@@ -74,26 +89,25 @@ for _ in $(seq 150); do
   sleep 2
 done
 [[ "$(json "$api/status" "d['name']")" == ci-e2e ]] || fail "the peer doesn't use the saved name"
-[[ "$(json "$api/status" "[(s['model'], s['lo'], s['hi'], s['loaded']) for s in d['slices']]")" == "[('$model', 0, $layers, True)]" ]] \
+[[ "$(json "$api/status" "[(s['model'], s['lo'], s['hi'], s['loaded']) for s in d['slices']]")" == "[('$model', $lo, $hi, True)]" ]] \
   || fail "the peer didn't reload the saved slice: $(json "$api/status" "d['slices']")"
 endgroup
 
-group "completion through the served layers"
-out="$(python3 - "$api" "$model" <<'EOF'
-import json, sys, urllib.request
-req = urllib.request.Request(sys.argv[1] + "/api/complete", headers={"Content-Type": "application/json"},
-                             data=json.dumps({"prompt": "The capital of France is", "max_tokens": 6,
-                                              "model": sys.argv[2]}).encode())
-try:
-    r = json.load(urllib.request.urlopen(req, timeout=600))
-except urllib.error.HTTPError as e:
-    r = json.load(e)
-print(json.dumps(r))
+group "forward pass through the served layers (installed PyTorch, CPU)"
+"$data/venv/bin/python" - "$model" "$lo" "$hi" <<'EOF' || fail "a forward pass through the served layers failed"
+import sys
+import torch
+from podtorrent.cli import default_dir
+from podtorrent.shard_torch import TorchShard
+model, lo, hi = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+shard = TorchShard(default_dir(model), lo, hi, device="cpu")
+h = torch.randn(1, 5, shard.cfg["hidden_size"], generator=torch.Generator().manual_seed(0))
+out = shard.run_layers(h, shard.make_cache())
+assert out.shape == h.shape, out.shape
+assert torch.isfinite(out.float()).all(), "non-finite output"
+assert not torch.allclose(out.float(), h.to(out.dtype).float()), "the layers did nothing"
+print(f"forward through layers {lo}-{hi - 1}: shape {tuple(out.shape)}, mean |h| {out.float().abs().mean():.3f}")
 EOF
-)"
-echo "$out"
-python3 -c 'import json,sys; r=json.loads(sys.argv[1]); assert "error" not in r, r; assert "Paris" in r["text"], r["text"]' "$out" \
-  || fail "the completion failed or didn't say Paris"
 endgroup
 
 group "status, status --json, top"
@@ -124,7 +138,7 @@ rm -f "$data/node-token"
 endgroup
 
 group "setup again is a no-op"
-./podtorrent setup --yes --no-service --no-join --model "$model" --serve "0:$layers" | tee setup2.log
+./podtorrent setup --yes --no-service --no-join --model "$model" --serve "$lo:$hi" | tee setup2.log
 grep -q "nothing to do" setup2.log || fail "a second setup didn't recognise the slice it already serves"
 endgroup
 
