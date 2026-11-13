@@ -79,10 +79,11 @@ curl -fsSL https://podtorrent.com/install.sh | sh
 podtorrent setup
 ```
 
-`install.sh` (`headless/install.sh`, served by the downloads Worker) installs the latest build in
+`install.sh` (`install/install.sh`, served by the downloads Worker) installs the headless build over SSH in
 `~/.local/share/podtorrent` and puts `podtorrent` in `~/.local/bin`; running it again updates. For a
-manual download: `wget https://podtorrent.com/download/linux-amd-cli.tar.gz` (its checksum is at
-`/download/linux-amd-cli.sha256`). `setup` walks through the first run: it checks the machine, installs ROCm PyTorch and checks the GPU,
+manual download: `wget https://podtorrent.com/download/linux-x64-rocm-headless.tar.gz` (its checksum is at
+`/download/linux-x64-rocm-headless.sha256`). Download names and installers for every platform:
+[docs/DOWNLOADS.md](docs/DOWNLOADS.md). `setup` walks through the first run: it checks the machine, installs ROCm PyTorch and checks the GPU,
 asks for the name other peers see, starts the peer as a systemd user service, suggests a model and the
 layers this machine should serve (the swarm's missing layers, sized to free GPU memory), downloads them,
 and offers to join the PodTorrent network (production; `--network staging` for staging). Run it again any time to add a slice. For a scripted

@@ -8,10 +8,11 @@
   "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "podtorrent-releases" }],
   "routes": [
     { "pattern": "podtorrent.com/download*", "zone_name": "podtorrent.com" },
-    // The headless installer: curl -fsSL https://podtorrent.com/install.sh | sh
-    { "pattern": "podtorrent.com/install.sh", "zone_name": "podtorrent.com" }
+    // The installers: curl -fsSL https://podtorrent.com/install.sh | sh, irm https://podtorrent.com/install.ps1 | iex
+    { "pattern": "podtorrent.com/install.sh", "zone_name": "podtorrent.com" },
+    { "pattern": "podtorrent.com/install.ps1", "zone_name": "podtorrent.com" }
   ],
-  // headless/install.sh is bundled in as text, so the script served is always the one in this repo.
-  "rules": [{ "type": "Text", "globs": ["**/*.sh"], "fallthrough": true }],
+  // install/install.sh and install.ps1 are bundled in as text, so what's served is always what's in this repo.
+  "rules": [{ "type": "Text", "globs": ["**/*.sh", "**/*.ps1"], "fallthrough": true }],
   "observability": { "enabled": true }
 }

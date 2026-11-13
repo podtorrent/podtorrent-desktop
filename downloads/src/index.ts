@@ -1,33 +1,55 @@
-// podtorrent.com/download — serves builds from R2.
-//   /download                    page with the latest Mac, Windows, Linux and Linux AMD links and notes
-//   /download/mac|windows|linux|linux-amd latest installer for that platform
-//   /download/linux-amd-cli      the headless tarball for SSH-only Linux AMD machines (not on the page);
-//                                also as linux-amd-cli.tar.gz (a file name for plain wget) and
-//                                linux-amd-cli.sha256 (its checksum, for install.sh)
-//   /install.sh                  the headless installer (also /download/install.sh)
-//   /download/latest.json        manifest (also for in-app update checks)
-//   /download/v/<ver>/<platform> a specific older build
-//   /download/guide              how to use the app, with screenshots
+// podtorrent.com/download — serves builds from R2. Download names follow one standard (src/builds.json):
+//   <os>-<arch>[-<gpu stack>][-headless]: macos-arm64, windows-x64-cuda, linux-x64-cuda, linux-x64-rocm,
+//   linux-x64-rocm-headless. Files: podtorrent-<version>-<name>.<ext>.
+//   /download                        page with the latest builds and notes
+//   /download/<name>                 latest build (also /download/<name>.<ext>, a file name for plain wget)
+//   /download/<name>.sha256          its SHA-256, "<hash>  <file>" (for the installers)
+//   /download/v/<version>/<name>     a specific build
+//   /install.sh                      installer for macOS and Linux (desktop or headless); /download/install.sh too
+//   /install.ps1                     installer for Windows; /download/install.ps1 too
+//   /download/latest.json            manifest
+//   /download/guide                  how to use the app, with screenshots
+// Older names (mac, windows, linux, linux-amd, linux-amd-cli) keep working everywhere a name does.
 
-import installSh from "../../headless/install.sh";
+import installSh from "../../install/install.sh";
+import installPs1 from "../../install/install.ps1";
+import standard from "./builds.json";
 
 interface Env {
   RELEASES: R2Bucket;
 }
 
 type Build = { key: string; file: string; sha256: string; size: number };
-type Release = { version: string; date: string; notes: string; mac?: Build; windows?: Build; linux?: Build; "linux-amd"?: Build;
-  "linux-amd-cli"?: Build };
+type Release = { version: string; date: string; notes: string } & Partial<Record<Manifest, Build>>;
 
-const PLATFORMS = ["mac", "windows", "linux", "linux-amd"] as const;
+const PLATFORMS = ["mac", "windows", "linux", "linux-amd"] as const;   // cards on the page
 type Platform = (typeof PLATFORMS)[number];
-// Builds served by URL but without a card on the page.
-type Served = Platform | "linux-amd-cli";
+type Manifest = Platform | "linux-amd-cli";
+type Spec = { manifest: Manifest; ext: string; legacy: string[]; label: string };
+const BUILDS = standard.builds as Record<string, Spec>;
+// Every name a URL may use (standard or legacy) -> its standard name.
+const NAMES: Record<string, string> = Object.fromEntries(
+  Object.entries(BUILDS).flatMap(([name, b]) => [[name, name], ...b.legacy.map((l) => [l, name])]),
+);
+const SLUG = Object.fromEntries(Object.entries(BUILDS).map(([name, b]) => [b.manifest, name])) as Record<Manifest, string>;
+
+// /download/<name>[.<ext>|.sha256], or /download/v/<version>/<name>: the build and how to serve it.
+function parse(path: string): { name: string; version?: string; sha: boolean } | null {
+  const m = path.match(/^\/download\/(?:v\/([\w.-]+)\/)?([a-z0-9-]+)(\.[\w.]+)?$/);
+  if (!m || !NAMES[m[2]]) return null;
+  const name = NAMES[m[2]], suffix = m[3];
+  if (suffix && suffix !== ".sha256" && suffix !== `.${BUILDS[name].ext}`) return null;
+  return { name, version: m[1], sha: suffix === ".sha256" };
+}
+
+const text = (body: string | null, type = "text/plain; charset=utf-8") =>
+  new Response(body, { headers: { "content-type": type, "cache-control": "no-cache" } });
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const path = new URL(req.url).pathname.replace(/\/+$/, "");
     if (req.method !== "GET" && req.method !== "HEAD") return new Response("Method not allowed", { status: 405 });
+    const head = req.method === "HEAD";
 
     if (path === "/download/latest.json") {
       const obj = await env.RELEASES.get("latest.json");
@@ -37,38 +59,23 @@ export default {
       });
     }
 
-    if (path === "/install.sh" || path === "/download/install.sh") {
-      return new Response(req.method === "HEAD" ? null : installSh, {
-        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-cache" },
-      });
-    }
+    if (path === "/install.sh" || path === "/download/install.sh") return text(head ? null : installSh);
+    if (path === "/install.ps1" || path === "/download/install.ps1") return text(head ? null : installPs1);
 
-    // The headless tarball for wget (which names the file after the URL) and its checksum for install.sh.
-    const cli = path.match(/^\/download\/linux-amd-cli\.(tar\.gz|sha256)$/);
-    if (cli) {
-      const build = (await latestRelease(env))?.["linux-amd-cli"];
-      if (!build) return new Response("No linux-amd-cli build yet", { status: 404 });
-      if (cli[1] === "tar.gz") return serveBuild(env, req, build.key, build.file, false);
-      return new Response(req.method === "HEAD" ? null : `${build.sha256}  ${build.file}\n`, {
-        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-cache" },
-      });
-    }
-
-    const latest = path.match(/^\/download\/(mac|windows|linux-amd-cli|linux-amd|linux)$/);
-    if (latest) {
-      const rel = await latestRelease(env);
-      const build = rel?.[latest[1] as Served];
-      if (!rel || !build) return new Response(`No ${latest[1]} build yet`, { status: 404 });
-      return serveBuild(env, req, build.key, build.file, false);
-    }
-
-    const pinned = path.match(/^\/download\/v\/([\w.-]+)\/(mac|windows|linux-amd-cli|linux-amd|linux)$/);
-    if (pinned) {
-      const obj = await env.RELEASES.get(`releases/v${pinned[1]}/release.json`);
-      if (!obj) return new Response("Unknown version", { status: 404 });
-      const build = (await obj.json<Release>())[pinned[2] as Served];
-      if (!build) return new Response(`No ${pinned[2]} build for v${pinned[1]}`, { status: 404 });
-      return serveBuild(env, req, build.key, build.file, true);
+    const want = parse(path);
+    if (want) {
+      let rel: Release | null;
+      if (want.version) {
+        const obj = await env.RELEASES.get(`releases/v${want.version}/release.json`);
+        if (!obj) return new Response("Unknown version", { status: 404 });
+        rel = await obj.json<Release>();
+      } else {
+        rel = await latestRelease(env);
+      }
+      const build = rel?.[BUILDS[want.name].manifest];
+      if (!build) return new Response(`No ${want.name} build${want.version ? ` for v${want.version}` : " yet"}`, { status: 404 });
+      if (want.sha) return text(head ? null : `${build.sha256}  ${build.file}\n`);
+      return serveBuild(env, req, build.key, build.file, !!want.version);
     }
 
     if (path === "/download") return page(await latestRelease(env));
@@ -221,7 +228,7 @@ function page(rel: Release | null): Response {
   const card = (p: Platform) => {
     const i = INFO[p], b = rel?.[p];
     const action = b
-      ? `<a class="btn" href="/download/${p}">${svg(dl, "ic")}<span>Download for ${i.name}</span></a>
+      ? `<a class="btn" href="/download/${SLUG[p]}">${svg(dl, "ic")}<span>Download for ${i.name}</span></a>
          <p class="meta">v${esc(ver(b))} · ${mb(b)} · <span title="SHA-256: ${b.sha256}">SHA-256 ${b.sha256.slice(0, 12)}…</span></p>`
       : `<span class="btn off">Coming soon</span><p class="meta">No ${i.name} build yet</p>`;
     return `<section class="card" data-os="${p}">
@@ -241,6 +248,13 @@ ${STYLE}</style></head><body><main>
 <p class="lead">Run large language models together. Each machine holds a slice of the model's layers, and peers on macOS, Windows and Linux join the same chains over the internet.</p>
 ${rel ? `<span class="rel">Latest release v${esc(rel.version)} · ${esc(rel.date)}</span>` : ""}
 <div class="grid">${PLATFORMS.map(card).join("")}</div>
+<section class="how"><h3>Install from a terminal</h3>
+<p>macOS and Linux: picks the right build for this machine (desktop app, or the headless build over SSH on AMD Ryzen AI Max), checks it and installs it. Run it again to update.</p>
+<code class="cmd">curl -fsSL https://podtorrent.com/install.sh | sh</code>
+<p style="margin-top:12px">Windows (PowerShell):</p>
+<code class="cmd">irm https://podtorrent.com/install.ps1 | iex</code>
+<p style="margin-top:12px">Direct links: ${Object.keys(BUILDS).map((n) => `<a href="/download/${n}">${n}</a>`).join(" · ")}</p>
+</section>
 ${rel?.notes ? `<div class="notes"><h3>What's new</h3><pre>${esc(rel.notes)}</pre></div>` : ""}
 <div class="how"><h3>Setting up</h3><p>The first launch downloads the inference engine and its dependencies (a few GB on Windows and Linux) into your home folder. After that, pick which layers to serve and your machine joins the swarm.</p></div>
 <a class="how guide-link" href="/download/guide"><div><h3>How to use PodTorrent</h3><p>A short tour with screenshots: name your machine, choose which layers it serves, see your peers, check which models can run, and chat with a model the whole swarm serves together. It also covers serving the PodTorrent network and fixing common problems.</p></div><span class="go" aria-hidden="true">→</span></a>
