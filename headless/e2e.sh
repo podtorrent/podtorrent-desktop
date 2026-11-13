@@ -9,7 +9,7 @@
 # model's layers (17 GB for the default model), more than a CI runner's memory, so the forward pass
 # stands in for it.
 #
-#   headless/e2e.sh <extracted podtorrent-headless-… folder>
+#   headless/e2e.sh <extracted podtorrent-headless-… folder, or ~/.local/share/podtorrent/app after install.sh>
 #
 # E2E_MODEL / E2E_LO / E2E_HI pick the slice (default: layers 0–3 of Qwen3-30B-A3B-4bit, about 1.4 GB).
 # It uses ~/.podtorrent, so run it on a throwaway machine or user.
@@ -45,8 +45,13 @@ print(eval(sys.argv[2]))' "$1" "$2"
 }
 
 group "launcher"
-./podtorrent help | grep -q "./podtorrent setup" || fail "help doesn't list setup"
+./podtorrent help | grep -qE "^  (\./)?podtorrent setup" || fail "help doesn't list setup"
 [[ -f README.md ]] || fail "the tarball has no README.md"
+# Installed by install.sh: the `podtorrent` on PATH is this folder's, and it names itself that way.
+if [[ "$(readlink -f "$(command -v podtorrent || true)")" == "$dir/podtorrent" ]]; then
+  podtorrent help | grep -q "^  podtorrent setup" || fail "the installed command's help doesn't say 'podtorrent setup'"
+  echo "installed command: $(command -v podtorrent) -> $dir/podtorrent ($(cat VERSION 2>/dev/null))"
+fi
 endgroup
 
 group "GPU check blocks without a GPU (installs ROCm PyTorch first: the slow part)"

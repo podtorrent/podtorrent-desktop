@@ -75,12 +75,14 @@ For a Ryzen AI Max / Strix Halo machine (Radeon 8050S/8060S, gfx1151) you reach 
 first and says how to fix what's missing. The first run installs ROCm PyTorch (about 25 GB free disk).
 
 ```bash
-curl -L -o podtorrent.tar.gz https://podtorrent.com/download/linux-amd-cli
-tar xzf podtorrent.tar.gz && cd podtorrent-headless-*
-./podtorrent setup
+curl -fsSL https://podtorrent.com/install.sh | sh
+podtorrent setup
 ```
 
-`setup` walks through the first run: it checks the machine, installs ROCm PyTorch and checks the GPU,
+`install.sh` (`headless/install.sh`, served by the downloads Worker) installs the latest build in
+`~/.local/share/podtorrent` and puts `podtorrent` in `~/.local/bin`; running it again updates. For a
+manual download: `wget https://podtorrent.com/download/linux-amd-cli.tar.gz` (its checksum is at
+`/download/linux-amd-cli.sha256`). `setup` walks through the first run: it checks the machine, installs ROCm PyTorch and checks the GPU,
 asks for the name other peers see, starts the peer as a systemd user service, suggests a model and the
 layers this machine should serve (the swarm's missing layers, sized to free GPU memory), downloads them,
 and offers to join the PodTorrent network (production; `--network staging` for staging). Run it again any time to add a slice. For a scripted
