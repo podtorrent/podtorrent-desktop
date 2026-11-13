@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # PodTorrent headless launcher for Linux AMD (Ryzen AI Max / Strix Halo, gfx1151). No GUI needed.
 #
+#   ./podtorrent setup              guided first run: checks, GPU, name, model and layers, service, network
 #   ./podtorrent peer               preflight, install ROCm PyTorch on first run, run this machine's peer,
 #                                   and keep it on the PodTorrent network once joined
 #   ./podtorrent join               join the PodTorrent network as a node (asks for the node token)
@@ -9,6 +10,7 @@
 #   ./podtorrent gpu-check          run a computation on the GPU with the installed PyTorch
 #   ./podtorrent install-service    run the peer as a systemd --user service (survives logout and reboot)
 #   ./podtorrent uninstall-service  remove that service
+#   ./podtorrent models | swarm | serve | unserve | pod   the engine's commands, against the running peer
 #
 # Data (models, venv, logs) lives in ~/.podtorrent, or the folder named in ~/.podtorrent/location,
 # the same place the desktop app uses. Extra arguments after `peer` go to `podtorrent peer`.
@@ -131,7 +133,7 @@ uv_env() {
   export UV_PYTHON_PREFERENCE=only-managed
   export UV_CACHE_DIR="$DATA/uv-cache"
   [[ "$DATA" == "$DEFAULT_DIR" ]] || export UV_PYTHON_INSTALL_DIR="$DATA/python"
-  export PODTORRENT_NAME="${PODTORRENT_NAME:-$(hostname -s)}"
+  [[ -z "${PODTORRENT_NAME:-}" ]] || export PODTORRENT_NAME
 }
 
 # Install Python and ROCm PyTorch (from the gfx1151 index this bundle is locked to) if they aren't yet.
@@ -237,6 +239,155 @@ start_agent() {
 
 stop_agent() {
   if [[ -n "$AGENT_PID" ]]; then stop_group "$AGENT_PID"; wait "$AGENT_PID" 2>/dev/null || true; AGENT_PID=""; fi
+}
+
+# ---- guided setup ----
+
+# The name other peers see: config.json's, else the hostname (the same order the peer uses).
+saved_name() {
+  "$DATA/venv/bin/python" -c 'import json,sys
+try: print(json.load(open(sys.argv[1])).get("name") or "")
+except Exception: print("")' "$DATA/config.json"
+}
+
+save_name() {
+  "$DATA/venv/bin/python" - "$DATA/config.json" "$1" <<'EOF'
+import json, sys
+p, name = sys.argv[1], sys.argv[2]
+try:
+    c = json.load(open(p))
+except Exception:
+    c = {}
+c["name"] = name
+json.dump(c, open(p, "w"), indent=2)
+EOF
+}
+
+service_active() { command -v systemctl >/dev/null && systemctl --user is-active --quiet "$SERVICE" 2>/dev/null; }
+
+SETUP_PEER=""
+stop_setup_peer() { if [[ -n "$SETUP_PEER" ]]; then stop_group "$SETUP_PEER"; SETUP_PEER=""; fi; }
+
+# wait_for_peer SECONDS: until the peer's API answers. Fails early if the service or the setup peer died.
+wait_for_peer() {
+  local i
+  for (( i = 0; i < $1; i += 2 )); do
+    node_up && { (( i == 0 )) || echo; return 0; }
+    if [[ -n "$SETUP_PEER" ]] && ! kill -0 "$SETUP_PEER" 2>/dev/null; then echo; return 1; fi
+    if [[ -z "$SETUP_PEER" ]] && systemctl --user is-failed --quiet "$SERVICE" 2>/dev/null; then echo; return 1; fi
+    printf '.'
+    sleep 2
+  done
+  echo
+  return 1
+}
+
+cmd_setup() {
+  local name="" network=staging use_service=1 join=ask yes=0 pass=() old
+  while (( $# )); do
+    case "$1" in
+      --name) name="$2"; shift 2 ;;
+      --network) network="$2"; shift 2 ;;
+      --no-service) use_service=0; shift ;;
+      --join) join=yes; shift ;;
+      --no-join) join=no; shift ;;
+      --yes) yes=1; pass+=(--yes); shift ;;
+      --model|--serve) pass+=("$1" "$2"); shift 2 ;;
+      *) die "setup: unknown option $1 (options: --name N --model REPO --serve LO:HI --network staging|production --no-service --join --no-join --yes)" ;;
+    esac
+  done
+  network_url "$network" >/dev/null || die "network: staging or production"
+  [[ -x "$UV" ]] || die "missing $UV: run this from the extracted podtorrent-headless folder"
+  if (( use_service )) && ! command -v systemctl >/dev/null; then
+    say "systemd not found: running the peer just for setup (start it later with ./podtorrent peer)"
+    use_service=0
+  fi
+
+  say "step 1/5: checking this machine"
+  if [[ "${PODTORRENT_SKIP_PREFLIGHT:-}" != 1 ]]; then preflight || exit 1; fi
+
+  say "step 2/5: PyTorch and the GPU"
+  uv_env
+  setup_backend
+  gpu_check
+
+  say "step 3/5: this machine's name"
+  old="$(saved_name)"
+  if [[ -z "$name" ]]; then
+    if (( yes )); then
+      name="${old:-$(hostname -s)}"
+    else
+      read -r -p "podtorrent: name other peers see [${old:-$(hostname -s)}] " name
+      name="${name:-${old:-$(hostname -s)}}"
+    fi
+  fi
+  name="$(tr -cd '[:print:]' <<<"$name" | cut -c1-40)"
+  [[ -n "${name// /}" ]] || die "the name can't be empty"
+  save_name "$name"
+  say "name: $name"
+
+  say "step 4/5: starting the peer"
+  if node_up; then
+    if [[ "$name" != "$old" ]]; then
+      if service_active; then
+        say "restarting the service so peers see the new name"
+        systemctl --user restart "$SERVICE"
+        sleep 2
+      else
+        say "a peer is already running; restart it to use the new name"
+      fi
+    else
+      say "the peer is already running"
+    fi
+  elif (( use_service )); then
+    cmd_install_service
+  else
+    PODTORRENT_SKIP_PREFLIGHT=1 setsid "$HERE/podtorrent" peer </dev/null >"$DATA/setup-peer.log" 2>&1 &
+    SETUP_PEER=$!
+    trap 'stop_setup_peer' EXIT
+    trap 'stop_setup_peer; exit 130' INT TERM
+  fi
+  node_up || say "waiting for the peer to come up (the first start measures GPU memory, which can take a minute)"
+  if ! wait_for_peer 600; then
+    local log="$DATA/engine.log"
+    if [[ -n "$SETUP_PEER" ]]; then
+      log="$DATA/setup-peer.log"
+    elif service_active || systemctl --user is-failed --quiet "$SERVICE" 2>/dev/null; then
+      journalctl --user -u "$SERVICE" -n 20 --no-pager >&2 2>/dev/null || true
+      die "the peer didn't start; its log is above (all of it: journalctl --user -u podtorrent)"
+    fi
+    tail -n 20 "$log" >&2 2>/dev/null || true
+    die "the peer didn't start; its log is above (all of it: $log)"
+  fi
+
+  say "step 5/5: model and layers"
+  "$UV" run --frozen --project "$BACKEND" podtorrent setup --port "$PORT" ${pass[@]+"${pass[@]}"} \
+    || die "setup didn't finish; run ./podtorrent setup again to pick up where it stopped"
+
+  if [[ -f "$DATA/network.json" ]]; then
+    say "already joined the PodTorrent network as $(network_name) node; ./podtorrent leave to stop"
+  elif [[ "$join" == ask && $yes == 0 ]]; then
+    local ans
+    read -r -p "podtorrent: join the PodTorrent network on $network now? You need a node id and token. [y/N] " ans
+    [[ "$ans" =~ ^[Yy] ]] && join=yes
+  fi
+  if [[ "$join" == yes && ! -f "$DATA/network.json" ]]; then
+    cmd_join --network "$network"
+  elif [[ ! -f "$DATA/network.json" ]]; then
+    say "to join the network later: ./podtorrent join --network $network"
+  fi
+
+  echo
+  if [[ -n "$SETUP_PEER" ]]; then
+    say "done. The setup peer stops now; run ./podtorrent peer (or ./podtorrent install-service) to keep serving"
+  elif service_active; then
+    say "done. The peer runs as a service and keeps serving across logouts and reboots (with linger enabled)"
+    say "logs:    journalctl --user -u podtorrent -f"
+  else
+    say "done. The peer you started keeps serving while it runs; ./podtorrent install-service keeps it up across logouts"
+    say "logs:    $DATA/engine.log"
+  fi
+  say "swarm:   ./podtorrent models    (coverage of every model, and what this machine serves)"
 }
 
 # ---- commands ----
@@ -361,9 +512,10 @@ cmd_uninstall_service() {
   say "removed the podtorrent service"
 }
 
-usage() { sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 case "${1:-}" in
+  setup) shift; cmd_setup "$@" ;;
   peer) shift; cmd_peer "$@" ;;
   join) shift; cmd_join "$@" ;;
   leave) cmd_leave ;;
@@ -371,6 +523,11 @@ case "${1:-}" in
   gpu-check) uv_env; setup_backend; gpu_check ;;
   install-service) shift; cmd_install_service "$@" ;;
   uninstall-service) cmd_uninstall_service ;;
+  # The engine's own commands, against the running peer: models, swarm, serve, unserve, pod, video.
+  models|swarm|serve|unserve|pod|video)
+    uv_env
+    [[ -x "$DATA/venv/bin/python" ]] || die "run ./podtorrent setup (or ./podtorrent peer) first"
+    exec "$UV" run --frozen --project "$BACKEND" podtorrent "$@" ;;
   -h|--help|help|"") usage ;;
   *) usage; exit 2 ;;
 esac

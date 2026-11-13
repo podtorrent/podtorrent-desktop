@@ -183,6 +183,8 @@ def main():
 
     from .pod_cli import add_parser as add_pod_parser
     add_pod_parser(sub)
+    from .setup_cli import add_parser as add_setup_parser
+    add_setup_parser(sub)
 
     a = ap.parse_args()
     if a.cmd in ("peer", "host"):
@@ -220,6 +222,9 @@ def main():
     elif a.cmd == "pod":
         from .pod_cli import run as run_pod
         run_pod(a)
+    elif a.cmd == "setup":
+        from .setup_cli import run as run_setup
+        raise SystemExit(run_setup(a))
     elif a.cmd == "swarm":
         from .net.cli import run_swarm
         run_swarm(a.name, a.watch)
