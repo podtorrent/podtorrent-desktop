@@ -890,7 +890,8 @@ class PeerApp:
         streams: dict[int, Stream] = {}
         seq = list(ids)
         x = B.token_ids(seq)
-        eos = set(getattr(tok_, "eos_token_ids", None) or {tok_.eos_token_id})
+        raw = getattr(tok_, "eos_token_ids", None) or tok_.eos_token_id  # an int on HF tokenizers, a list on MLX
+        eos = {raw} if isinstance(raw, int) else set(raw or ())
         # chat turn terminators aren't always in the tokenizer's EOS set (Qwen's is <|endoftext|>)
         vocab = tok_.get_vocab() if hasattr(tok_, "get_vocab") else {}
         eos |= {vocab[t] for t in ("<|im_end|>", "<|eot_id|>", "<|end|>", "<end_of_turn>", "<|endoftext|>")
