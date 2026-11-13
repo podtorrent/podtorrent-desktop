@@ -1,7 +1,7 @@
 {
   "name": "podtorrent-app",
   "private": true,
-  "version": "0.1.29",
+  "version": "0.1.30",
   "scripts": {
     "tauri": "tauri",
     "dev": "node scripts/bundle-backend.js && tauri dev",
