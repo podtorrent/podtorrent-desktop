@@ -18,10 +18,18 @@ you reach over SSH. It needs no desktop or display.
 ## Install and set up
 
 ```bash
-curl -L -o podtorrent.tar.gz https://podtorrent.com/download/linux-amd-cli
-tar xzf podtorrent.tar.gz && cd podtorrent-headless-*
-./podtorrent setup
+curl -fsSL https://podtorrent.com/install.sh | sh
+podtorrent setup
 ```
+
+The installer puts PodTorrent in `~/.local/share/podtorrent` and the `podtorrent` command in
+`~/.local/bin`. It needs no root, and it checks the download's SHA-256. If `podtorrent` isn't found
+afterwards, log out and back in, or run `export PATH="$HOME/.local/bin:$PATH"`.
+
+Prefer to download it yourself? Run
+`wget https://podtorrent.com/download/linux-amd-cli.tar.gz` (or `curl -LO` the same URL), then
+`tar xzf linux-amd-cli.tar.gz && cd podtorrent-headless-*` and run `./podtorrent setup`. The rest
+of this guide says `podtorrent`; from an unpacked folder it's `./podtorrent`.
 
 `setup` takes you through it step by step:
 
@@ -37,7 +45,8 @@ tar xzf podtorrent.tar.gz && cd podtorrent-headless-*
 7. **Offers to join the PodTorrent network.** Enter your node id and token when asked (the token
    isn't shown as you type).
 
-You can run `./podtorrent setup` again any time, for example to serve more layers.
+You can run `podtorrent setup` again any time, for example to serve more layers. To update
+PodTorrent itself, run the install command again: it keeps your models and settings.
 
 To keep PodTorrent running after you log out and start it at boot, run this once:
 
@@ -49,11 +58,11 @@ sudo loginctl enable-linger $USER
 
 | Command | What it does |
 |---|---|
-| `./podtorrent top` | Live view: what this machine serves, tokens per second, the models and every machine in the network (Ctrl-C to quit) |
-| `./podtorrent status` | The same, once (`--json` for scripts) |
+| `podtorrent top` | Live view: what this machine serves, tokens per second, the models and every machine in the network (Ctrl-C to quit) |
+| `podtorrent status` | The same, once (`--json` for scripts) |
 | `journalctl --user -u podtorrent -f` | Follow the logs |
 | `systemctl --user restart podtorrent` | Restart it |
-| `./podtorrent join` / `./podtorrent leave` | Join or leave the PodTorrent network |
+| `podtorrent join` / `podtorrent leave` | Join or leave the PodTorrent network |
 
 To see the web dashboard, forward the port from your own computer and open http://127.0.0.1:27183:
 
@@ -66,7 +75,7 @@ ssh -L 27183:127.0.0.1:27183 you@this-machine
 Run:
 
 ```bash
-./podtorrent doctor
+podtorrent doctor
 ```
 
 It checks everything, prints what's OK and what isn't, and writes one file
@@ -76,8 +85,7 @@ with your node token and any keys removed.
 ## Stop or uninstall
 
 ```bash
-./podtorrent uninstall-service     # stop PodTorrent and remove the background service
-rm -rf ~/.podtorrent               # also delete downloaded models, PyTorch and settings
+podtorrent uninstall-service                                   # stop PodTorrent, remove the service
+rm -rf ~/.local/share/podtorrent ~/.local/bin/podtorrent       # remove the app
+rm -rf ~/.podtorrent                                           # also delete models, PyTorch and settings
 ```
-
-Then delete this folder.

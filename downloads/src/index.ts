@@ -1,10 +1,15 @@
 // podtorrent.com/download — serves builds from R2.
 //   /download                    page with the latest Mac, Windows, Linux and Linux AMD links and notes
 //   /download/mac|windows|linux|linux-amd latest installer for that platform
-//   /download/linux-amd-cli      the headless tarball for SSH-only Linux AMD machines (not on the page)
+//   /download/linux-amd-cli      the headless tarball for SSH-only Linux AMD machines (not on the page);
+//                                also as linux-amd-cli.tar.gz (a file name for plain wget) and
+//                                linux-amd-cli.sha256 (its checksum, for install.sh)
+//   /install.sh                  the headless installer (also /download/install.sh)
 //   /download/latest.json        manifest (also for in-app update checks)
 //   /download/v/<ver>/<platform> a specific older build
 //   /download/guide              how to use the app, with screenshots
+
+import installSh from "../../headless/install.sh";
 
 interface Env {
   RELEASES: R2Bucket;
@@ -29,6 +34,23 @@ export default {
       if (!obj) return new Response("No release yet", { status: 404 });
       return new Response(obj.body, {
         headers: { "content-type": "application/json", "cache-control": "no-cache", "access-control-allow-origin": "*" },
+      });
+    }
+
+    if (path === "/install.sh" || path === "/download/install.sh") {
+      return new Response(req.method === "HEAD" ? null : installSh, {
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-cache" },
+      });
+    }
+
+    // The headless tarball for wget (which names the file after the URL) and its checksum for install.sh.
+    const cli = path.match(/^\/download\/linux-amd-cli\.(tar\.gz|sha256)$/);
+    if (cli) {
+      const build = (await latestRelease(env))?.["linux-amd-cli"];
+      if (!build) return new Response("No linux-amd-cli build yet", { status: 404 });
+      if (cli[1] === "tar.gz") return serveBuild(env, req, build.key, build.file, false);
+      return new Response(req.method === "HEAD" ? null : `${build.sha256}  ${build.file}\n`, {
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-cache" },
       });
     }
 

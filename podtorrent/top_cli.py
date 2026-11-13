@@ -14,6 +14,10 @@ import sys
 import time
 from pathlib import Path
 
+# How the user runs PodTorrent, for hints: `podtorrent` when installed on PATH (the launcher says so).
+CMD = os.environ.get("PODTORRENT_CMD", "./podtorrent")
+
+
 # ---- reading ----
 
 def snapshot(port: int) -> dict:
@@ -108,7 +112,7 @@ def render(snap: dict, prev: dict | None = None, width: int = 100, ascii_only: b
         prog = f" {100 * s['done'] // s['total']}%" if s.get("total") and state in ("downloading", "loading") else ""
         out.append(f"  serving {short(s['model'])} layers {s['lo']}–{s['hi'] - 1}  {state}{prog}")
     if not me.get("slices"):
-        out.append("  serving nothing yet: ./podtorrent setup picks a model and layers")
+        out.append(f"  serving nothing yet: {CMD} setup picks a model and layers")
     r = tok_s.get(me["peer_id"])
     out.append(f"  requests {human(me.get('requests'))} · tokens {human(me.get('tokens'))}"
                f" · {f'{r:.1f} tok/s' if r is not None else '– tok/s'} · active {me.get('active_requests', 0)}"
@@ -119,7 +123,7 @@ def render(snap: dict, prev: dict | None = None, width: int = 100, ascii_only: b
         if net.get("agent_last"):
             out.append(f"    agent: {net['agent_last'][:width - 11]}")
     else:
-        out.append("  network: not joined (./podtorrent join)")
+        out.append(f"  network: not joined ({CMD} join)")
     out.append("")
 
     out.append("MODELS")

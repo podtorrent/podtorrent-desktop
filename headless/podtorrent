@@ -29,10 +29,18 @@ MIN_KERNEL=6.14
 # ROCm PyTorch plus Python and the venv come to about 15 GB; leave room for the cache too.
 NEED_GB=25
 
+# How the user runs this: `podtorrent` when it is the command on PATH (install.sh puts it there),
+# else ./podtorrent from the unpacked folder. Messages and help say it that way; Python reads PODTORRENT_CMD.
+ME=./podtorrent
+if [[ "$(readlink -f "$(command -v podtorrent 2>/dev/null)" 2>/dev/null)" == "$(readlink -f "${BASH_SOURCE[0]}")" ]]; then
+  ME=podtorrent
+fi
+export PODTORRENT_CMD="$ME"
+
 say() { printf 'podtorrent: %s\n' "$*"; }
 die() { printf 'podtorrent: %s\n' "$*" >&2; exit 1; }
 # A failure the user can't fix from the message alone: point them at doctor.
-HELP="if this keeps happening, run ./podtorrent doctor and send us the file it writes"
+HELP="if this keeps happening, run $ME doctor and send us the file it writes"
 stuck() { printf 'podtorrent: %s\npodtorrent: %s\n' "$*" "$HELP" >&2; exit 1; }
 
 data_dir() {
@@ -166,7 +174,7 @@ import sys
 import torch
 if not torch.cuda.is_available():
     sys.exit("  FAIL  PyTorch can't see the GPU (torch.cuda.is_available() is False)\n"
-             "        fix: run ./podtorrent preflight; check rocminfo lists gfx1151 and HIP_VISIBLE_DEVICES is unset")
+             "        fix: run $ME preflight; check rocminfo lists gfx1151 and HIP_VISIBLE_DEVICES is unset")
 dev = torch.device("cuda")
 a = torch.randn(1024, 1024, generator=torch.Generator().manual_seed(0))
 b = torch.randn(1024, 1024, generator=torch.Generator().manual_seed(1))
@@ -307,7 +315,7 @@ cmd_setup() {
   network_url "$network" >/dev/null || die "network: production or staging"
   [[ -x "$UV" ]] || die "missing $UV: run this from the extracted podtorrent-headless folder"
   if (( use_service )) && ! command -v systemctl >/dev/null; then
-    say "systemd not found: running the peer just for setup (start it later with ./podtorrent peer)"
+    say "systemd not found: running the peer just for setup (start it later with $ME peer)"
     use_service=0
   fi
 
@@ -370,10 +378,10 @@ cmd_setup() {
 
   say "step 5/5: model and layers"
   "$UV" run --frozen --project "$BACKEND" podtorrent setup --port "$PORT" ${pass[@]+"${pass[@]}"} \
-    || stuck "setup didn't finish; run ./podtorrent setup again to pick up where it stopped"
+    || stuck "setup didn't finish; run $ME setup again to pick up where it stopped"
 
   if [[ -f "$DATA/network.json" ]]; then
-    say "already joined the PodTorrent network as $(network_name) node; ./podtorrent leave to stop"
+    say "already joined the PodTorrent network as $(network_name) node; $ME leave to stop"
   elif [[ "$join" == ask && $yes == 0 ]]; then
     local ans
     read -r -p "podtorrent: join the PodTorrent network on $network now? You need a node id and token. [y/N] " ans
@@ -382,20 +390,20 @@ cmd_setup() {
   if [[ "$join" == yes && ! -f "$DATA/network.json" ]]; then
     cmd_join --network "$network"
   elif [[ ! -f "$DATA/network.json" ]]; then
-    say "to join the network later: ./podtorrent join --network $network"
+    say "to join the network later: $ME join --network $network"
   fi
 
   echo
   if [[ -n "$SETUP_PEER" ]]; then
-    say "done. The setup peer stops now; run ./podtorrent peer (or ./podtorrent install-service) to keep serving"
+    say "done. The setup peer stops now; run $ME peer (or $ME install-service) to keep serving"
   elif service_active; then
     say "done. The peer runs as a service and keeps serving across logouts and reboots (with linger enabled)"
     say "logs:    journalctl --user -u podtorrent -f"
   else
-    say "done. The peer you started keeps serving while it runs; ./podtorrent install-service keeps it up across logouts"
+    say "done. The peer you started keeps serving while it runs; $ME install-service keeps it up across logouts"
     say "logs:    $DATA/engine.log"
   fi
-  say "watch:   ./podtorrent top       (this machine and the swarm, live)"
+  say "watch:   $ME top       (this machine and the swarm, live)"
 }
 
 # ---- doctor ----
@@ -510,7 +518,7 @@ EOF
     fi
   else
     echo "no venv yet at $DATA/venv" >"$dir/torch.txt"
-    bad+=("PyTorch isn't installed yet: run ./podtorrent setup")
+    bad+=("PyTorch isn't installed yet: run $ME setup")
   fi
 
   if node_up; then
@@ -523,11 +531,11 @@ print(urllib.request.urlopen(sys.argv[1], timeout=10).read().decode())' "http://
       done
       t 30 "$UV" run --frozen --project "$BACKEND" podtorrent status >"$dir/status.txt" 2>&1 || true
       if grep -q '"slices": \[\]' "$dir/status.json" 2>/dev/null; then
-        bad+=("the peer serves no layers: run ./podtorrent setup to pick some")
+        bad+=("the peer serves no layers: run $ME setup to pick some")
       fi
     fi
   else
-    bad+=("no peer running on 127.0.0.1:$PORT: start it with ./podtorrent setup (or ./podtorrent peer)")
+    bad+=("no peer running on 127.0.0.1:$PORT: start it with $ME setup (or $ME peer)")
   fi
 
   if command -v systemctl >/dev/null; then
@@ -702,7 +710,7 @@ cmd_uninstall_service() {
   say "removed the podtorrent service"
 }
 
-usage() { sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,18p' "${BASH_SOURCE[0]}" | sed -e 's/^# \{0,1\}//' -e "s|\./podtorrent|$ME|g"; }
 
 case "${1:-}" in
   setup) shift; cmd_setup "$@" ;;
@@ -717,7 +725,7 @@ case "${1:-}" in
   # The engine's own commands, against the running peer: models, swarm, serve, unserve, pod, video.
   top|status|models|swarm|serve|unserve|pod|video)
     uv_env
-    [[ -x "$DATA/venv/bin/python" ]] || die "run ./podtorrent setup (or ./podtorrent peer) first"
+    [[ -x "$DATA/venv/bin/python" ]] || die "run $ME setup (or $ME peer) first"
     exec "$UV" run --frozen --project "$BACKEND" podtorrent "$@" ;;
   -h|--help|help|"") usage ;;
   *) usage; exit 2 ;;
