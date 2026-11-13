@@ -6,7 +6,7 @@ import { valuation, valuationError, bases, basis, usdFor, kwh, usd } from "../va
 import { button, armedButton, ticker } from "../ui.js";
 import { icon } from "../icons.js";
 import { areaChart, barChart } from "../viz/chart.js";
-import { startHost, stopNode, unserveSlice, cancelDownload, encoderStatus, videoStatus } from "../engine.js";
+import { startHost, stopNode, unserveSlice, cancelDownload, encoderStatus, videoStatus, engineErrorLines } from "../engine.js";
 import { isTauri } from "../native.js";
 
 // CUDA 12.8 PyTorch needs this NVIDIA driver or newer (backend.MIN_NVIDIA_DRIVER).
@@ -200,14 +200,14 @@ export default {
         offline.hidden = !off;
         offBtn.disabled = !isTauri;
         offErr.hidden = !(off && s.engine.error);
-        if (off && s.engine.error) offErr.replaceChildren(icon("alert"), h("div.grow", h("b", "The engine stopped"), h("div.mono.small", s.engine.error.split("\n").slice(-3).join("\n"))));
+        if (off && s.engine.error) offErr.replaceChildren(icon("alert"), h("div.grow", h("b", "The engine stopped"), h("div.mono.small", engineErrorLines(s.engine.error).join("\n"))));
         running.querySelector(".hero-r").hidden = off;
         if (off) sliceList.dataset.off = "1"; else delete sliceList.dataset.off;
         if (show === "setup") {
           startBtn.disabled = !isTauri;
           text(machine, hl ? `This machine: ${hl.chip || "Unknown chip"} · ${fmt.gb(hl.mem_total_gb)} memory · ${hl.os}. Half of Qwen3-30B-A3B (4-bit) needs about 8 GB plus KV cache; serve fewer layers on a smaller machine.${oldDriver(hl) ? ` The NVIDIA driver (${hl.gpu.driver}) is too old for the GPU to be used: update it to ${MIN_NVIDIA_DRIVER} or newer, or this machine runs on the CPU.` : ""}` : "");
           errBox.hidden = !s.engine.error;
-          if (s.engine.error) errBox.replaceChildren(icon("alert"), h("div.grow", h("b", "The engine stopped"), h("div.mono.small", s.engine.error.split("\n").slice(-3).join("\n"))));
+          if (s.engine.error) errBox.replaceChildren(icon("alert"), h("div.grow", h("b", "The engine stopped"), h("div.mono.small", engineErrorLines(s.engine.error).join("\n"))));
           return;
         }
         if (show === "start") {

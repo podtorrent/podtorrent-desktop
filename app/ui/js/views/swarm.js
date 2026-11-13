@@ -7,7 +7,7 @@ import { swarmGraph, PLAYBACK } from "../viz/graph.js";
 import { modelStrip } from "../viz/strip.js";
 import { go, actions } from "../actions.js";
 import { peerSheet } from "./peers.js";
-import { videoSwarmStatus } from "../engine.js";
+import { videoSwarmStatus, engineErrorLines } from "../engine.js";
 import { videoFlow, activeStage } from "../viz/videoflow.js";
 
 /** Video roles of every machine (encoder layers, renders or not) and the route a video job takes. */
@@ -94,7 +94,7 @@ export default {
       }
       emptyBox.replaceChildren(empty({
         icon: "swarm", title: "This machine isn't in a swarm yet",
-        body: s.engine.error ? `The engine stopped: ${s.engine.error.split("\n").pop().slice(0, 160)}` : "Start your node to join the global swarm. Every machine is an equal peer: it finds the others automatically, connects to them directly, serves a slice of the model and can chat with it.",
+        body: s.engine.error ? `The engine stopped: ${(engineErrorLines(s.engine.error, 1)[0] || "").slice(0, 160)}` : "Start your node to join the global swarm. Every machine is an equal peer: it finds the others automatically, connects to them directly, serves a slice of the model and can chat with it.",
         tone: s.engine.error ? "gap" : "",
         actions: [button("Start My Node", { variant: "primary", icon: "play", onclick: actions.startHost })],
       }));
@@ -142,7 +142,7 @@ export default {
         const preview = s.engine.phase === "stopped";
         cta.hidden = !preview; offBadge.hidden = !preview;
         if (preview) text(ctaBody, s.engine.error
-          ? `The engine stopped: ${s.engine.error.split("\n").pop().slice(0, 160)}`
+          ? `The engine stopped: ${(engineErrorLines(s.engine.error, 1)[0] || "").slice(0, 160)}`
           : `${st.online} machine${st.online === 1 ? " is" : "s are"} online right now. Start your node to join them: it connects to each peer directly, serves a slice of the model and lets you chat with the whole swarm.`);
         S.peers.set(st.online, preview ? "online now" : st.total > st.online ? `${st.total - st.online} offline` : st.online === 1 ? "just this machine" : "all reachable");
         S.mem.set(st.pooled || null, st.online ? `across ${st.online} machine${st.online > 1 ? "s" : ""}` : "");
