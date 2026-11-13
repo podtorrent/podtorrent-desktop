@@ -9,6 +9,18 @@ const HOST = `http://localhost:${HOST_PORT}`;
 /** Approximate size of the first-run install off Apple Silicon (CUDA PyTorch, unpacked). */
 const SETUP_BYTES = 4.5e9;
 
+/** The lines of a stopped engine's log worth showing: its error lines, not the log's tail.
+ *  uv ends a failed build with a "hint:" block that guesses at a missing build dependency
+ *  (e.g. "install encodings") even when the real failure is elsewhere, so that block is
+ *  dropped and the last lines that name an error are shown; else the last `n` lines. */
+export function engineErrorLines(log, n = 3) {
+  let lines = String(log || "").split("\n").map(l => l.trimEnd()).filter(l => l.trim());
+  const hint = lines.findIndex(l => /^\s*hint:/.test(l));
+  if (hint > 0) lines = lines.slice(0, hint);
+  const err = lines.filter(l => /\b(Fatal Python error|[A-Z]\w*(Error|Exception)):|^\s*(error|ERROR)\b:?|Failed to build/.test(l));
+  return (err.length ? err : lines).slice(-n).map(l => l.trim());
+}
+
 let ws = null, wsTimer = null, liveTimer = null, epoch = 0;
 const toast = (text, kind = "info", detail) => emit("toast", { text, kind, detail });
 const post = (path, body, ms) => json(HOST + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }, ms);

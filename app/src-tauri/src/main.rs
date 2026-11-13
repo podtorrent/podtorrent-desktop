@@ -27,6 +27,41 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(windows)]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
+/// A command for a program outside the app, without the environment the AppImage launcher set.
+/// AppImageKit's AppRun (which Tauri bundles) sets PYTHONHOME/PYTHONPATH to the mounted image
+/// and puts its folders first on PATH/LD_LIBRARY_PATH etc. Inherited, they make uv's managed
+/// Python look for its standard library inside the AppImage ("No module named 'encodings'"),
+/// break system Python tools such as powerprofilesctl, and load the image's libraries into
+/// ROCm/CUDA processes. Outside an AppImage nothing changes.
+fn host_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(target_os = "linux")]
+    if let Some(appdir) = std::env::var_os("APPDIR").filter(|d| !d.is_empty()) {
+        let appdir = PathBuf::from(appdir);
+        for var in ["PYTHONHOME", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE", "PERLLIB"] {
+            cmd.env_remove(var);
+        }
+        // Keep the user's own entries, drop the ones that point into the mounted image.
+        for var in ["PATH", "LD_LIBRARY_PATH", "XDG_DATA_DIRS", "GSETTINGS_SCHEMA_DIR", "QT_PLUGIN_PATH"] {
+            let Some(val) = std::env::var_os(var) else { continue };
+            let kept: Vec<PathBuf> = std::env::split_paths(&val)
+                .filter(|p| !p.as_os_str().is_empty() && !p.starts_with(&appdir))
+                .collect();
+            if kept.is_empty() {
+                if var == "PATH" {
+                    cmd.env(var, "/usr/local/bin:/usr/bin:/bin");
+                } else {
+                    cmd.env_remove(var);
+                }
+            } else if let Ok(joined) = std::env::join_paths(kept) {
+                cmd.env(var, joined);
+            }
+        }
+    }
+    cmd
+}
+
 /// Stop the engine and everything it started (uv -> python).
 fn kill_group(child: &mut Child) {
     // Already exited (it crashed, or its node went away): nothing to signal.
@@ -164,7 +199,7 @@ fn start_engine(app: AppHandle, state: State<Engine>, mode: String, name: Option
     std::fs::create_dir_all(&data).map_err(|e| e.to_string())?;
     let log = std::fs::File::create(data.join("engine.log")).map_err(|e| e.to_string())?;
     let uv = if dir.join(UV).exists() { dir.join(UV) } else { PathBuf::from(UV) };
-    let mut cmd = Command::new(uv);
+    let mut cmd = host_command(uv);
     cmd.args(["run", "--project"]).arg(&dir).args(["podtorrent"]).args(&args)
         .env("PODTORRENT_HOME", &data)
         .env("UV_PROJECT_ENVIRONMENT", data.join("venv"))
@@ -300,7 +335,7 @@ fn start_agent(app: &AppHandle, state: &Agent) -> Result<(), String> {
     }
     kill_stray_agents(&bin);
     let log = std::fs::File::create(data.join("agent.log")).map_err(|e| e.to_string())?;
-    let mut cmd = Command::new(bin);
+    let mut cmd = host_command(bin);
     cmd.arg("-manifest").arg(&manifest)
         .env("PODTORRENT_ENGINE", format!("http://127.0.0.1:{}", engine_port()))
         .env("PODTORRENT_NODE_TOKEN", token)
@@ -372,7 +407,7 @@ fn open_dashboard(network: String) -> Result<(), String> {
     #[cfg(windows)]
     let r = Command::new("explorer").arg(url).status();
     #[cfg(all(unix, not(target_os = "macos")))]
-    let r = Command::new("xdg-open").arg(url).status();
+    let r = host_command("xdg-open").arg(url).status();
     r.map(|_| ()).map_err(|e| e.to_string())
 }
 
@@ -632,7 +667,7 @@ fn power_status() -> (&'static str, Option<u32>, bool) {
     }
     // A desktop has no battery: on AC even when no Mains supply is listed.
     let power = match (ac, pct) { (Some(true), _) | (None, None) => "ac", (Some(false), _) => "battery", (None, Some(_)) => "unknown" };
-    let saver = Command::new("powerprofilesctl").arg("get").output().ok()
+    let saver = host_command("powerprofilesctl").arg("get").output().ok()
         .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "power-saver");
     (power, pct, saver)
 }
@@ -642,7 +677,7 @@ fn power_status() -> (&'static str, Option<u32>, bool) { ("unknown", None, false
 /// The first NVIDIA GPU's name, temperature, load, memory and driver version from nvidia-smi, or None.
 #[cfg(not(target_os = "macos"))]
 fn nvidia_gpu() -> Option<serde_json::Value> {
-    let mut cmd = Command::new("nvidia-smi");
+    let mut cmd = host_command("nvidia-smi");
     cmd.args(["--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,driver_version", "--format=csv,noheader,nounits"]);
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flashes every poll
