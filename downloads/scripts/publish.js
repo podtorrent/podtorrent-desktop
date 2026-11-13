@@ -1,5 +1,8 @@
-// Upload one installer to R2 and point latest.json at it.
-//   node downloads/scripts/publish.js <mac|windows|linux|linux-amd|linux-amd-cli> <path-to-installer> [--notes "..."] [--no-latest]
+// Upload one build to R2 and point latest.json at it.
+//   node downloads/scripts/publish.js <name> <path-to-build> [--notes "..."] [--no-latest]
+// <name> is a download name from src/builds.json (macos-arm64, windows-x64-cuda, linux-x64-cuda,
+// linux-x64-rocm, linux-x64-rocm-headless) or its older name (mac, windows, linux, linux-amd, linux-amd-cli).
+// The file is stored under the standard name podtorrent-<version>-<name>.<ext>, whatever it was built as.
 // The version comes from app/src-tauri/tauri.conf.json. Versioned files are never overwritten;
 // to roll back, re-point latest.json with: node downloads/scripts/publish.js promote <version>
 import { execFileSync } from "node:child_process";
@@ -12,8 +15,10 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
 const BUCKET = "podtorrent-releases";
-// linux-amd-cli: the headless tarball for SSH-only Linux AMD machines (headless/package.sh).
-const PLATFORMS = ["mac", "windows", "linux", "linux-amd", "linux-amd-cli"];
+const { builds: BUILDS } = JSON.parse(fs.readFileSync(path.join(here, "../src/builds.json"), "utf8"));
+// Every accepted name (standard or older) -> its standard name.
+const NAMES = Object.fromEntries(Object.entries(BUILDS).flatMap(([n, b]) => [[n, n], ...b.legacy.map((l) => [l, n])]));
+const PLATFORMS = Object.values(BUILDS).map((b) => b.manifest);   // latest.json / release.json fields
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -54,25 +59,28 @@ if (cmd === "promote") {
   process.exit(0);
 }
 
-if (!PLATFORMS.includes(cmd) || !arg) {
-  console.error("usage: publish.js <mac|windows|linux|linux-amd|linux-amd-cli> <installer> [--notes '...'] [--no-latest] | promote <version>");
+if (!NAMES[cmd] || !arg) {
+  console.error(`usage: publish.js <${Object.keys(BUILDS).join("|")}> <build> [--notes '...'] [--no-latest] | promote <version>`);
   process.exit(1);
 }
+const name = NAMES[cmd];
+const spec = BUILDS[name];
 
 const version = JSON.parse(fs.readFileSync(path.join(root, "app/src-tauri/tauri.conf.json"), "utf8")).version;
-const file = path.basename(arg);
+const file = `podtorrent-${version}-${name}.${spec.ext}`;   // the naming standard, whatever it was built as
 const data = fs.readFileSync(arg);
 const prefix = `releases/v${version}`;
 const build = { key: `${prefix}/${file}`, file, sha256: createHash("sha256").update(data).digest("hex"), size: data.length };
 
 const rel = getJson(`${prefix}/release.json`) ?? { version, date: new Date().toISOString().slice(0, 10), notes: "" };
-if (rel[cmd] && rel[cmd].sha256 !== build.sha256) {
-  throw new Error(`v${version} already has a different ${cmd} build; bump the version instead of overwriting`);
+const key = spec.manifest;
+if (rel[key] && rel[key].sha256 !== build.sha256) {
+  throw new Error(`v${version} already has a different ${name} build; bump the version instead of overwriting`);
 }
 if (notes) rel.notes = notes;
-rel[cmd] = build;
+rel[key] = build;
 
-console.log(`uploading ${file} (${(build.size / 1e6).toFixed(0)} MB) -> ${prefix}/`);
+console.log(`uploading ${path.basename(arg)} as ${file} (${(build.size / 1e6).toFixed(0)} MB) -> ${prefix}/`);
 wrangler("put", `${BUCKET}/${build.key}`, "--file", path.resolve(arg), "--content-type", "application/octet-stream");
 putJson(`${prefix}/release.json`, rel);
 
@@ -84,5 +92,5 @@ if (!noLatest) {
     if (!merged[p] && latest[p]) merged[p] = latest[p];
   }
   putJson("latest.json", merged);
-  console.log(`latest -> v${version} (${cmd})`);
+  console.log(`latest -> v${version} (${name})`);
 }

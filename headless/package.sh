@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build podtorrent-headless-vX.Y.Z-linux-amd64-rocm.tar.gz: uv, the Python backend locked to ROCm PyTorch,
+# Build podtorrent-X.Y.Z-linux-x64-rocm-headless.tar.gz: uv, the Python backend locked to ROCm PyTorch,
 # podtorrent-agent, the `podtorrent` launcher and README.md (the user's guide). No Tauri, no GTK. Run on Linux x86_64 (uv is copied in).
 #
 #   PODTORRENT_AGENT_BIN=/path/to/podtorrent-agent headless/package.sh [out-dir]
@@ -10,7 +10,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 out="$(mkdir -p "${1:-$root/dist}" && cd "${1:-$root/dist}" && pwd)"
 version="${VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/pyproject.toml" | head -n1)}"
-name="podtorrent-headless-v$version-linux-amd64-rocm"
+name="podtorrent-$version-linux-x64-rocm-headless"   # the naming standard: downloads/src/builds.json
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
@@ -22,6 +22,7 @@ PODTORRENT_TORCH_INDEX="${PODTORRENT_TORCH_INDEX:-https://repo.amd.com/rocm/whl/
 grep -q 'repo.amd.com/rocm' "$stage/$name/backend/pyproject.toml" || { echo "backend is not locked to ROCm" >&2; exit 1; }
 cp "$root/headless/podtorrent" "$stage/$name/podtorrent"
 cp "$root/headless/README.md" "$stage/$name/README.md"
+printf '%s\n' "$version" >"$stage/$name/VERSION"
 chmod +x "$stage/$name/podtorrent"
 tar -C "$stage" -czf "$out/$name.tar.gz" "$name"
 echo "$out/$name.tar.gz"

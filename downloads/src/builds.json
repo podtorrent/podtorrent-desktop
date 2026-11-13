@@ -1,0 +1,10 @@
+{
+  "_comment": "The naming standard for every PodTorrent download. Public name: <os>-<arch>[-<gpu stack>][-headless]. File: podtorrent-<version>-<name>.<ext>. URLs: /download/<name>, /download/<name>.<ext>, /download/<name>.sha256, /download/v/<version>/<name>. `manifest` is the field name in latest.json and release.json (kept from before the standard, so existing releases still resolve); `legacy` are older URL names that keep working. Used by src/index.ts (the Worker) and scripts/publish.js.",
+  "builds": {
+    "macos-arm64": { "manifest": "mac", "ext": "dmg", "legacy": ["mac"], "label": "macOS (Apple Silicon)" },
+    "windows-x64-cuda": { "manifest": "windows", "ext": "exe", "legacy": ["windows"], "label": "Windows (NVIDIA)" },
+    "linux-x64-cuda": { "manifest": "linux", "ext": "AppImage", "legacy": ["linux"], "label": "Linux desktop (NVIDIA)" },
+    "linux-x64-rocm": { "manifest": "linux-amd", "ext": "AppImage", "legacy": ["linux-amd"], "label": "Linux desktop (AMD Ryzen AI Max)" },
+    "linux-x64-rocm-headless": { "manifest": "linux-amd-cli", "ext": "tar.gz", "legacy": ["linux-amd-cli"], "label": "Linux headless (AMD Ryzen AI Max)" }
+  }
+}

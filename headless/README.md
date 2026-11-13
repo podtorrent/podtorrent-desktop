@@ -27,8 +27,8 @@ The installer puts PodTorrent in `~/.local/share/podtorrent` and the `podtorrent
 afterwards, log out and back in, or run `export PATH="$HOME/.local/bin:$PATH"`.
 
 Prefer to download it yourself? Run
-`wget https://podtorrent.com/download/linux-amd-cli.tar.gz` (or `curl -LO` the same URL), then
-`tar xzf linux-amd-cli.tar.gz && cd podtorrent-headless-*` and run `./podtorrent setup`. The rest
+`wget https://podtorrent.com/download/linux-x64-rocm-headless.tar.gz` (or `curl -LO` the same URL), then
+`tar xzf linux-x64-rocm-headless.tar.gz && cd podtorrent-*-headless` and run `./podtorrent setup`. The rest
 of this guide says `podtorrent`; from an unpacked folder it's `./podtorrent`.
 
 `setup` takes you through it step by step:

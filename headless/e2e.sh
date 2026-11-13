@@ -9,7 +9,7 @@
 # model's layers (17 GB for the default model), more than a CI runner's memory, so the forward pass
 # stands in for it.
 #
-#   headless/e2e.sh <extracted podtorrent-headless-… folder, or ~/.local/share/podtorrent/app after install.sh>
+#   headless/e2e.sh <extracted podtorrent-…-headless folder, or ~/.local/share/podtorrent/app after install.sh>
 #
 # E2E_MODEL / E2E_LO / E2E_HI pick the slice (default: layers 0–3 of Qwen3-30B-A3B-4bit, about 1.4 GB).
 # It uses ~/.podtorrent, so run it on a throwaway machine or user.

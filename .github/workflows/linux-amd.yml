@@ -11,9 +11,9 @@ on:
     # Build only when something that goes into the installer changes, or this workflow itself: not for the
     # downloads site, docs, tests, iOS, the rendezvous, or another platform's workflow.
     # Tag pushes always build (GitHub skips path filters for tags).
-    paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', 'headless/**', '.github/workflows/linux-amd.yml']
+    paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', 'headless/**', 'install/**', '.github/workflows/linux-amd.yml']
   pull_request:
-    paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', 'headless/**', '.github/workflows/linux-amd.yml']
+    paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', 'headless/**', 'install/**', '.github/workflows/linux-amd.yml']
   # A manual run with "publish" ticked uploads the build like a tag does: for a release whose tag build
   # failed, or when the artifact quota is full and there is nothing to download and publish by hand.
   workflow_dispatch:
@@ -96,10 +96,25 @@ jobs:
             app/src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
 
-      # On a v* tag (or a manual run that asks for it), upload the AppImage to R2 and make it the latest at podtorrent.com/download/linux-amd.
-      # Tauri names it like the CUDA build (PodTorrent_<version>_amd64.AppImage) and publish.js keys files by
-      # name, so it is renamed first: otherwise one build would replace the other in the release.
-      # The page has one AMD download, so only the gfx1151 row publishes.
+      # The Linux desktop installer, the way a user runs it (sh is dash here): install, then update in place.
+      - if: matrix.target == 'gfx1151'
+        name: Install with install.sh (linux-x64-rocm)
+        working-directory: ${{ github.workspace }}
+        run: |
+          f="$(ls "$PWD"/app/src-tauri/target/release/bundle/appimage/*.AppImage)"
+          PODTORRENT_FILE="$f" sh install/install.sh --build linux-x64-rocm
+          PODTORRENT_FILE="$f" sh install/install.sh --build linux-x64-rocm
+          d="$HOME/.local/share/podtorrent/desktop"
+          test -x "$d/PodTorrent.AppImage" && test -f "$d/PodTorrent.AppImage.old"
+          test "$(cat "$d/BUILD")" = linux-x64-rocm
+          test "$(readlink "$HOME/.local/bin/podtorrent-desktop")" = "$d/PodTorrent.AppImage"
+          grep -qF "Exec=\"$d/PodTorrent.AppImage\"" "$HOME/.local/share/applications/podtorrent.desktop"
+          test -s "$HOME/.local/share/icons/podtorrent.png"
+          "$d/PodTorrent.AppImage" --appimage-version
+
+      # On a v* tag (or a manual run that asks for it), upload the AppImage to R2 and make it the latest at
+      # podtorrent.com/download/linux-x64-rocm; publish.js stores it as podtorrent-<version>-linux-x64-rocm.AppImage
+      # (Tauri names it like the CUDA build). The page has one AMD download, so only the gfx1151 row publishes.
       - if: (startsWith(github.ref, 'refs/tags/v') || inputs.publish) && matrix.target == 'gfx1151'
         working-directory: downloads
         env:
@@ -107,10 +122,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           npm ci
-          src=$(ls ../app/src-tauri/target/release/bundle/appimage/*.AppImage)
-          dst="${src%_amd64.AppImage}_amd64-rocm.AppImage"
-          mv "$src" "$dst"
-          node scripts/publish.js linux-amd "$dst"
+          node scripts/publish.js linux-x64-rocm ../app/src-tauri/target/release/bundle/appimage/*.AppImage
 
   # The headless build for an SSH-only machine: a tarball with uv, the backend locked to ROCm PyTorch
   # (gfx1151), podtorrent-agent and the `podtorrent` launcher. No Tauri or GTK. On a v* tag (or a manual run
@@ -149,7 +161,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
-          name: podtorrent-headless-linux-amd64-rocm
+          name: podtorrent-linux-x64-rocm-headless
           path: dist/*.tar.gz
           if-no-files-found: error
 
@@ -167,13 +179,13 @@ jobs:
         # update path runs too, then tested through the `podtorrent` command it puts on PATH.
         run: |
           tarball="$(ls "$PWD"/dist/*.tar.gz)"
-          PODTORRENT_TARBALL="$tarball" sh headless/install.sh
-          PODTORRENT_TARBALL="$tarball" sh headless/install.sh
+          PODTORRENT_FILE="$tarball" sh install/install.sh --headless
+          PODTORRENT_FILE="$tarball" sh install/install.sh --headless
           test -d "$HOME/.local/share/podtorrent/app.old"
           export PATH="$HOME/.local/bin:$PATH"
           headless/e2e.sh "$HOME/.local/share/podtorrent/app"
 
-      # The repo is private, so the client downloads from podtorrent.com/download/linux-amd-cli (R2), like the AppImage.
+      # The repo is private, so the client downloads from podtorrent.com/download/linux-x64-rocm-headless (R2), like the AppImage.
       - if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
         name: Publish to the download page
         working-directory: downloads
@@ -182,7 +194,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           npm ci
-          node scripts/publish.js linux-amd-cli ../dist/*.tar.gz
+          node scripts/publish.js linux-x64-rocm-headless ../dist/*.tar.gz
 
       - if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
         name: Upload to the GitHub release
