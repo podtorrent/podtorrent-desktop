@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import sys
 import threading
-import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 

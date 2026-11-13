@@ -10,6 +10,7 @@
 #   ./podtorrent gpu-check          run a computation on the GPU with the installed PyTorch
 #   ./podtorrent install-service    run the peer as a systemd --user service (survives logout and reboot)
 #   ./podtorrent uninstall-service  remove that service
+#   ./podtorrent top                live view of this machine and the swarm (status: once; status --json)
 #   ./podtorrent models | swarm | serve | unserve | pod   the engine's commands, against the running peer
 #
 # Data (models, venv, logs) lives in ~/.podtorrent, or the folder named in ~/.podtorrent/location,
@@ -387,7 +388,7 @@ cmd_setup() {
     say "done. The peer you started keeps serving while it runs; ./podtorrent install-service keeps it up across logouts"
     say "logs:    $DATA/engine.log"
   fi
-  say "swarm:   ./podtorrent models    (coverage of every model, and what this machine serves)"
+  say "watch:   ./podtorrent top       (this machine and the swarm, live)"
 }
 
 # ---- commands ----
@@ -512,7 +513,7 @@ cmd_uninstall_service() {
   say "removed the podtorrent service"
 }
 
-usage() { sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 case "${1:-}" in
   setup) shift; cmd_setup "$@" ;;
@@ -524,7 +525,7 @@ case "${1:-}" in
   install-service) shift; cmd_install_service "$@" ;;
   uninstall-service) cmd_uninstall_service ;;
   # The engine's own commands, against the running peer: models, swarm, serve, unserve, pod, video.
-  models|swarm|serve|unserve|pod|video)
+  top|status|models|swarm|serve|unserve|pod|video)
     uv_env
     [[ -x "$DATA/venv/bin/python" ]] || die "run ./podtorrent setup (or ./podtorrent peer) first"
     exec "$UV" run --frozen --project "$BACKEND" podtorrent "$@" ;;

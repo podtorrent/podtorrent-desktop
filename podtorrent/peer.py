@@ -584,6 +584,7 @@ class PeerApp:
 
     def on_swarm(self, peers: list[dict], status: str):
         self.peers = peers
+        self.swarm_status = status
         self.emit("swarm", key="swarm", status=status, self_id=self.me, peers=peers)
         seen = set()
         for p in peers:
@@ -1220,6 +1221,28 @@ class PeerApp:
         self._n_layers.pop(repo, None) if repo != self.repo else None
         return web.json_response({"ok": True})
 
+    async def swarm_api(self, _):
+        """Everything `podtorrent top` shows in one read: this machine, every peer the rendezvous lists
+        (with its link, stats and slices) and each model's coverage. Read-only."""
+        s = self.slices
+        me = {**self.swarm_record(), "peer_id": self.me, "mem_free_gb": round(self.free_for_models(), 1),
+              "mem_active_gb": round(B.mem_active_gb(), 1), "busy": self.active > 0 or s.busy,
+              "active_requests": self.active + len(s.caches), "tokens": self.stats["tokens"] + s.tokens,
+              "requests": self.stats["requests"] + s.served, "slices": s.slices(), "phase": s.phase}
+        peers = []
+        for p in self.peers:
+            if p["peer_id"] == self.me:
+                continue
+            link, info = p.get("link") or {}, (p.get("link") or {}).get("info") or {}
+            peers.append({"name": p.get("name") or p["peer_id"][:8], "peer_id": p["peer_id"],
+                          "chip": p.get("chip"), "mem_total_gb": p.get("mem_total_gb"),
+                          "state": link.get("state") or "seen", "rtt_ms": link.get("rtt_ms"), "via": link.get("via"),
+                          "busy": info.get("busy"), "active_requests": info.get("active_requests"),
+                          "tokens": info.get("tokens_processed"), "requests": info.get("requests_served"),
+                          "slices": [{k: x.get(k) for k in ("model", "lo", "hi", "loaded")} for x in self.peer_slices(p)]})
+        return web.json_response({"status": getattr(self, "swarm_status", "connecting"), "me": me, "peers": peers,
+                                  "models": self.models(), "time": time.time()})
+
     async def models_api(self, _):
         return web.json_response({"models": self.models(), "mem_free_gb": round(self.free_for_models(), 1),
                                   "slices": self.slices.slices()})
@@ -1491,7 +1514,7 @@ def run_peer(repo: str, model_dir, n_layers: int | None, port: int, serve: list[
         serve = [(c.get("model") or repo, int(c["lo"]), int(c["hi"])) for c in configured_slices()]
     app = web.Application(middlewares=[cors], client_max_size=16 << 20)
     app.add_routes([web.get("/", app_state.index), web.get("/ws", app_state.ws), web.get("/status", app_state.status),
-                    web.get("/api/models", app_state.models_api),
+                    web.get("/api/models", app_state.models_api), web.get("/api/swarm", app_state.swarm_api),
                     web.get("/api/catalog/search", app_state.catalog_search),
                     web.get("/api/catalog/info", app_state.catalog_info),
                     web.get("/api/catalog/local", app_state.catalog_local),
