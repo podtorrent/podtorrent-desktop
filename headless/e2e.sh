@@ -45,7 +45,7 @@ print(eval(sys.argv[2]))' "$1" "$2"
 }
 
 group "launcher"
-./podtorrent help | grep -q "./podtorrent setup" || fail "help doesn't list setup"
+./podtorrent help | grep -qE "^  (\./)?podtorrent setup" || fail "help doesn't list setup"
 [[ -f README.md ]] || fail "the tarball has no README.md"
 # Installed by install.sh: the `podtorrent` on PATH is this folder's, and it names itself that way.
 if [[ "$(readlink -f "$(command -v podtorrent || true)")" == "$dir/podtorrent" ]]; then
