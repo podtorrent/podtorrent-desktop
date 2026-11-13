@@ -22,9 +22,9 @@ interface Env {
 type Build = { key: string; file: string; sha256: string; size: number };
 type Release = { version: string; date: string; notes: string } & Partial<Record<Manifest, Build>>;
 
-const PLATFORMS = ["mac", "windows", "linux", "linux-amd"] as const;   // cards on the page
+const PLATFORMS = ["mac", "windows", "linux", "linux-amd", "linux-amd-cli"] as const;   // cards on the page
 type Platform = (typeof PLATFORMS)[number];
-type Manifest = Platform | "linux-amd-cli";
+type Manifest = Platform;
 type Spec = { manifest: Manifest; ext: string; legacy: string[]; label: string };
 const BUILDS = standard.builds as Record<string, Spec>;
 // Every name a URL may use (standard or legacy) -> its standard name.
@@ -114,7 +114,7 @@ async function serveBuild(env: Env, req: Request, key: string, file: string, imm
 // Per-platform card content. Requirements and install steps match docs/WINDOWS_PLAN.md and LINUX_PLAN.md.
 const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: string[]; steps: string[] }> = {
   mac: {
-    name: "macOS", arch: "Apple Silicon (M1 or later)",
+    name: "macOS", arch: "Apple Silicon · .dmg",
     icon: `<path d="M16.4 12.6c0-2.4 2-3.6 2.1-3.7-1.1-1.7-2.9-1.9-3.5-1.9-1.5-.2-2.9.9-3.7.9-.8 0-1.9-.9-3.2-.8-1.6 0-3.1 1-4 2.4-1.7 3-.4 7.4 1.2 9.8.8 1.2 1.8 2.5 3 2.4 1.2 0 1.7-.8 3.1-.8 1.5 0 1.9.8 3.2.8 1.3 0 2.2-1.2 3-2.4.9-1.4 1.3-2.7 1.3-2.8-.1 0-2.5-1-2.5-3.9zM14 5.4c.7-.8 1.1-1.9 1-3-1 0-2.1.7-2.8 1.5-.6.7-1.2 1.8-1 2.9 1.1.1 2.1-.6 2.8-1.4z"/>`,
     needs: ["Apple Silicon Mac", "16 GB memory or more recommended"],
     // The app isn't notarized, so Gatekeeper reports a downloaded copy as "damaged" until the quarantine flag is cleared.
@@ -125,7 +125,7 @@ const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: 
     ],
   },
   windows: {
-    name: "Windows", arch: "x64",
+    name: "Windows", arch: "x64 · NVIDIA",
     icon: `<path d="M3 5.1 10.4 4v7.1H3zm0 13.8 7.4 1.1v-7H3zm8.2 1.2L21 21.5V13h-9.8zm0-16.2V11H21V2.5z"/>`,
     needs: ["Windows 10 or 11", "NVIDIA RTX GPU, driver 570 or newer"],
     steps: [
@@ -135,7 +135,7 @@ const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: 
     ],
   },
   linux: {
-    name: "Linux", arch: "x64 AppImage",
+    name: "Linux", arch: "x64 AppImage · NVIDIA",
     icon: `<path d="M12 2c-2 0-3.2 1.7-3.2 4.2 0 1.4.3 2.3-.4 3.5C7.3 11.6 5 14 5 17c0 .8.3 1.3.7 1.6-.5.6-.9 1.4-.3 2.1.9 1 3.3.6 4.4 0 .7.2 1.5.3 2.2.3s1.5-.1 2.2-.3c1.1.6 3.5 1 4.4 0 .6-.7.2-1.5-.3-2.1.4-.3.7-.8.7-1.6 0-3-2.3-5.4-3.4-7.3-.7-1.2-.4-2.1-.4-3.5C15.2 3.7 14 2 12 2zm-1.6 4.3c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1-.7-.5-.7-1.1.3-1.1.7-1.1zm3.2 0c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1-.7-.5-.7-1.1.3-1.1.7-1.1zM12 9.3c.9 0 2 .6 2 1s-1.1 1.2-2 1.2-2-.8-2-1.2 1.1-1 2-1z"/>`,
     needs: ["Ubuntu 22.04 or newer (or similar)", "NVIDIA RTX GPU, driver 570 or newer"],
     steps: [
@@ -154,6 +154,17 @@ const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: 
       "Preview: the first launch measures how much of the shared memory the GPU can use.",
     ],
   },
+  // The headless tarball (headless/README.md): for an AMD machine reached over SSH, no display.
+  "linux-amd-cli": {
+    name: "Linux headless", arch: "x64 CLI · ROCm · over SSH",
+    icon: `<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v12h16V6zm2.3 2.3a1 1 0 0 1 1.4 0l3 3a1 1 0 0 1 0 1.4l-3 3a1 1 0 1 1-1.4-1.4L8.6 12 6.3 9.7a1 1 0 0 1 0-1.4zM12 15h5a1 1 0 1 1 0 2h-5a1 1 0 1 1 0-2z"/>`,
+    needs: ["AMD Ryzen AI Max / Max+ / Max PRO (Strix Halo), no display needed", "Linux kernel 6.14 or newer; your user in the <code>video</code> and <code>render</code> groups", "About 25 GB free disk, plus the model layers you serve"],
+    steps: [
+      `Install (no root; checks the SHA-256):<code class="cmd">curl -fsSL https://podtorrent.com/install.sh | sh -s -- --headless</code>`,
+      `Set it up: checks the machine, installs PyTorch, picks layers to serve:<code class="cmd">podtorrent setup</code>`,
+      `Watch it live:<code class="cmd">podtorrent top</code>`,
+    ],
+  },
 };
 
 // Shared by the download page and the guide.
@@ -167,33 +178,49 @@ main{max-width:1040px;margin:0 auto;padding:56px 16px 72px}
 h1{margin:0;font-size:clamp(28px,5vw,40px);line-height:1.1;letter-spacing:-.02em}
 .lead{color:var(--mut);max-width:640px;margin:12px 0 0}
 .rel{display:inline-block;margin-top:16px;padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--mut);font-size:14px}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px;row-gap:0;margin:40px 0 24px}
-@media (max-width:720px){.grid{grid-template-columns:minmax(0,1fr)}}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px;margin-bottom:16px;display:grid;grid-row:span 4;grid-template-rows:subgrid;row-gap:0}
-@media (max-width:720px){.card{display:flex;flex-direction:column}}
-.card>*+*{margin-top:16px}
-.card.me{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
-.head{display:flex;align-items:center;gap:14px}
-.os{width:36px;height:36px;flex:none;padding:8px;border-radius:10px;background:var(--soft);color:var(--acc)}
-h2{margin:0;font-size:20px;line-height:1.2}.arch{margin:2px 0 0;color:var(--mut);font-size:14px}
-.tag{display:none;margin-left:auto;white-space:nowrap;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;background:var(--soft);color:var(--acc)}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:start;margin:32px 0 16px}
+@media (max-width:900px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:560px){.grid{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;transition:border-color .15s,box-shadow .15s}
+.card:hover{border-color:color-mix(in srgb,var(--acc) 40%,var(--line))}
+.card.me{border-color:var(--acc);box-shadow:0 0 0 3px color-mix(in srgb,var(--acc) 14%,transparent)}
+.head{display:flex;align-items:center;gap:10px}
+.os{width:30px;height:30px;flex:none;padding:6px;border-radius:8px;background:var(--soft);color:var(--acc)}
+.ttl{min-width:0}
+h2{margin:0;font-size:15px;line-height:1.25;font-weight:600;letter-spacing:-.005em}
+.arch{margin:1px 0 0;color:var(--mut);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tag{display:none;margin-left:auto;white-space:nowrap;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:var(--soft);color:var(--acc)}
 .card.me .tag{display:inline-block}
-.btn{display:flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;border-radius:10px;background:var(--acc);color:var(--accfg);text-decoration:none;font-weight:600}
-.btn:hover{filter:brightness(1.08)}.btn:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
+.row{display:flex;align-items:center;gap:10px;margin-top:14px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;background:var(--fg);color:var(--bg);text-decoration:none;font-size:13.5px;font-weight:600;white-space:nowrap;transition:opacity .15s}
+.card.me .btn{background:var(--acc);color:var(--accfg)}
+.btn:hover{opacity:.88}.btn:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 .btn.off{background:transparent;border:1px dashed var(--line);color:var(--mut);font-weight:500}
-.ic{width:18px;height:18px}
-.meta{margin:8px 0 0;text-align:center;color:var(--mut);font-size:13px}
-.label{margin:0 0 8px;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)}
+.ic{width:15px;height:15px}
+.meta{margin:0;color:var(--mut);font-size:12px;line-height:1.35;min-width:0}
+.more{margin-top:12px;border-top:1px solid var(--line)}
+.more summary{display:flex;align-items:center;justify-content:space-between;padding-top:10px;list-style:none;cursor:pointer;font-size:12.5px;font-weight:500;color:var(--mut);user-select:none}
+.more summary::-webkit-details-marker{display:none}
+.more summary:hover{color:var(--fg)}.more summary:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}
+.chev{width:14px;height:14px;transition:transform .2s}
+.more[open] .chev{transform:rotate(180deg)}
+.more[open] summary{color:var(--fg)}
+.body{padding-top:12px}
+.more::details-content{block-size:0;overflow-y:clip;transition:block-size .22s ease,content-visibility .22s allow-discrete}
+.more[open]::details-content{block-size:auto}
+:root{interpolate-size:allow-keywords}
+.label{margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)}
+.label+*{margin-bottom:14px}
 ul{margin:0;padding-left:18px;color:var(--mut);font-size:14px}
-.needs li+li{margin-top:4px}
-.install{padding-top:16px;border-top:1px solid var(--line)}
-.steps{list-style:none;margin:0;padding:0;counter-reset:s;font-size:14px;color:var(--mut)}
-.steps li{position:relative;padding-left:32px;counter-increment:s;min-height:22px}
-.steps li+li{margin-top:12px}
-.steps li::before{content:counter(s);position:absolute;left:0;top:0;width:22px;height:22px;border-radius:50%;background:var(--soft);color:var(--acc);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.needs{font-size:13px;padding-left:16px}.needs li+li{margin-top:3px}
+.steps{list-style:none;margin:0;padding:0;counter-reset:s;font-size:13px;color:var(--mut)}
+.steps li{position:relative;padding-left:26px;counter-increment:s;min-height:18px}
+.steps li+li{margin-top:10px}
+.steps li::before{content:counter(s);position:absolute;left:0;top:1px;width:18px;height:18px;border-radius:50%;background:var(--soft);color:var(--acc);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
 .steps b{color:var(--fg)}
-code{font:13px ui-monospace,Menlo,monospace;background:var(--soft);padding:1px 5px;border-radius:5px;white-space:nowrap}
-code.cmd{display:block;white-space:normal;margin-top:8px;padding:8px 10px;color:var(--fg);word-break:normal;overflow-wrap:anywhere;user-select:all}
+code{font:12.5px ui-monospace,Menlo,monospace;background:var(--soft);padding:1px 5px;border-radius:5px;white-space:nowrap}
+code.cmd{display:block;white-space:normal;margin-top:6px;padding:7px 9px;color:var(--fg);word-break:normal;overflow-wrap:anywhere;user-select:all}
+.links{margin-top:12px;font-size:13px}
 h3{font-size:18px;margin:0 0 8px}
 pre{white-space:pre-wrap;font:inherit;color:var(--mut);margin:0}
 .notes,.how{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;margin-top:16px}
@@ -225,22 +252,25 @@ function page(rel: Release | null): Response {
   const ver = (b: Build) => b.key.match(/^releases\/v([^/]+)\//)?.[1] ?? rel!.version;
   const svg = (d: string, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${d}</svg>`;
   const dl = `<path d="M12 3a1 1 0 0 1 1 1v9.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.4l3.3 3.3V4a1 1 0 0 1 1-1zM5 19h14a1 1 0 1 1 0 2H5a1 1 0 1 1 0-2z"/>`;
+  const chev = `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`;
   const card = (p: Platform) => {
     const i = INFO[p], b = rel?.[p];
     const action = b
-      ? `<a class="btn" href="/download/${SLUG[p]}">${svg(dl, "ic")}<span>Download for ${i.name}</span></a>
-         <p class="meta">v${esc(ver(b))} · ${mb(b)} · <span title="SHA-256: ${b.sha256}">SHA-256 ${b.sha256.slice(0, 12)}…</span></p>`
-      : `<span class="btn off">Coming soon</span><p class="meta">No ${i.name} build yet</p>`;
+      ? `<a class="btn" href="/download/${SLUG[p]}">${svg(dl, "ic")}Download</a>
+         <p class="meta">v${esc(ver(b))} · ${mb(b)}</p>`
+      : `<span class="btn off">Coming soon</span><p class="meta">No build yet</p>`;
     return `<section class="card" data-os="${p}">
-      <div class="head">${svg(i.icon, "os")}<div><h2>${i.name}</h2><p class="arch">${i.arch}</p></div><span class="tag">Your system</span></div>
-      <div>${action}</div>
-      <div><p class="label">Requirements</p><ul class="needs">${i.needs.map((n) => `<li>${n}</li>`).join("")}</ul></div>
-      <div class="install"><p class="label">Installation</p><ol class="steps">${i.steps.map((n) => `<li>${n}</li>`).join("")}</ol></div>
+      <div class="head">${svg(i.icon, "os")}<div class="ttl"><h2>${i.name}</h2><p class="arch">${i.arch}</p></div><span class="tag">Your system</span></div>
+      <div class="row">${action}</div>
+      <details class="more"><summary>Requirements &amp; setup${chev}</summary><div class="body">
+        <p class="label">Requirements</p><ul class="needs">${i.needs.map((n) => `<li>${n}</li>`).join("")}</ul>
+        <p class="label">Install</p><ol class="steps">${i.steps.map((n) => `<li>${n}</li>`).join("")}</ol>
+      </div></details>
     </section>`;
   };
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Download PodTorrent</title>
-<meta name="description" content="Download PodTorrent for macOS, Windows, Linux and Linux for AMD.">
+<meta name="description" content="Download PodTorrent for macOS, Windows and Linux (desktop or headless).">
 <style>
 ${STYLE}</style></head><body><main>
 <div class="hero">${LOGO}
@@ -253,12 +283,12 @@ ${rel ? `<span class="rel">Latest release v${esc(rel.version)} · ${esc(rel.date
 <code class="cmd">curl -fsSL https://podtorrent.com/install.sh | sh</code>
 <p style="margin-top:12px">Windows (PowerShell):</p>
 <code class="cmd">irm https://podtorrent.com/install.ps1 | iex</code>
-<p style="margin-top:12px">Direct links: ${Object.keys(BUILDS).map((n) => `<a href="/download/${n}">${n}</a>`).join(" · ")}</p>
+<p class="links">Direct links: ${Object.keys(BUILDS).map((n) => `<a href="/download/${n}">${n}</a>`).join(" · ")}</p>
 </section>
 ${rel?.notes ? `<div class="notes"><h3>What's new</h3><pre>${esc(rel.notes)}</pre></div>` : ""}
 <div class="how"><h3>Setting up</h3><p>The first launch downloads the inference engine and its dependencies (a few GB on Windows and Linux) into your home folder. After that, pick which layers to serve and your machine joins the swarm.</p></div>
 <a class="how guide-link" href="/download/guide"><div><h3>How to use PodTorrent</h3><p>A short tour with screenshots: name your machine, choose which layers it serves, see your peers, check which models can run, and chat with a model the whole swarm serves together. It also covers serving the PodTorrent network and fixing common problems.</p></div><span class="go" aria-hidden="true">→</span></a>
-<footer>Hover a checksum to see the full SHA-256. Older builds: <code>/download/v/&lt;version&gt;/&lt;platform&gt;</code>.</footer>
+<footer>SHA-256 checksums: <code>/download/&lt;name&gt;.sha256</code>. Older builds: <code>/download/v/&lt;version&gt;/&lt;platform&gt;</code>.</footer>
 </main>
 <script>
 const ua = navigator.userAgent, os = /Windows/.test(ua) ? "windows" : /Mac/.test(ua) && !/iPhone|iPad/.test(ua) ? "mac" : /Linux/.test(ua) && !/Android/.test(ua) ? "linux" : "";
