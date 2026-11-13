@@ -37,6 +37,8 @@ def rank(models: list[dict], infos: dict[str, dict], mine: list[dict]) -> list[d
             tier, why = 2, f"{m['redundancy']} copies"
         if not inf:
             tier, why = tier + 10, why + "; size unknown"
+        elif unsupported(inf):
+            tier, why, fits = tier + 30, unsupported(inf), False
         elif not fits:
             tier, why = tier + 20, "doesn't fit in free GPU memory"
         out.append({"model": m["model"], "n_layers": m["n_layers"], "state": m["state"], "why": why,
@@ -44,6 +46,14 @@ def rank(models: list[dict], infos: dict[str, dict], mine: list[dict]) -> list[d
                     "suggest": sug, "info": inf, "tier": tier})
     out.sort(key=lambda c: (c["tier"], -len(c["peers"]), c["model"]))
     return out
+
+
+def unsupported(info: dict) -> str | None:
+    """Why this engine can't run the model, or None. Peers that don't say are trusted."""
+    if info.get("supported") is False:
+        runs = ", ".join(info.get("supported_types") or []) or "other models"
+        return f"can't run here: it's a {info.get('model_type') or 'different'} model (PodTorrent runs {runs})"
+    return None
 
 
 def slice_gb(info: dict, lo: int, hi: int) -> float | None:
@@ -183,6 +193,8 @@ def run(a) -> int:
     info, sug = choice["info"], choice["suggest"]
     if not info:
         raise SystemExit(f"couldn't read {choice['model']} from Hugging Face; check the name and the network")
+    if unsupported(info):
+        raise SystemExit(f"{choice['model']} {unsupported(info)}; pick another model")
     n = info["n_layers"]
     print(f"\n{choice['model']}: {n} layers, about {info.get('size_bytes', 0) / GB:.1f} GB in all; "
           f"{info.get('room_gb', 0):.1f} GB of room here.")

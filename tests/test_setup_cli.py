@@ -47,6 +47,15 @@ def test_rank_puts_models_that_dont_fit_or_are_unknown_last():
     assert got[2]["why"] == "doesn't fit in free GPU memory"
 
 
+def test_rank_puts_models_this_engine_cant_run_last():
+    ms = [model("o/dense", "partial", gaps=[(0, 10)]), model("o/moe", "available", redundancy=3)]
+    infos = {"o/dense": {**info(), "supported": False, "model_type": "qwen3", "supported_types": ["qwen3_moe"]},
+             "o/moe": {**info(), "supported": True}}
+    got = rank(ms, infos, [])
+    assert [c["model"] for c in got] == ["o/moe", "o/dense"]
+    assert not got[1]["fits"] and "it's a qwen3 model (PodTorrent runs qwen3_moe)" in got[1]["why"]
+
+
 def test_rank_marks_slices_served_here():
     got = rank([model("o/m", "available", redundancy=1)], {"o/m": info()},
                [{"model": "o/m", "lo": 0, "hi": 8}, {"model": "o/x", "lo": 0, "hi": 4}])
@@ -106,6 +115,9 @@ class FakePeer:
                     repo = parse_qs(u.query)["repo"][0]
                     if repo == "o/missing":
                         self._json({"error": "404"}, 502)
+                    elif repo == "o/dense":
+                        self._json({**info(n=28, lo=0, hi=28, room=30.0), "model_type": "qwen3", "supported": False,
+                                    "supported_types": ["qwen3_moe"]})
                     elif repo == "o/gappy":
                         self._json(info(lo=24, hi=48, room=30.0, reason="Fills the swarm's missing layers"))
                     else:
@@ -170,6 +182,12 @@ def test_unknown_model_is_refused(peer):
     assert peer.served == []
 
 
+def test_model_the_engine_cant_run_is_refused_before_downloading(peer):
+    r = setup(peer.port, "--yes", "--model", "o/dense")
+    assert r.returncode != 0 and "o/dense can't run here: it's a qwen3 model" in r.stderr
+    assert peer.served == []
+
+
 def test_already_serving_is_a_no_op(peer):
     assert setup(peer.port, "--yes").returncode == 0
     peer.served.clear()
@@ -186,3 +204,25 @@ def test_non_interactive_without_yes_is_refused(peer):
 def test_no_peer_running():
     r = setup(1, "--yes")
     assert r.returncode != 0 and "no peer running" in r.stderr
+
+
+# ---- the peer side: /api/catalog/info says whether this engine can run the model ----
+
+@pytest.mark.parametrize("model_type,ok", [("qwen3_moe", True), ("qwen3", False), ("llama", False)])
+def test_catalog_info_reports_support(tmp_path, monkeypatch, model_type, ok):
+    import asyncio
+
+    from podtorrent import catalog
+    from podtorrent.net import identity
+    monkeypatch.setenv("PODTORRENT_HOME", str(tmp_path))
+    identity.load_identity.cache_clear()
+    from podtorrent.peer import PeerApp
+    app = PeerApp("o/default", tmp_path / "model", 48)
+    monkeypatch.setattr(catalog, "info", lambda repo: {"repo": repo, "n_layers": 28, "size_bytes": 28 * GB,
+                                                       "layer_bytes": GB, "model_type": model_type})
+
+    class Req:
+        query = {"repo": "o/thing"}
+    body = json.loads(asyncio.run(app.catalog_info(Req())).body)
+    assert body["supported"] is ok and body["supported_types"] == ["qwen3_moe"]
+    identity.load_identity.cache_clear()

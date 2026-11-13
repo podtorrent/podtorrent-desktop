@@ -1172,6 +1172,9 @@ class PeerApp:
         inf["suggest"] = catalog.suggest(n, inf["layer_bytes"], free, free_gaps, have,
                                            in_swarm=bool(m and m["state"] != "offline"))
         inf["swarm"] = m
+        # Whether this engine can run it at all, so `setup` refuses it before downloading anything.
+        inf["supported"] = inf.get("model_type") in SUPPORTED
+        inf["supported_types"] = sorted(SUPPORTED)
         inf["mem_free_gb"] = round(free, 1)
         inf["room_gb"] = round(max(free - MEM_HEADROOM_GB, 0.0), 2)
         return web.json_response(inf)

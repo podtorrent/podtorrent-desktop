@@ -117,7 +117,8 @@ jobs:
   # that asks for it) it is uploaded to this repo's GitHub release for the tag.
   headless:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    # The end-to-end test (tags and manual runs) installs ROCm PyTorch and runs a model on the CPU.
+    timeout-minutes: 90
     permissions:
       contents: write
     env:
@@ -151,6 +152,32 @@ jobs:
           name: podtorrent-headless-linux-amd64-rocm
           path: dist/*.tar.gz
           if-no-files-found: error
+
+      # Before anything is published: the tarball end to end on this runner, as a user would run it, with
+      # the GPU as the only thing missing (headless/e2e.sh). A failure here stops the publish steps below.
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        name: Free disk for the end-to-end test
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        name: End-to-end test (no GPU)
+        run: |
+          mkdir -p "$RUNNER_TEMP/e2e"
+          tar -C "$RUNNER_TEMP/e2e" -xzf dist/*.tar.gz
+          headless/e2e.sh "$RUNNER_TEMP"/e2e/podtorrent-headless-*
+
+      # The repo is private, so the client downloads from podtorrent.com/download/linux-amd-cli (R2), like the AppImage.
+      - if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        name: Publish to the download page
+        working-directory: downloads
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm ci
+          node scripts/publish.js linux-amd-cli ../dist/*.tar.gz
 
       - if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
         name: Upload to the GitHub release

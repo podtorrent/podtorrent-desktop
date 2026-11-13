@@ -1,5 +1,5 @@
 // Upload one installer to R2 and point latest.json at it.
-//   node downloads/scripts/publish.js <mac|windows|linux|linux-amd> <path-to-installer> [--notes "..."] [--no-latest]
+//   node downloads/scripts/publish.js <mac|windows|linux|linux-amd|linux-amd-cli> <path-to-installer> [--notes "..."] [--no-latest]
 // The version comes from app/src-tauri/tauri.conf.json. Versioned files are never overwritten;
 // to roll back, re-point latest.json with: node downloads/scripts/publish.js promote <version>
 import { execFileSync } from "node:child_process";
@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
 const BUCKET = "podtorrent-releases";
-const PLATFORMS = ["mac", "windows", "linux", "linux-amd"];
+// linux-amd-cli: the headless tarball for SSH-only Linux AMD machines (headless/package.sh).
+const PLATFORMS = ["mac", "windows", "linux", "linux-amd", "linux-amd-cli"];
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -54,7 +55,7 @@ if (cmd === "promote") {
 }
 
 if (!PLATFORMS.includes(cmd) || !arg) {
-  console.error("usage: publish.js <mac|windows|linux|linux-amd> <installer> [--notes '...'] [--no-latest] | promote <version>");
+  console.error("usage: publish.js <mac|windows|linux|linux-amd|linux-amd-cli> <installer> [--notes '...'] [--no-latest] | promote <version>");
   process.exit(1);
 }
 
