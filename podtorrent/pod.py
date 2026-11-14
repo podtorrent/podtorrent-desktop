@@ -220,6 +220,23 @@ def plan_for(roster: dict | None, model: str) -> dict | None:
     return next((p for p in roster["plans"] if p["model"] == model), None) if roster else None
 
 
+def head_of(roster: dict, model: str) -> str | None:
+    """The machine that serves `model` on the network for the pod (the pod is one node there): its
+    plan's head. A pod with no plans at all is served by its owner, which loads models from the
+    Models tab; None for a public pod without plans, or a model the pod's plans leave out."""
+    if p := plan_for(roster, model):
+        return p["head"]
+    return None if roster["plans"] else owner_id(roster)
+
+
+def may_join(roster: dict, peer_id: str) -> bool:
+    """Whether `peer_id` is the pod's way onto the network: a plan's head, or the owner of a pod
+    with no plans."""
+    if roster["plans"]:
+        return any(p["head"] == peer_id for p in roster["plans"])
+    return owner_id(roster) == peer_id
+
+
 # ---- invites ----
 
 def new_invite(pod_id: str) -> tuple[str, str]:

@@ -126,7 +126,8 @@ export default {
             : p.kind === "public" ? "The matchmaker put this machine in a public pod with these machines. Only they connect to each other, each serving its share of the layers. Create a private pod or serve alone to leave it."
             : v.owner ? "You own this pod: you invite and remove machines and split the models. Only these machines can connect to each other. Disbanding sends every machine back to the public swarm."
             : "Only this pod's machines can connect to this one. The owner decides which layers it serves.",
-            v.heads?.length ? ` This machine is the head of ${v.heads.map(shortModel).join(", ")}: join the network from the Network page.` : "")),
+            v.heads?.length ? ` This machine is the head of ${v.heads.map(shortModel).join(", ")}: join the network from the Network page.`
+            : v.may_join ? " This machine serves the pod's models on the network: join from the Network page." : "")),
         p.kind === "alone" ? null : members(v),
         // plans(v),  // Models section hidden for now: machines load models from the Models tab
         ...(p.kind === "public" ? choose().slice(1) : []),   // private pod or alone, to leave the public pod

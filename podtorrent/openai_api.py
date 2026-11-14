@@ -13,6 +13,8 @@ import uuid
 
 from aiohttp import web
 
+from . import pod
+
 
 def _text(content) -> str:
     if isinstance(content, str):
@@ -138,15 +140,15 @@ def routes(app) -> list:
 def network_manifest(app, base: dict) -> dict:
     """The agent's manifest (podtorrent-agent spec, "Manifest"): `base` (node, price, tiers, as
     saved by the app) plus every model the swarm fully covers, with its route as `pipeline`. In a pod,
-    only the models whose plan names this machine as head.
+    only the models this machine heads (`pod.head_of`).
     One slot per model: each request holds the whole route."""
     models = []
     roster = getattr(app, "pod", None)
     for m in app.models():
         if m["state"] != "available":
             continue
-        if roster and not any(p["model"] == m["model"] and p["head"] == app.me for p in roster["plans"]):
-            continue  # in a pod, only a plan's head offers its model, so the network sees one node per pod
+        if roster and pod.head_of(roster, m["model"]) != app.me:
+            continue  # in a pod, only the model's head offers it, so the network sees one node per pod
         hops, _ = app.route(m["model"])
         models.append({"id": m["model"], "slots": 1,
                        "pipeline": {"layers": m["n_layers"],

@@ -80,7 +80,7 @@ export default {
     const pout = h("input.input.num", { type: "number", min: "0", step: "0.01", placeholder: "0.40", "aria-label": "Price per million output tokens" });
     const state = h("span.badge");
     const routes = h("div");
-    // In a pod, only a plan's head joins the network: the pod is one node.
+    // Why Join isn't available (no agent, or in a pod this machine doesn't head), or which pod it heads.
     const podNote = h("div.card-b.small");
     // Why it isn't connected; a rejection is an error with the fix (a new token) as its action.
     const whyText = h("span.grow");
@@ -168,15 +168,27 @@ export default {
       why.classList.toggle("err", !!p?.rejected);
       if (!s.connected && p?.rejected) text(state, "Rejected");
       state.className = `badge dot ${off ? "neutral" : s.connected ? "serving" : p?.rejected ? "gap" : s.running ? "degraded pulse" : ""}`;
-      const pv = podView(), inPod = !!pv?.pod, isHead = !!pv?.heads?.length;
-      const names = Object.fromEntries((pv?.members || []).map(m => [m.peer_id, m.name]));
+      const pv = podView(), inPod = !!pv?.pod;
+      // Older backends send no may_join: then only a plan's head joins.
+      const mayJoin = !inPod || (pv.may_join ?? !!pv.heads?.length);
+      const names = Object.fromEntries((pv?.members || []).map(m => [m.peer_id, m.me ? "this machine" : m.name]));
       const heads = [...new Set((pv?.pod?.plans || []).map(p => names[p.head] || p.head.slice(0, 8)))];
-      podNote.hidden = !inPod;
-      podNote.replaceChildren(!inPod ? "" : isHead
-        ? `This machine is the head of ${pv.heads.map(m => m.split("/").pop()).join(", ")} in the pod ${pv.pod.name}: it serves the pod on the network as one node.`
-        : h("span", `This machine is in the pod ${pv.pod.name}. `, heads.length ? `The pod is served on the network through ${heads.join(", ")}.` : "The pod has no model plan yet.", " ",
-          h("a", { href: "#", onclick: e => { e.preventDefault(); go("pod"); } }, "Open Pod")));
-      join.hidden = s.running || !s.available || (inPod && !isHead); leave.hidden = !s.running && !s.config;
+      const owner = (pv?.members || []).find(m => m.peer_id === pv?.pod?.owner)?.name;
+      const openPod = h("a", { href: "#", onclick: e => { e.preventDefault(); go("pod"); } }, "Open Pod");
+      // Join is hidden while running (Leave shows) or when this machine can't join: say why.
+      podNote.hidden = !inPod && s.available;
+      podNote.replaceChildren(!s.available
+        ? "Join Network isn't available: this build of the app has no network agent. Install a build that includes it."
+        : !inPod ? ""
+        : mayJoin
+        ? (pv.heads?.length
+          ? `This machine is the head of ${pv.heads.map(m => m.split("/").pop()).join(", ")} in the pod ${pv.pod.name}: it serves the pod on the network as one node.`
+          : `This machine owns the pod ${pv.pod.name}: it serves the pod's models on the network as one node.`)
+        : h("span", `Join Network is only on the pod's head: this machine is in the pod ${pv.pod.name}, which is one node on the network. `,
+          heads.length ? `The pod is served through ${heads.join(", ")}.`
+            : pv.pod.owner ? `The pod's owner${owner ? `, ${owner},` : ""} serves it.` : "The pod has no model plan yet, so no machine serves it.", " ",
+          openPod));
+      join.hidden = s.running || !s.available || !mayJoin; leave.hidden = !s.running && !s.config;
       const ms = s.manifest?.models || [];
       routes.replaceChildren(...(ms.length ? ms.map(m => h("div.list-row",
         h("div.grow", h("div.t.mono", m.id),
