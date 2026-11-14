@@ -24,7 +24,7 @@ struct Download: Sendable {
 
 @MainActor
 final class Model: ObservableObject {
-    @Published var rendezvous = "wss://rendezvous.podtorrent.com"
+    @Published var rendezvous = ProcessInfo.processInfo.environment["PODTORRENT_RENDEZVOUS"] ?? ""  // your own rendezvous
     @Published var peers: [SwarmPeer] = []   // this device's pod, once it's in one
     @Published var census = Census()
     @Published var place = Place.watching

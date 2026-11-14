@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to podtorrent/endpoints.json (gitignored) and point it at servers you deployed: rendezvous/ (a Cloudflare Worker; its MATCHMAKER_SEED secret's public key goes in matchmakers) and, optionally, a PodTorrent-network API for podtorrent-agent. See CONTRIBUTING.md.",
+  "rendezvous": "ws://localhost:8787",
+  "matchmakers": [],
+  "networks": {
+    "production": { "connect": "wss://api.example.com/v0/node/connect", "dashboard": "https://dashboard.example.com/" },
+    "staging": { "connect": "wss://staging-api.example.com/v0/node/connect", "dashboard": "https://dashboard-staging.example.com/" }
+  }
+}

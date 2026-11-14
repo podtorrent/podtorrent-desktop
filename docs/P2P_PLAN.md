@@ -173,7 +173,7 @@ Each phase ends in a runnable state and its own commit or PR.
    - [x] Playground: the picker lists available models and chat sends `model`; each reply shows its route (`You → studio 0–59 → mac-mini 60–75 → mbp-16 76–93 → You`, both routes after a re-route), and the token trace labels hops from the route.
    - [x] Onboarding: name this Mac → choose what to serve (nothing, a half, or a quarter, with a fit check) → done. The name goes to the engine as `PODTORRENT_NAME`; the slice is served once the peer is up.
    - [x] Demo Mode emits the same events as the peer: four Macs, two models, an unreachable peer, a gap in the big model that a Mac joining after ~12 s fills. Serve, unserve and Load model are simulated too.
-   - [x] Copy cleanup: no host / worker / Tailscale wording left in the UI; the tray shows what this Mac serves. `docs/UI_DATA_GAPS.md` updated.
+   - [x] Copy cleanup: no host / worker / Tailscale wording left in the UI; the tray shows what this Mac serves.
    - [x] Tauri: removed the host/worker downloader (`start_download`, `download_status`); `start_engine` takes the peer name. The UI calls the local API for serve / unserve directly, so no new Tauri commands were needed.
    - [ ] *Done when:* the app build runs this on two Macs.
 

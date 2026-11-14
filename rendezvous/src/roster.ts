@@ -8,8 +8,6 @@ export type Roster = {
   signer: string; members: Member[]; plans: unknown[]; expires: number; sig: string;
 };
 
-// Public halves of the matchmaker keys allowed to sign public rosters (the Worker's MATCHMAKER_SEED secret).
-export const MATCHMAKERS: string[] = ["d7f12d1666718f8fcf288276033c8de6b61e2e7801a3abf5c5063660cee872cc"];
 const ROSTER_DOMAIN = "podtorrent-roster|";
 
 /** Sorted keys, no whitespace: the same bytes as pod.canonical in Python. */
@@ -53,7 +51,8 @@ const isHex = (x: unknown, n: number) => typeof x === "string" && x.length === n
 
 /** The roster if it's signed by an allowed signer, unexpired and well formed enough to gate a room;
  *  otherwise throws an Error whose message is one of pod.py's codes. */
-export async function verifyRoster(r: any, now = Date.now() / 1000, matchmakers = MATCHMAKERS): Promise<Roster> {
+/** `matchmakers`: public keys (hex) allowed to sign public rosters; the Worker passes its own (matchmakersOf). */
+export async function verifyRoster(r: any, now = Date.now() / 1000, matchmakers: string[] = []): Promise<Roster> {
   const fail = (code: string) => { throw new Error(code); };
   const keys = ["expires", "kind", "members", "name", "plans", "pod_id", "salt", "sig", "signer", "version"];
   if (!r || typeof r !== "object" || Object.keys(r).sort().join() !== keys.join()) fail("bad-shape");

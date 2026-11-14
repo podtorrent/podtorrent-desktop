@@ -4,8 +4,6 @@ Apple Silicon Macs jointly serve a model none of them can hold alone (Qwen3-30B-
 
 Two-Mac demo walkthrough: [docs/DEMO.md](docs/DEMO.md).
 
-Status and plan: [PodTorrent PoC Plan and Build Checklist.md](PodTorrent%20PoC%20Plan%20and%20Build%20Checklist.md).
-
 ## Setup (both Macs)
 
 ```bash
@@ -24,6 +22,19 @@ A 16 GB Mac may need a higher GPU wired-memory limit for an ~8.5 GB slice plus K
 ```bash
 sudo sysctl iogpu.wired_limit_mb=13000   # resets on reboot; note the value you use
 ```
+
+## Servers (endpoints.json)
+
+No server address is in this repository. A peer finds others through a **rendezvous** you run
+(`rendezvous/`, a Cloudflare Worker), named in `podtorrent/endpoints.json`, which is gitignored. Official
+builds get theirs from CI. From a checkout, deploy your own and point the file at it:
+
+```bash
+cp endpoints.example.json podtorrent/endpoints.json   # then edit it; CONTRIBUTING.md has the steps
+```
+
+Without the file a peer runs alone: it serves its slice and chats locally, with no swarm. For a quick
+local test, `npx wrangler dev` in `rendezvous/` and `PODTORRENT_RENDEZVOUS=ws://localhost:8787`.
 
 ## Run
 
@@ -54,7 +65,7 @@ The local API binds to 127.0.0.1 only; other Macs talk to this one over QUIC on 
 ## Serving the PodTorrent network
 
 A peer can offer the models its swarm fully covers to PodTorrent network clients. The app bundles
-[podtorrent-agent](https://github.com/Munerate/podtorrent-agent); in **Settings → PodTorrent Network**
+[podtorrent-agent](https://github.com/podtorrent/podtorrent-agent); in **Settings → PodTorrent Network**
 enter an approved node id and node token (saved as `node-token` in the data folder, readable by your user only) and click **Join Network**.
 This Mac becomes the head of each route: the agent forwards network requests to the peer's loopback
 `POST /v1/chat/completions` and `GET /v1/models`, and the peer runs them through the swarm's slices.
@@ -145,6 +156,11 @@ npm run dev      # dev mode
 npm run build    # app/src-tauri/target/release/bundle/macos/PodTorrent.app (also .dmg)
 ```
 
-The app keeps its own UI (Swarm, Models, Playground, My Node, Peers, Activity) and talks to the engine over HTTP/WebSocket; closing the window keeps the node running in the menu bar, ⌘Q quits. UI docs: [UI_AUDIT](docs/UI_AUDIT.md), [DESIGN_SYSTEM](docs/DESIGN_SYSTEM.md), [UI_DATA_GAPS](docs/UI_DATA_GAPS.md). Preview the UI in a browser: `python3 app/scripts/serve-ui.py`.
+The app keeps its own UI (Swarm, Models, Playground, My Node, Peers, Activity) and talks to the engine over HTTP/WebSocket; closing the window keeps the node running in the menu bar, ⌘Q quits. UI design: [DESIGN_SYSTEM](docs/DESIGN_SYSTEM.md). Preview the UI in a browser: `python3 app/scripts/serve-ui.py`.
 
 Engine output goes to `~/.podtorrent/engine.log`. The app is unsigned: on another Mac, right-click > Open the first time (or `xattr -dr com.apple.quarantine PodTorrent.app`).
+
+## License
+
+Apache-2.0: see [LICENSE](LICENSE) and [NOTICE](NOTICE). The license covers the code, not the PodTorrent
+name or logo. Security issues: [SECURITY.md](SECURITY.md). Contributing: [CONTRIBUTING.md](CONTRIBUTING.md).

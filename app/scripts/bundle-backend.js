@@ -49,6 +49,12 @@ fs.cpSync(path.join(root, "podtorrent"), path.join(out, "podtorrent"), {
   recursive: true,
   filter: src => path.basename(src) !== "__pycache__",
 });
+// podtorrent/endpoints.json (the servers this build talks to) came along with the package. It's
+// gitignored: CI writes it for official builds from the PODTORRENT_ENDPOINTS secret.
+if (!fs.existsSync(path.join(root, "podtorrent/endpoints.json"))) {
+  if (process.env.PODTORRENT_REQUIRE_ENDPOINTS) throw new Error("podtorrent/endpoints.json is missing (PODTORRENT_REQUIRE_ENDPOINTS is set)");
+  console.warn("no podtorrent/endpoints.json: this build has no rendezvous or network (see endpoints.example.json)");
+}
 // The network agent (podtorrent-agent): PODTORRENT_AGENT_BIN, else built from a podtorrent-agent
 // checkout next to this repo (Go 1.24+ as `go`, or PODTORRENT_GO). Without it the app runs
 // swarm-only and can't join the PodTorrent network.

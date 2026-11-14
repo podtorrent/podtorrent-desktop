@@ -24,7 +24,8 @@
 # POSIX sh on purpose: `| sh` is dash on Ubuntu and Debian.
 set -eu
 
-BASE="${PODTORRENT_BASE_URL:-https://podtorrent.com/download}"
+# The downloads Worker that serves this script fills in its own origin (downloads/src/index.ts).
+BASE="${PODTORRENT_BASE_URL:-@PODTORRENT_BASE_URL@}"
 INSTALL_DIR="${PODTORRENT_INSTALL_DIR:-$HOME/.local/share/podtorrent}"
 BIN_DIR="${PODTORRENT_BIN_DIR:-$HOME/.local/bin}"
 FILE="${PODTORRENT_FILE:-${PODTORRENT_TARBALL:-}}"
@@ -95,14 +96,14 @@ if [ -z "$BUILD" ]; then
         say "warning: no NVIDIA or AMD Ryzen AI Max GPU found; installing the NVIDIA build (use --build linux-x64-rocm for AMD)."
         BUILD=linux-x64-cuda
       fi ;;
-    *) die "this installer is for macOS and Linux; on Windows run in PowerShell: irm https://podtorrent.com/install.ps1 | iex" ;;
+    *) die "this installer is for macOS and Linux; on Windows run in PowerShell: irm ${BASE%/download}/install.ps1 | iex" ;;
   esac
 fi
 case "$BUILD" in
   macos-arm64) EXT=dmg ;;
   linux-x64-cuda|linux-x64-rocm) EXT=AppImage ;;
   linux-x64-rocm-headless|linux-arm64-jetson-headless) EXT=tar.gz ;;
-  windows-x64-cuda) die "windows-x64-cuda installs from PowerShell: irm https://podtorrent.com/install.ps1 | iex" ;;
+  windows-x64-cuda) die "windows-x64-cuda installs from PowerShell: irm ${BASE%/download}/install.ps1 | iex" ;;
   *) die "unknown build $BUILD (macos-arm64, linux-x64-cuda, linux-x64-rocm, linux-x64-rocm-headless, linux-arm64-jetson-headless)" ;;
 esac
 say "installing $BUILD"
@@ -139,6 +140,7 @@ if [ -n "$FILE" ]; then
   say "using $FILE"
   cp "$FILE" "$PKG"
 else
+  case "$BASE" in @*) die "no download server: set PODTORRENT_BASE_URL, or run the copy your downloads site serves" ;; esac
   fetch "$BASE/$BUILD" "$PKG" || die "download failed: $BASE/$BUILD"
   fetch "$BASE/$BUILD.sha256" "$TMP/sha256" quiet || die "couldn't download the checksum: $BASE/$BUILD.sha256"
   want="$(cut -d' ' -f1 "$TMP/sha256")"

@@ -316,12 +316,15 @@ EOF
 
 # ---- network agent (same rules as the desktop app) ----
 
+# The network's agent URL, from this bundle's backend/podtorrent/endpoints.json (written by CI for
+# official builds; see endpoints.example.json). Fails for an unknown network or a build without one.
 network_url() {
-  case "$1" in
-    production) echo wss://api.podtorrent.com/v0/node/connect ;;
-    staging) echo wss://staging-api.podtorrent.com/v0/node/connect ;;
-    *) return 1 ;;
-  esac
+  case "$1" in production|staging) ;; *) return 1 ;; esac
+  "$DATA/venv/bin/python" - "$BACKEND/podtorrent/endpoints.json" "$1" <<'EOF' 2>/dev/null
+import json, sys
+url = ((json.load(open(sys.argv[1])).get("networks") or {}).get(sys.argv[2]) or {}).get("connect")
+print(url) if url else sys.exit(1)
+EOF
 }
 
 node_up() { (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; }
@@ -355,7 +358,7 @@ start_agent() {
   node_up || return 1
   [[ -s "$DATA/node-token" ]] || return 1
   covered || return 1
-  url="$(network_url "$(network_name)")" || return 1
+  url="$(network_url "$(network_name)")" || { say "this bundle has no $(network_name) network configured; running in the swarm only"; return 1; }
   token="$(tr -d '[:space:]' <"$DATA/node-token")"
   : >"$DATA/agent.log"
   # Its own process group, so stopping it stops tee too. Output goes to journald (stdout) and agent.log.
@@ -424,7 +427,7 @@ cmd_setup() {
       *) die "setup: unknown option $1 (options: --name N --model REPO --serve LO:HI --network production|staging --no-service --join --no-join --yes)" ;;
     esac
   done
-  network_url "$network" >/dev/null || die "network: production or staging"
+  [[ "$network" == production || "$network" == staging ]] || die "network: production or staging"
   [[ -x "$UV" ]] || die "missing $UV: run this from the extracted podtorrent-headless folder"
   if (( use_service )) && ! command -v systemctl >/dev/null; then
     say "systemd not found: running the peer just for setup (start it later with $ME peer)"
@@ -756,7 +759,7 @@ cmd_join() {
   [[ -n "$node" ]] || read -r -p "node id (letters, digits, - and _): " node
   node="$(tr '[:upper:]' '[:lower:]' <<<"$node")"
   [[ "$node" =~ ^[a-z0-9_-]+$ ]] || die "node id: letters, digits, - and _ only"
-  network_url "$network" >/dev/null || die "network: production or staging"
+  [[ "$network" == production || "$network" == staging ]] || die "network: production or staging"
   [[ "$price_in" =~ ^[0-9]+(\.[0-9]+)?$ && "$price_out" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "prices must be numbers >= 0"
   mkdir -p "$DATA"
   # Read the token from the terminal without echo (or from stdin when piped), never from the command line.

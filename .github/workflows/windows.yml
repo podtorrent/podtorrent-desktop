@@ -44,6 +44,17 @@ jobs:
 
       - run: npm ci
 
+      # The servers official builds talk to (podtorrent/endpoints.py), from the PODTORRENT_ENDPOINTS secret.
+      # A fork sets its own, or builds without servers; a release tag must have one.
+      - name: Write endpoints.json
+        shell: bash
+        env:
+          ENDPOINTS: ${{ secrets.PODTORRENT_ENDPOINTS }}
+        run: |
+          if [ -n "$ENDPOINTS" ]; then printf '%s' "$ENDPOINTS" > "$GITHUB_WORKSPACE/podtorrent/endpoints.json"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "::error::the PODTORRENT_ENDPOINTS secret is not set"; exit 1
+          else echo "::warning::no PODTORRENT_ENDPOINTS secret: this build has no servers"; fi
+
       # Not `npm run build`: that bumps the version in tauri.conf.json, which CI shouldn't do.
       - run: node scripts/bundle-backend.js
 
