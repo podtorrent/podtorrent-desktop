@@ -71,6 +71,8 @@ try {
   fs.chmodSync(path.join(out, agentName), 0o755);
   console.log("staged network agent");
 } catch (e) {
+  // CI passes PODTORRENT_AGENT_BIN for every desktop build: failing to stage it is an error, not swarm-only.
+  if (process.env.PODTORRENT_AGENT_BIN) throw new Error(`network agent not staged: ${e.message}`);
   console.warn(`network agent not staged (${e.message}); the app will run swarm-only`);
 }
 console.log(`staged backend in ${path.relative(app, out)}`);

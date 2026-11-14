@@ -44,6 +44,19 @@ jobs:
 
       - run: npm ci
 
+      # The network agent the app bundles (bundle-backend.js stages PODTORRENT_AGENT_BIN): the latest
+      # released one, or the one in the repo variable PODTORRENT_AGENT_VERSION (e.g. v0.5.0). Without it the
+      # app runs swarm-only and its Network page says "Agent missing".
+      - name: Download podtorrent-agent
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ vars.PODTORRENT_AGENT_VERSION }}"
+          gh release download $tag -R podtorrent/podtorrent-agent -p 'podtorrent-agent-v*-windows-amd64.exe' -p SHA256SUMS -D agent
+          (cd agent && sha256sum -c --ignore-missing SHA256SUMS)
+          echo "PODTORRENT_AGENT_BIN=$(cygpath -w "$(ls "$PWD"/agent/podtorrent-agent-v*-windows-amd64.exe)")" >> "$GITHUB_ENV"
+
       # The servers official builds talk to (podtorrent/endpoints.py), from the PODTORRENT_ENDPOINTS secret.
       # A fork sets its own, or builds without servers; a release tag must have one.
       - name: Write endpoints.json
