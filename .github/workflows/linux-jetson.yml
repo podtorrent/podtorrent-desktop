@@ -1,0 +1,126 @@
+# Headless build for NVIDIA Jetson (AGX Orin; ARM64, JetPack, integrated Ampere GPU), reached over SSH: a
+# tarball with the aarch64 uv, the backend (locked to CPU PyTorch), podtorrent-agent and the `podtorrent`
+# launcher. PyPI's and pytorch.org's aarch64 wheels don't use the Jetson GPU, so on first run the launcher
+# reads the JetPack version from /etc/nv_tegra_release and installs NVIDIA's Jetson PyTorch for it from the
+# index in jetson-torch.txt; a JetPack with no index stops with a clear message.
+#
+# The index per JetPack comes from repo variables JETSON_TORCH_INDEX_JP<N> / JETSON_TORCH_REQ_JP<N>
+# (like ROCM_TORCH_INDEX for AMD). JetPack 6 has a default (headless/package.sh); set JETSON_TORCH_INDEX_JP7
+# to add JetPack 7 once it is checked on an Orin.
+name: Linux Jetson build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: ['podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', 'headless/**', 'install/**', 'app/scripts/bundle-backend.js', '.github/workflows/linux-jetson.yml']
+  # A PR labelled `e2e` runs the end-to-end test too (a new workflow can't be run by hand until it's on main).
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths: ['podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', 'headless/**', 'install/**', 'app/scripts/bundle-backend.js', '.github/workflows/linux-jetson.yml']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish this build to the download page
+        type: boolean
+        default: false
+
+concurrency:
+  group: linux-jetson-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  headless:
+    runs-on: ubuntu-22.04-arm
+    # The end-to-end test (tags and manual runs) installs PyTorch and runs a model on the CPU.
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      JETSON_TORCH_INDEX_JP6: ${{ vars.JETSON_TORCH_INDEX_JP6 }}
+      JETSON_TORCH_REQ_JP6: ${{ vars.JETSON_TORCH_REQ_JP6 }}
+      JETSON_TORCH_INDEX_JP7: ${{ vars.JETSON_TORCH_INDEX_JP7 }}
+      JETSON_TORCH_REQ_JP7: ${{ vars.JETSON_TORCH_REQ_JP7 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Download podtorrent-agent
+        run: |
+          tag="${{ vars.PODTORRENT_AGENT_VERSION }}"
+          gh release download $tag -R Munerate/podtorrent-agent -p 'podtorrent-agent-v*-linux-arm64' -p SHA256SUMS -D agent
+          (cd agent && sha256sum -c --ignore-missing SHA256SUMS)
+          echo "PODTORRENT_AGENT_BIN=$(ls "$PWD"/agent/podtorrent-agent-v*-linux-arm64)" >> "$GITHUB_ENV"
+
+      - name: Build tarball
+        env:
+          PODTORRENT_PLATFORM: jetson
+        run: |
+          [[ "$GITHUB_REF" == refs/tags/v* ]] && export VERSION="${GITHUB_REF_NAME#v}"
+          headless/package.sh dist
+          tar -tzf dist/*.tar.gz | sort
+          mkdir -p x && tar -xzf dist/*.tar.gz -C x
+          file x/*/backend/uv x/*/backend/podtorrent-agent
+          file x/*/backend/uv | grep -q aarch64
+
+      # Every JetPack in the tarball's jetson-torch.txt must resolve to a real Jetson PyTorch wheel for the
+      # backend's Python on aarch64 (the runner has no Jetson GPU to install it on, so resolve only).
+      - name: Check the Jetson PyTorch indexes
+        run: |
+          py="$(cat .python-version)"
+          grep -v '^#' x/*/jetson-torch.txt | while read -r jp idx req; do
+            echo "JetPack $jp: $req from $idx"
+            echo "$req" | uv pip compile - --python-version "$py" --python-platform aarch64-manylinux_2_35 \
+              --index-url "$idx" --extra-index-url https://pypi.org/simple --index-strategy first-index --no-header \
+              | tee resolved.txt
+            grep -q '^torch==' resolved.txt
+            ! grep -qE '^nvidia-|^cuda-' resolved.txt || { echo "::error::$idx pulls CUDA from pip instead of JetPack's"; exit 1; }
+          done
+
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: podtorrent-linux-arm64-jetson-headless
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'e2e')
+        name: Free disk for the end-to-end test
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          df -h /
+
+      # Installed the way a user does it (install.sh under sh), twice so the update path runs too, then
+      # headless/e2e.sh: JetPack detection with stand-in release files, CPU PyTorch install, setup, a real
+      # model slice and a forward pass on the CPU, status, doctor. Only the Jetson GPU is missing.
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'e2e')
+        name: End-to-end test (no GPU)
+        run: |
+          tarball="$(ls "$PWD"/dist/*.tar.gz)"
+          PODTORRENT_FILE="$tarball" sh install/install.sh --build linux-arm64-jetson-headless
+          PODTORRENT_FILE="$tarball" sh install/install.sh --build linux-arm64-jetson-headless
+          test -d "$HOME/.local/share/podtorrent/app.old"
+          export PATH="$HOME/.local/bin:$PATH"
+          headless/e2e.sh "$HOME/.local/share/podtorrent/app"
+
+      - if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        name: Publish to the download page
+        working-directory: downloads
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm ci
+          node scripts/publish.js linux-arm64-jetson-headless ../dist/*.tar.gz
+
+      - if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        name: Upload to the GitHub release
+        run: |
+          tag="$GITHUB_REF_NAME"
+          [[ "$GITHUB_REF" == refs/tags/v* ]] || tag="v$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n1)"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --verify-tag --title "$tag" --notes ""
+          gh release upload "$tag" dist/*.tar.gz --clobber
