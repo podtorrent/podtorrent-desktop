@@ -86,6 +86,20 @@ def test_remove_member_drops_its_plans(two):
     assert not pod.is_member(r, laptop.peer_id) and r["plans"] == []
 
 
+def test_owner_heads_a_pod_without_plans():
+    owner = machine()
+    r = pod.new_pod(owner, "solo", "studio")                    # one machine, models from the Models tab
+    assert pod.may_join(r, owner.peer_id) and pod.head_of(r, MODEL) == owner.peer_id
+
+
+def test_plans_pick_the_head(two):
+    owner, laptop, r = two
+    assert pod.may_join(r, owner.peer_id) and not pod.may_join(r, laptop.peer_id)   # no plans: the owner
+    r = pod.sign(pod.set_plan(r, MODEL, 48, laptop.peer_id, [(laptop.peer_id, 0, 24), (owner.peer_id, 24, 48)]), owner)
+    assert pod.may_join(r, laptop.peer_id) and not pod.may_join(r, owner.peer_id)
+    assert pod.head_of(r, MODEL) == laptop.peer_id and pod.head_of(r, "example/other") is None
+
+
 def test_newer_takes_only_higher_valid_versions(two):
     owner, laptop, r = two
     later = pod.sign(pod.remove_member(r, laptop.peer_id), owner)

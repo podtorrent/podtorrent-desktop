@@ -115,6 +115,26 @@ def test_network_manifest(tmp_path):
                                              {"peer": "win-b", "lo": 24, "hi": 48}]}}]}
 
 
+def test_network_manifest_in_a_pod():
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from podtorrent import pod
+    from podtorrent.net.identity import Identity
+    from podtorrent.route import Hop
+
+    me, mate = Identity(Ed25519PrivateKey.generate()), Identity(Ed25519PrivateKey.generate())
+    peer = FakePeer()
+    peer.me = me.peer_id
+    peer.models = lambda: [{"model": "example/model", "state": "available", "n_layers": 48}]
+    peer.route = lambda _m: ([Hop(me.peer_id, "mac-a", 0, 48)], [])
+    offered = lambda: [x["id"] for x in openai_api.network_manifest(peer, {"node": "example-node-01"})["models"]]
+    peer.pod = pod.new_pod(me, "solo", "me")                   # owner, no plan: it heads its own models
+    assert offered() == ["example/model"]
+    r = pod.sign(pod.add_member(peer.pod, pod.member(mate, "mate")), me)
+    peer.pod = pod.sign(pod.set_plan(r, "example/model", 48, mate.peer_id, [(mate.peer_id, 0, 48)]), me)
+    assert offered() == []                                      # the plan names another head
+
+
 def test_network_manifest_leaves_out_network_choice(tmp_path):
     peer = FakePeer()
     peer.models = lambda: []

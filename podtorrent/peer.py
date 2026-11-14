@@ -578,9 +578,9 @@ class PeerApp:
                 "mem_free_gb": round(mem_free_gb() * 2) / 2,  # half-GB steps, so idle drift doesn't republish
                 "slices": [{k: v for k, v in r.items() if k != "phase"} for r in self.slices.slices()],
                 "has_head": {m: True for m in self.heads},
-                # For the census: this machine heads a plan and serves it on the network.
+                # For the census: this machine is the pod's way onto the network (pod.may_join) and joined it.
                 "on_network": bool(self.pod) and (home() / "network.json").exists()
-                and any(p["head"] == self.me for p in self.pod["plans"])}
+                and pod.may_join(self.pod, self.me)}
 
     def on_swarm(self, peers: list[dict], status: str):
         self.peers = peers
@@ -1352,7 +1352,9 @@ class PeerApp:
         owner = pod.owner_id(r)
         return {"pod": pod_summary(r), "me": self.me, "name": NAME, "owner": owner == self.me, "members": members,
                 "invites": pod.pending_invites(r["pod_id"]) if owner == self.me else 0,
-                "heads": [p["model"] for p in r["plans"] if p["head"] == self.me]}
+                "heads": [p["model"] for p in r["plans"] if p["head"] == self.me],
+                # This machine joins the network for the pod: a plan's head, or the owner of a pod with no plans.
+                "may_join": pod.may_join(r, self.me)}
 
     def _owner_or_error(self):
         if not self.pod:
