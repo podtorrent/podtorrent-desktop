@@ -18,7 +18,7 @@ you reach over SSH. It needs no desktop or display.
 ### On NVIDIA Jetson (AGX Orin)
 
 The Jetson build (`podtorrent-…-linux-arm64-jetson-headless.tar.gz`; the install command picks it on a
-Jetson) needs instead: **JetPack 6** (L4T R36; `cat /etc/nv_tegra_release` shows it), your user in the
+Jetson) needs instead: **JetPack 6 or 7** (L4T R36, or R38/R39; `cat /etc/nv_tegra_release` shows it), your user in the
 **`video`** group, and about 10 GB of free disk. On first run it installs NVIDIA's PyTorch for Jetson for
 your JetPack version; on another JetPack version it stops and says so. Everything else below is the same.
 For the most GPU speed, set the maximum power mode first: `sudo nvpmodel -m 0 && sudo jetson_clocks`.

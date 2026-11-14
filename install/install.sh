@@ -9,7 +9,7 @@
 #   linux-x64-rocm            Linux desktop app for AMD Ryzen AI Max (Strix Halo, gfx1151)
 #   linux-x64-cuda            Linux desktop app for NVIDIA (and other machines)
 #   linux-x64-rocm-headless   no display (e.g. over SSH) on AMD Ryzen AI Max: the `podtorrent` command
-#   linux-arm64-jetson-headless   NVIDIA Jetson (AGX Orin, JetPack 6), headless: the `podtorrent` command
+#   linux-arm64-jetson-headless   NVIDIA Jetson (AGX Orin, JetPack 6 or 7), headless: the `podtorrent` command
 # On Linux, a local desktop session (DISPLAY or WAYLAND_DISPLAY) means the desktop app; over SSH or with
 # no display, headless.
 # The download's SHA-256 is checked. No root needed. Run it again to update: the previous version is
