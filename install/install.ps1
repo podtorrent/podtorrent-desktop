@@ -7,7 +7,7 @@
 # settings are kept.
 #
 # Environment (optional): PODTORRENT_FILE=PATH installs a local installer instead of downloading (tests);
-# PODTORRENT_BASE_URL overrides https://podtorrent.com/download.
+# PODTORRENT_BASE_URL overrides the download server (the downloads Worker that serves this script fills in its own).
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is many times slower with the progress bar
@@ -16,7 +16,7 @@ function Say($m) { Write-Host "podtorrent: $m" }
 function Die($m) { Write-Host "podtorrent: $m" -ForegroundColor Red; throw "podtorrent: $m" }
 
 $build = 'windows-x64-cuda'
-$base = if ($env:PODTORRENT_BASE_URL) { $env:PODTORRENT_BASE_URL } else { 'https://podtorrent.com/download' }
+$base = if ($env:PODTORRENT_BASE_URL) { $env:PODTORRENT_BASE_URL } else { '@PODTORRENT_BASE_URL@' }
 
 if (-not [Environment]::Is64BitOperatingSystem -or $env:PROCESSOR_ARCHITECTURE -eq 'ARM64') {
   Die "PodTorrent for Windows needs 64-bit x64 Windows"
@@ -37,6 +37,7 @@ try {
     Copy-Item $env:PODTORRENT_FILE $exe
   } else {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    if ($base.StartsWith('@')) { Die "no download server: set PODTORRENT_BASE_URL, or run the copy your downloads site serves" }
     Say "downloading the latest PodTorrent for Windows"
     Invoke-WebRequest -UseBasicParsing -Uri "$base/$build" -OutFile $exe
     $want = ((Invoke-WebRequest -UseBasicParsing -Uri "$base/$build.sha256").Content.Trim() -split '\s+')[0].ToLower()

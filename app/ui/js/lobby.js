@@ -3,8 +3,10 @@
 // the matchmaker. The census carries chips, memory and layers, never machine names.
 // Starting the node calls resetState(), which drops these preview nodes; the engine takes over.
 import { state, subscribe, commit } from "./store.js";
+import { invoke } from "./native.js";
 
-const URL_ = "wss://rendezvous.podtorrent.com/v1/census";
+// This build's rendezvous (podtorrent/endpoints.json, through the app); none means no lobby.
+let base = "";
 const PING_MS = 10_000;
 
 let ws = null, pinger = 0, retry = 0, backoff = 1000;
@@ -12,7 +14,7 @@ let ws = null, pinger = 0, retry = 0, backoff = 1000;
 const wanted = s => s.booted && s.engine.phase === "stopped";
 
 function open() {
-  const sock = ws = new WebSocket(URL_);
+  const sock = ws = new WebSocket(`${base}/v1/census`);
   if (!state.swarm.peers.length) { state.swarm = { status: "connecting", selfId: "", peers: [] }; commit(); }
   sock.onopen = () => { backoff = 1000; pinger = setInterval(() => sock.readyState === 1 && sock.send("ping"), PING_MS); };
   sock.onmessage = e => {
@@ -67,7 +69,9 @@ function apply(census) {
   commit();
 }
 
-export function initLobby() {
+export async function initLobby() {
+  try { base = await invoke("rendezvous_url") || ""; } catch { /* plain browser */ }
+  if (!base) return;
   subscribe(s => {
     if (wanted(s)) { if (!ws && !retry) open(); }
     else if (ws || retry) {

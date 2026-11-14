@@ -1,8 +1,10 @@
 [project]
 name = "podtorrent"
 version = "0.1.32"
-description = "Add your description here"
+description = "Run large language models across machines: each peer serves a slice of the layers"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.14.3",

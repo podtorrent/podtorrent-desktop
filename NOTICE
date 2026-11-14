@@ -1,0 +1,8 @@
+PodTorrent
+Copyright 2026 Munerate
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+"PodTorrent" and the PodTorrent logo are trademarks of Munerate. The license covers the code, not
+the name or logo (Apache-2.0, section 6): a fork that ships its own builds or runs its own servers
+should use its own name.

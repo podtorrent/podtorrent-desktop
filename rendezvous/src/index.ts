@@ -18,6 +18,14 @@ export interface Env {
   MATCHMAKER_SEED: string;
 }
 
+/** The public half of this Worker's MATCHMAKER_SEED: the one matchmaker its public rosters may come from.
+ * Nothing is hard-coded, so a fork's Worker trusts only its own seed. */
+let matchmakers: Promise<string[]> | undefined;
+function matchmakersOf(env: Env): Promise<string[]> {
+  if (!env.MATCHMAKER_SEED) return Promise.resolve([]);
+  return (matchmakers ??= matchmakerKey(env.MATCHMAKER_SEED).then(k => [k.pubkey]));
+}
+
 const PROTOCOL = 1;
 const STALE_MS = 30_000; // no ping for this long: the peer is gone
 const SWEEP_MS = 15_000;
@@ -263,7 +271,7 @@ export class Pod extends DurableObject<Env> {
   /** Store `r` if it's a valid, newer roster of this pod, then re-gate every socket. */
   private async offerRoster(r: unknown, podId: string): Promise<void> {
     let roster: Roster;
-    try { roster = await verifyRoster(r); } catch { return; }
+    try { roster = await verifyRoster(r, Date.now() / 1000, await matchmakersOf(this.env)); } catch { return; }
     const cur = await this.roster();
     if (roster.pod_id !== podId || (cur && roster.version <= cur.version)) return;
     await this.ctx.storage.put("roster", roster);

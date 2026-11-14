@@ -4,11 +4,9 @@ import Foundation
 // a pod room (/v1/pod/<id>) or the public lobby (/v1/public) sends `challenge {nonce}`, the machine
 // answers `auth {pubkey, sig}` signing "podtorrent-room|<pod_id or public>|<nonce>", and gets a welcome.
 
-/// Override with PODTORRENT_RENDEZVOUS, e.g. ws://localhost:8787 for `wrangler dev`.
-public var rendezvousURL: String {
-    (ProcessInfo.processInfo.environment["PODTORRENT_RENDEZVOUS"] ?? "wss://rendezvous.podtorrent.com")
-        .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-}
+/// This build's rendezvous (Endpoints.swift), or "" when it has none. PODTORRENT_RENDEZVOUS overrides it,
+/// e.g. ws://localhost:8787 for `wrangler dev`.
+public var rendezvousURL: String { Endpoints.rendezvous }
 
 public struct RoomError: Error, CustomStringConvertible {
     public let description: String

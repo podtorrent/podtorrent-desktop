@@ -8,7 +8,6 @@ global swarm room instead."""
 import asyncio
 import base64
 import json
-import os
 import re
 import ssl
 import subprocess
@@ -18,14 +17,13 @@ from typing import TYPE_CHECKING, Callable
 import aiohttp
 import certifi
 
+from .. import endpoints
 from . import stun
 from .identity import Identity
 
 if TYPE_CHECKING:
     from .quic import PeerNet
 
-# Override with PODTORRENT_RENDEZVOUS, e.g. ws://localhost:8787 for `wrangler dev`.
-DEFAULT_URL = "wss://rendezvous.podtorrent.com"
 PING_S = 10
 STUN_REFRESH_S = 120
 OWNER_RETRY_S = 3  # a join request that found the owner offline is sent again after this long...
@@ -35,7 +33,8 @@ SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 
 
 def rendezvous_url() -> str:
-    return os.environ.get("PODTORRENT_RENDEZVOUS", DEFAULT_URL).rstrip("/")
+    """This build's rendezvous (podtorrent/endpoints.py), or "" when it has none."""
+    return endpoints.rendezvous()
 
 
 def lan_addresses() -> list[str]:
@@ -131,6 +130,11 @@ class SwarmClient:
             await self._ws.close()
 
     async def run(self):
+        if not self.url:
+            print("no rendezvous configured (podtorrent/endpoints.json or PODTORRENT_RENDEZVOUS): "
+                  "running alone, with no swarm", flush=True)
+            self._set("offline", [])
+            return
         backoff = 1
         while True:
             roster = self.room()
@@ -280,7 +284,10 @@ async def join_pod(ident: Identity, pod_id: str, proof: str, name: str, url: str
     """Ask a pod's owner (through the pod's room) to add this machine. Returns the first roster the
     room sends that lists this machine; raises RoomError when the owner refuses or doesn't answer.
     The caller verifies the roster."""
-    url = (url or rendezvous_url()) + f"/v1/pod/{pod_id}"
+    base = url or rendezvous_url()
+    if not base:
+        raise RoomError("no rendezvous configured (podtorrent/endpoints.json or PODTORRENT_RENDEZVOUS)")
+    url = base + f"/v1/pod/{pod_id}"
     deadline = time.time() + timeout
     give_up = time.time() + OWNER_WAIT_S
 
