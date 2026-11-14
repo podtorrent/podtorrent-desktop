@@ -2,7 +2,7 @@
   "name": "podtorrent-app",
   "private": true,
   "license": "Apache-2.0",
-  "version": "0.1.32",
+  "version": "0.1.33",
   "scripts": {
     "tauri": "tauri",
     "dev": "node scripts/bundle-backend.js && tauri dev",
