@@ -29,3 +29,6 @@ podtorrent/endpoints.json
 /podtorrent-build-context.md
 /PODTORRENT_UI_BRIEF.md
 /docs/HEADLESS_CLI_PLAN.md
+
+# Local Wrangler settings (CLOUDFLARE_ACCOUNT_ID etc.)
+.env
