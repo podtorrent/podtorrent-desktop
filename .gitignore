@@ -16,3 +16,16 @@ scratch/
 node_modules/
 .wrangler/
 .DS_Store
+
+# This build's servers (podtorrent/endpoints.py): CI writes it for official builds; never commit it.
+podtorrent/endpoints.json
+
+# Internal notes, kept locally only
+/docs/REVIEW_REPORT.md
+/docs/FABLE_REVIEW_PROMPT.md
+/docs/UI_AUDIT.md
+/docs/UI_DATA_GAPS.md
+/PodTorrent PoC Plan and Build Checklist.md
+/podtorrent-build-context.md
+/PODTORRENT_UI_BRIEF.md
+/docs/HEADLESS_CLI_PLAN.md

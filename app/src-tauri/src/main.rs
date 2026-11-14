@@ -257,13 +257,35 @@ fn save_token(token: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// The network to join, by the name the UI shows. The token must come from the same one.
-fn network_url(name: &str) -> Result<&'static str, String> {
-    match name {
-        "production" => Ok("wss://api.podtorrent.com/v0/node/connect"),
-        "staging" => Ok("wss://staging-api.podtorrent.com/v0/node/connect"),
-        _ => Err(format!("unknown network {name:?}")),
+/// The servers this build talks to, from podtorrent/endpoints.json in the backend (written by CI for
+/// official builds; see endpoints.example.json and podtorrent/endpoints.py). Empty when there is none.
+fn endpoints(app: &AppHandle) -> serde_json::Value {
+    std::fs::read_to_string(backend_dir(app).join("podtorrent/endpoints.json")).ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(serde_json::Value::Null)
+}
+
+/// One field (`connect` or `dashboard`) of the network to join, by the name the UI shows.
+/// The token must come from the same one.
+fn network_endpoint(app: &AppHandle, name: &str, field: &str) -> Result<String, String> {
+    if name != "production" && name != "staging" {
+        return Err(format!("unknown network {name:?}"));
     }
+    endpoints(app).pointer(&format!("/networks/{name}/{field}")).and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty()).map(String::from)
+        .ok_or_else(|| format!("this build has no {name} network configured"))
+}
+
+fn network_url(app: &AppHandle, name: &str) -> Result<String, String> {
+    network_endpoint(app, name, "connect")
+}
+
+/// The rendezvous for the UI's lobby (the census before this machine's node starts), or None.
+#[tauri::command]
+fn rendezvous_url(app: AppHandle) -> Option<String> {
+    std::env::var("PODTORRENT_RENDEZVOUS").ok()
+        .or_else(|| endpoints(&app).get("rendezvous").and_then(|v| v.as_str()).map(String::from))
+        .filter(|s| !s.is_empty()).map(|s| s.trim_end_matches('/').to_string())
 }
 
 fn engine_port() -> String {
@@ -286,7 +308,7 @@ fn node_up() -> bool {
 fn network_join(app: AppHandle, state: State<Agent>, node: String, token: String,
                 price_in: f64, price_out: f64, network: Option<String>) -> Result<(), String> {
     let network = network.unwrap_or_else(|| "production".into());
-    network_url(&network)?;
+    network_url(&app, &network)?;
     let node = node.trim().to_lowercase();
     if node.is_empty() || !node.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err("node id: letters, digits, - and _ only".into());
@@ -318,7 +340,7 @@ fn start_agent(app: &AppHandle, state: &Agent) -> Result<(), String> {
     let data = data_dir();
     let config: serde_json::Value = std::fs::read_to_string(data.join("network.json")).ok()
         .and_then(|t| serde_json::from_str(&t).ok()).ok_or("not joined")?;
-    let url = network_url(config.get("network").and_then(|v| v.as_str()).unwrap_or("production"))?;
+    let url = network_url(app, config.get("network").and_then(|v| v.as_str()).unwrap_or("production"))?;
     let token = saved_token().ok_or("no saved node token: paste the one you were given")?;
     let bin = backend_dir(app).join(AGENT);
     let manifest = data.join("network-manifest.json");
@@ -396,12 +418,8 @@ fn supervise_agent(app: AppHandle) {
 
 /// Open the operator dashboard of `network` in the default browser.
 #[tauri::command]
-fn open_dashboard(network: String) -> Result<(), String> {
-    let url = match network.as_str() {
-        "production" => "https://dashboard.podtorrent.com/",
-        "staging" => "https://dashboard-staging.podtorrent.com/",
-        _ => return Err(format!("unknown network {network:?}")),
-    };
+fn open_dashboard(app: AppHandle, network: String) -> Result<(), String> {
+    let url = network_endpoint(&app, &network, "dashboard")?;
     #[cfg(target_os = "macos")]
     let r = Command::new("open").arg(url).status();
     #[cfg(windows)]
@@ -862,6 +880,48 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     MenuBuilder::new(app).items(&[&app_menu, &edit, &view, &node, &window, &help]).build()
 }
 
+/// The app identifier before the move to the podtorrent org. The webview keeps its storage (settings,
+/// onboarding, history: the UI's localStorage) under the identifier, so the first launch after the
+/// change copies it across. The engine's data (~/.podtorrent) doesn't depend on the identifier.
+const OLD_IDENTIFIER: &str = "space.songjam.podtorrent";
+
+fn migrate_webview_data(identifier: &str) {
+    let home = std::env::var_os("HOME").filter(|h| !h.is_empty())
+        .or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    let base = home.join("Library/WebKit");
+    #[cfg(windows)]
+    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| home.join("AppData/Local"));
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let base = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home.join(".local/share"));
+    let (old, new) = (base.join(OLD_IDENTIFIER), base.join(identifier));
+    if identifier == OLD_IDENTIFIER || !old.is_dir() || new.exists() {
+        return;
+    }
+    // Into a temporary folder first, so a copy cut short is retried next launch instead of kept.
+    let tmp = base.join(format!("{identifier}.migrating"));
+    let _ = std::fs::remove_dir_all(&tmp);
+    if copy_dir(&old, &tmp).and_then(|_| std::fs::rename(&tmp, &new)).is_err() {
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let (src, dst) = (entry.path(), to.join(entry.file_name()));
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            copy_dir(&src, &dst)?;
+        } else if kind.is_file() {
+            std::fs::copy(&src, &dst)?;
+        }
+    }
+    Ok(())
+}
+
 fn main() {
     // WebKitGTK's DMA-BUF renderer often draws a blank or flickering window on NVIDIA drivers.
     #[cfg(target_os = "linux")]
@@ -870,6 +930,8 @@ fn main() {
     {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
+    let context = tauri::generate_context!();
+    migrate_webview_data(&context.config().identifier);
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -878,7 +940,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             engine_log, engine_log_tail, engine_running, start_engine,
             stop_engine, quit_app, system_health, tray_update, notify, setup_progress, local_models,
-            data_location, pick_folder, set_data_location, network_join, network_leave, network_status, open_dashboard
+            data_location, pick_folder, set_data_location, network_join, network_leave, network_status, open_dashboard,
+            rendezvous_url
         ])
         .setup(|app| {
             let handle = app.handle();
@@ -935,7 +998,7 @@ fn main() {
                 let _ = w.emit("window-hidden", ());
             }
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error building app")
         .run(|app, event| match event {
             RunEvent::Exit => stop_children(app),

@@ -1,4 +1,4 @@
-// podtorrent.com/download — serves builds from R2. Download names follow one standard (src/builds.json):
+// <your domain>/download — serves builds from R2. Download names follow one standard (src/builds.json):
 //   <os>-<arch>[-<gpu stack>][-headless]: macos-arm64, windows-x64-cuda, linux-x64-cuda, linux-x64-rocm,
 //   linux-x64-rocm-headless. Files: podtorrent-<version>-<name>.<ext>.
 //   /download                        page with the latest builds and notes
@@ -47,7 +47,8 @@ const text = (body: string | null, type = "text/plain; charset=utf-8") =>
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
-    const path = new URL(req.url).pathname.replace(/\/+$/, "");
+    const url = new URL(req.url), origin = url.origin;
+    const path = url.pathname.replace(/\/+$/, "");
     if (req.method !== "GET" && req.method !== "HEAD") return new Response("Method not allowed", { status: 405 });
     const head = req.method === "HEAD";
 
@@ -59,8 +60,8 @@ export default {
       });
     }
 
-    if (path === "/install.sh" || path === "/download/install.sh") return text(head ? null : installSh);
-    if (path === "/install.ps1" || path === "/download/install.ps1") return text(head ? null : installPs1);
+    if (path === "/install.sh" || path === "/download/install.sh") return text(head ? null : withBase(installSh, origin));
+    if (path === "/install.ps1" || path === "/download/install.ps1") return text(head ? null : withBase(installPs1, origin));
 
     const want = parse(path);
     if (want) {
@@ -78,7 +79,7 @@ export default {
       return serveBuild(env, req, build.key, build.file, !!want.version);
     }
 
-    if (path === "/download") return page(await latestRelease(env));
+    if (path === "/download") return page(await latestRelease(env), origin);
     if (path === "/download/guide") return guide();
 
     // Guide screenshots live in R2 under guide/.
@@ -160,7 +161,7 @@ const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: 
     icon: `<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v12h16V6zm2.3 2.3a1 1 0 0 1 1.4 0l3 3a1 1 0 0 1 0 1.4l-3 3a1 1 0 1 1-1.4-1.4L8.6 12 6.3 9.7a1 1 0 0 1 0-1.4zM12 15h5a1 1 0 1 1 0 2h-5a1 1 0 1 1 0-2z"/>`,
     needs: ["AMD Ryzen AI Max / Max+ / Max PRO (Strix Halo), no display needed", "Linux kernel 6.14 or newer; your user in the <code>video</code> and <code>render</code> groups", "About 25 GB free disk, plus the model layers you serve"],
     steps: [
-      `Install (no root; checks the SHA-256):<code class="cmd">curl -fsSL https://podtorrent.com/install.sh | sh -s -- --headless</code>`,
+      `Install (no root; checks the SHA-256):<code class="cmd">curl -fsSL @ORIGIN@/install.sh | sh -s -- --headless</code>`,
       `Set it up: checks the machine, installs PyTorch, picks layers to serve:<code class="cmd">podtorrent setup</code>`,
       `Watch it live:<code class="cmd">podtorrent top</code>`,
     ],
@@ -245,7 +246,7 @@ figcaption{margin-top:8px;color:var(--mut);font-size:13px}
 `;
 const LOGO = `<svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><defs><radialGradient id="g"><stop offset="0" stop-color="#fff"/><stop offset=".25" stop-color="#3ee8ff"/><stop offset=".6" stop-color="#3ee8ff" stop-opacity=".35"/><stop offset="1" stop-color="#3ee8ff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="14" fill="#05070b"/><circle cx="32" cy="32" r="21" fill="none" stroke="#3ee8ff" stroke-opacity=".45" stroke-width="2"/><circle cx="32" cy="32" r="16" fill="url(#g)"/><circle cx="32" cy="32" r="5" fill="#eaffff"/></svg>`;
 
-function page(rel: Release | null): Response {
+function page(rel: Release | null, origin: string): Response {
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
   const mb = (b: Build) => `${(b.size / 1e6).toFixed(0)} MB`;
   // A platform's latest build can be older than the release (Mac builds aren't made in CI).
@@ -280,9 +281,9 @@ ${rel ? `<span class="rel">Latest release v${esc(rel.version)} · ${esc(rel.date
 <div class="grid">${PLATFORMS.map(card).join("")}</div>
 <section class="how"><h3>Install from a terminal</h3>
 <p>macOS and Linux: picks the right build for this machine (desktop app, or the headless build over SSH on AMD Ryzen AI Max), checks it and installs it. Run it again to update.</p>
-<code class="cmd">curl -fsSL https://podtorrent.com/install.sh | sh</code>
+<code class="cmd">curl -fsSL @ORIGIN@/install.sh | sh</code>
 <p style="margin-top:12px">Windows (PowerShell):</p>
-<code class="cmd">irm https://podtorrent.com/install.ps1 | iex</code>
+<code class="cmd">irm @ORIGIN@/install.ps1 | iex</code>
 <p class="links">Direct links: ${Object.keys(BUILDS).map((n) => `<a href="/download/${n}">${n}</a>`).join(" · ")}</p>
 </section>
 ${rel?.notes ? `<div class="notes"><h3>What's new</h3><pre>${esc(rel.notes)}</pre></div>` : ""}
@@ -295,8 +296,11 @@ const ua = navigator.userAgent, os = /Windows/.test(ua) ? "windows" : /Mac/.test
 const el = os && document.querySelector('.card[data-os="' + os + '"]');
 if (el) { el.classList.add("me"); el.parentNode.prepend(el); }
 </script></body></html>`;
-  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } });
+  return new Response(html.replaceAll("@ORIGIN@", origin), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } });
 }
+
+/** The installers download from the origin that served them: no download server is baked into the repo. */
+const withBase = (script: string, origin: string) => script.replaceAll("@PODTORRENT_BASE_URL@", `${origin}/download`);
 
 // The usage guide. Screenshots are uploaded to R2 under guide/.
 function guide(): Response {

@@ -18,11 +18,10 @@ from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from . import endpoints
 from .net.identity import Identity, home, peer_id_of
 
 KINDS = ("private", "public", "alone")
-# Public halves of the matchmaker keys allowed to sign public rosters (the rendezvous Worker's MATCHMAKER_SEED secret).
-MATCHMAKERS: tuple[str, ...] = ("d7f12d1666718f8fcf288276033c8de6b61e2e7801a3abf5c5063660cee872cc",)
 INVITE_TTL_S = 24 * 3600
 ROSTER_DOMAIN = b"podtorrent-roster|"
 INVITE_DOMAIN = b"podtorrent-invite|"
@@ -163,7 +162,8 @@ def verify(roster: dict, now: float | None = None, matchmakers: tuple[str, ...] 
 
     signer_id = peer_id_of(bytes.fromhex(roster["signer"]))
     if roster["kind"] == "public":
-        allowed = MATCHMAKERS if matchmakers is None else matchmakers
+        # Public halves of the rendezvous Worker's MATCHMAKER_SEED, from this build's endpoints.json.
+        allowed = endpoints.matchmakers() if matchmakers is None else matchmakers
         _need(roster["signer"] in allowed, "untrusted-signer", "not a matchmaker")
         _need(roster["expires"] > 0, "bad-shape", "a public roster must expire")
     else:

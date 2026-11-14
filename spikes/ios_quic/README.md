@@ -109,7 +109,7 @@ cd spikes/ios_quic && swift run PeerTestCLI pod ws://127.0.0.1:8787 pod1-… 30
 ```
 
 `py_peer.py --pod` keeps its pod in the spike's `.home/pod.json` and prints a fresh single-use invite on
-every start. Read-only view of the live pods: `PeerTestCLI census wss://rendezvous.podtorrent.com 10`.
+every start. Read-only view of the live pods: `PeerTestCLI census wss://<your rendezvous> 10`.
 Public lobby: `PeerTestCLI public URL 30`. Layer download:
 `LAYERS_HOME=/tmp/layers PeerTestCLI download mlx-community/Qwen3-0.6B-4bit 3 7`.
 

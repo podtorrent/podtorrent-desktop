@@ -4,8 +4,9 @@ import Foundation
 // Pods: the signed roster that says which machines serve together (docs/PODS_PLAN.md). A port of
 // podtorrent/pod.py, which is the reference; tests/pod_vectors.json decides when they disagree.
 
-/// Public halves of the matchmaker keys allowed to sign public rosters (the rendezvous Worker's MATCHMAKER_SEED secret).
-public let matchmakers = ["d7f12d1666718f8fcf288276033c8de6b61e2e7801a3abf5c5063660cee872cc"]
+/// Public halves of the matchmaker keys allowed to sign public rosters (the rendezvous Worker's MATCHMAKER_SEED
+/// secret), from this build's endpoints.json.
+public var matchmakers: [String] { Endpoints.matchmakers }
 public let rosterDomain = "podtorrent-roster|"
 public let inviteDomain = "podtorrent-invite|"
 
