@@ -1,7 +1,7 @@
 // Upload one build to R2 and point latest.json at it.
 //   node downloads/scripts/publish.js <name> <path-to-build> [--notes "..."] [--no-latest]
 // <name> is a download name from src/builds.json (macos-arm64, windows-x64-cuda, linux-x64-cuda,
-// linux-x64-rocm, linux-x64-rocm-headless) or its older name (mac, windows, linux, linux-amd, linux-amd-cli).
+// linux-x64-rocm, linux-x64-rocm-headless, linux-arm64-jetson-headless) or its older name (mac, windows, linux, linux-amd, linux-amd-cli).
 // The file is stored under the standard name podtorrent-<version>-<name>.<ext>, whatever it was built as.
 // The version comes from app/src-tauri/tauri.conf.json. Versioned files are never overwritten;
 // to roll back, re-point latest.json with: node downloads/scripts/publish.js promote <version>

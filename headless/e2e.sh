@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end test of an extracted headless tarball on Linux with no GPU (CI runs it before publishing).
-# Everything a user runs, for real: the ROCm PyTorch install, `setup` (which starts a peer just for
+# Everything a user runs, for real: the PyTorch install (ROCm, or for the Jetson build CPU, plus its
+# JetPack detection with stand-in release files), `setup` (which starts a peer just for
 # setup) refusing a model the engine can't run before downloading it, then a real slice of the model
 # a user serves, a restart that reloads the saved slice, a forward pass through those layers on
 # the installed PyTorch, status / top, and `doctor` (whose bundle must not contain the node token).
@@ -54,12 +55,39 @@ if [[ "$(readlink -f "$(command -v podtorrent || true)")" == "$dir/podtorrent" ]
 fi
 endgroup
 
-group "GPU check blocks without a GPU (installs ROCm PyTorch first: the slow part)"
+flavor="$(head -n1 PLATFORM 2>/dev/null || echo rocm)"
+if [[ "$flavor" == jetson ]]; then
+  # No Jetson in CI: check the JetPack detection with stand-in release files, before anything is installed.
+  group "Jetson: JetPack detection"
+  fake="$(mktemp -d)"
+  echo "# R35 (release), REVISION: 4.1, GCID: 33958178, BOARD: t186ref, EABI: aarch64, DATE: Tue Aug  1 19:57:35 UTC 2023" >"$fake/jp5"
+  echo "# R36 (release), REVISION: 4.3, GCID: 38968081, BOARD: generic, EABI: aarch64, DATE: Wed Jan  8 01:49:37 UTC 2025" >"$fake/jp6"
+  echo "garbage" >"$fake/bad"
+  if PODTORRENT_TEGRA_RELEASE="$fake/jp5" ./podtorrent gpu-check >jp5.log 2>&1; then cat jp5.log; fail "gpu-check went ahead on JetPack 5"; fi
+  cat jp5.log
+  grep -q "JetPack 5), and this build has no PyTorch for it" jp5.log || fail "no clear message for JetPack 5"
+  [[ ! -e "$data/venv" ]] || fail "JetPack 5 got as far as installing Python"
+  if PODTORRENT_TEGRA_RELEASE="$fake/bad" ./podtorrent gpu-check >bad.log 2>&1; then fail "gpu-check went ahead with an unreadable release file"; fi
+  grep -q "can't read the JetPack version" bad.log || { cat bad.log; fail "no clear message for an unreadable release file"; }
+  PODTORRENT_SKIP_PREFLIGHT= PODTORRENT_TEGRA_RELEASE="$fake/jp6" ./podtorrent preflight >jp6.log 2>&1 || true
+  cat jp6.log
+  grep -q "ok    Jetson with L4T 36.4.3 (JetPack 6)" jp6.log || fail "preflight didn't accept JetPack 6"
+  PODTORRENT_SKIP_PREFLIGHT= PODTORRENT_TEGRA_RELEASE="$fake/jp5" ./podtorrent preflight >jp5p.log 2>&1 && fail "preflight passed JetPack 5"
+  grep -q "FAIL  L4T 35.4.1 (JetPack 5) has no PyTorch" jp5p.log || { cat jp5p.log; fail "preflight didn't explain JetPack 5"; }
+  endgroup
+fi
+
+group "GPU check blocks without a GPU (installs PyTorch first: the slow part)"
 if PODTORRENT_ALLOW_CPU= ./podtorrent gpu-check; then
   fail "gpu-check passed on a machine with no GPU"
 fi
 [[ -x "$data/venv/bin/python" ]] || fail "PyTorch wasn't installed"
-"$data/venv/bin/python" -c 'import torch; assert torch.version.hip, "not a ROCm build"; print("torch", torch.__version__, "hip", torch.version.hip)'
+if [[ "$flavor" == jetson ]]; then
+  # Not a Jetson, so the lock's CPU PyTorch (on a Jetson the launcher swaps in NVIDIA's CUDA build).
+  "$data/venv/bin/python" -c 'import torch, platform; assert not torch.version.cuda, "expected CPU PyTorch off a Jetson"; print("torch", torch.__version__, platform.machine())'
+else
+  "$data/venv/bin/python" -c 'import torch; assert torch.version.hip, "not a ROCm build"; print("torch", torch.__version__, "hip", torch.version.hip)'
+fi
 endgroup
 export PODTORRENT_ALLOW_CPU=1
 

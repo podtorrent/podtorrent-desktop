@@ -9,6 +9,7 @@
 #   linux-x64-rocm            Linux desktop app for AMD Ryzen AI Max (Strix Halo, gfx1151)
 #   linux-x64-cuda            Linux desktop app for NVIDIA (and other machines)
 #   linux-x64-rocm-headless   no display (e.g. over SSH) on AMD Ryzen AI Max: the `podtorrent` command
+#   linux-arm64-jetson-headless   NVIDIA Jetson (AGX Orin, JetPack 6), headless: the `podtorrent` command
 # On Linux, a local desktop session (DISPLAY or WAYLAND_DISPLAY) means the desktop app; over SSH or with
 # no display, headless.
 # The download's SHA-256 is checked. No root needed. Run it again to update: the previous version is
@@ -64,14 +65,23 @@ if [ -z "$BUILD" ]; then
       [ "$MODE" != headless ] || die "there's no headless build for macOS; the Mac app runs in the background on its own"
       BUILD=macos-arm64 ;;
     Linux)
-      case "$arch" in x86_64|amd64) ;; *) die "PodTorrent for Linux needs x86_64 (this machine is $arch)" ;; esac
+      case "$arch" in
+        x86_64|amd64) ;;
+        aarch64|arm64)
+          [ -r /etc/nv_tegra_release ] || die "PodTorrent for ARM64 Linux is for NVIDIA Jetson only (no /etc/nv_tegra_release here)"
+          [ "$MODE" != desktop ] || die "there's no desktop build for Jetson; install the headless build (--headless) and open the dashboard over SSH"
+          say "found an NVIDIA Jetson ($(head -n 1 /etc/nv_tegra_release | cut -c 3-30))"
+          MODE=headless BUILD=linux-arm64-jetson-headless ;;
+        *) die "PodTorrent for Linux needs x86_64, or ARM64 on NVIDIA Jetson (this machine is $arch)" ;;
+      esac
       if [ -z "$MODE" ]; then
         # Over SSH (even with X forwarding) means headless; a local desktop session means the desktop app.
         if [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]; then MODE=headless
         elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then MODE=desktop
         else MODE=headless; fi
       fi
-      if amd_halo; then
+      if [ -n "$BUILD" ]; then :
+      elif amd_halo; then
         say "found an AMD Ryzen AI Max GPU (gfx1151)"
         if [ "$MODE" = headless ]; then BUILD=linux-x64-rocm-headless; else BUILD=linux-x64-rocm; fi
       elif nvidia; then
@@ -92,9 +102,9 @@ fi
 case "$BUILD" in
   macos-arm64) EXT=dmg ;;
   linux-x64-cuda|linux-x64-rocm) EXT=AppImage ;;
-  linux-x64-rocm-headless) EXT=tar.gz ;;
+  linux-x64-rocm-headless|linux-arm64-jetson-headless) EXT=tar.gz ;;
   windows-x64-cuda) die "windows-x64-cuda installs from PowerShell: irm ${BASE%/download}/install.ps1 | iex" ;;
-  *) die "unknown build $BUILD (macos-arm64, linux-x64-cuda, linux-x64-rocm, linux-x64-rocm-headless)" ;;
+  *) die "unknown build $BUILD (macos-arm64, linux-x64-cuda, linux-x64-rocm, linux-x64-rocm-headless, linux-arm64-jetson-headless)" ;;
 esac
 say "installing $BUILD"
 
@@ -330,7 +340,7 @@ EOF
 
 case "$BUILD" in
   macos-arm64) install_macos ;;
-  linux-x64-rocm-headless) install_headless ;;
+  linux-x64-rocm-headless|linux-arm64-jetson-headless) install_headless ;;
   *) install_appimage ;;
 esac
 say "update any time by running the same install command again"

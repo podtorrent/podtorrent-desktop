@@ -5,6 +5,7 @@
     "windows-x64-cuda": { "manifest": "windows", "ext": "exe", "legacy": ["windows"], "label": "Windows (NVIDIA)" },
     "linux-x64-cuda": { "manifest": "linux", "ext": "AppImage", "legacy": ["linux"], "label": "Linux desktop (NVIDIA)" },
     "linux-x64-rocm": { "manifest": "linux-amd", "ext": "AppImage", "legacy": ["linux-amd"], "label": "Linux desktop (AMD Ryzen AI Max)" },
-    "linux-x64-rocm-headless": { "manifest": "linux-amd-cli", "ext": "tar.gz", "legacy": ["linux-amd-cli"], "label": "Linux headless (AMD Ryzen AI Max)" }
+    "linux-x64-rocm-headless": { "manifest": "linux-amd-cli", "ext": "tar.gz", "legacy": ["linux-amd-cli"], "label": "Linux headless (AMD Ryzen AI Max)" },
+    "linux-arm64-jetson-headless": { "manifest": "linux-jetson-cli", "ext": "tar.gz", "legacy": [], "label": "Linux headless (NVIDIA Jetson)" }
   }
 }
