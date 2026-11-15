@@ -45,7 +45,7 @@ uv run podtorrent peer                  # serve nothing yet; local API + dashboa
 uv run podtorrent peer --serve 24:48    # or serve a layer range right away (remembered in ~/.podtorrent/config.json)
 ```
 
-A peer can serve several slices, of several models (any `qwen3_moe` MLX repo), at once. While it runs:
+A peer can serve several slices, of several models (any `qwen3_moe` or `qwen3_5_moe` MLX repo), at once. While it runs:
 
 ```bash
 uv run podtorrent serve 0:12                                   # another slice of the default model

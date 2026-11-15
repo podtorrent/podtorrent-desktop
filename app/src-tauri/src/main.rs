@@ -518,7 +518,7 @@ fn local_models() -> Vec<serde_json::Value> {
         let repo = std::fs::read_to_string(d.join(".repo")).map(|s| s.trim().to_string()).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| name.clone());
         let n = std::fs::read_to_string(d.join("config.json")).ok()
             .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-            .and_then(|c| c.get("num_hidden_layers").and_then(|v| v.as_u64()));
+            .and_then(|c| c.get("num_hidden_layers").or_else(|| c.get("text_config")?.get("num_hidden_layers")).and_then(|v| v.as_u64()));
         let mut layers = std::collections::BTreeSet::new();
         for f in std::fs::read_dir(d).into_iter().flatten().flatten().map(|e| e.path())
             .filter(|p| p.extension().is_some_and(|x| x == "safetensors")) {
@@ -528,7 +528,7 @@ fn local_models() -> Vec<serde_json::Value> {
             let mut buf = vec![0u8; u64::from_le_bytes(len).min(1 << 28) as usize];
             if fh.read_exact(&mut buf).is_err() { continue }
             let Ok(serde_json::Value::Object(m)) = serde_json::from_slice(&buf) else { continue };
-            layers.extend(m.keys().filter_map(|k| k.strip_prefix("model.layers.")?.split('.').next()?.parse::<u64>().ok()));
+            layers.extend(m.keys().filter_map(|k| k.strip_prefix("language_model.").unwrap_or(k).strip_prefix("model.layers.")?.split('.').next()?.parse::<u64>().ok()));
         }
         let mut runs: Vec<[u64; 2]> = vec![];
         for x in &layers {

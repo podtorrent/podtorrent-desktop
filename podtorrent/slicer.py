@@ -13,6 +13,13 @@ from huggingface_hub import get_token, hf_hub_download, hf_hub_url
 LAYER_RE = re.compile(r"^(?:model\.|language_model\.)*layers\.(\d+)\.")
 EMBED_RE = re.compile(r"^(?:model\.|language_model\.)*embed_tokens\.")
 NORM_RE = re.compile(r"^(?:model\.|language_model\.)*norm\.weight$")
+HEAD_RE = re.compile(r"^(?:language_model\.)?lm_head\.")  # Qwen3.5: "language_model.lm_head."
+
+
+def text_config(cfg: dict) -> dict:
+    """The language model's config. Multimodal models (Qwen3.5, Qwen3-VL) nest it under `text_config`;
+    the top level keeps `model_type` and `quantization`."""
+    return cfg.get("text_config", cfg) if "num_hidden_layers" not in cfg else cfg
 
 
 def select_tensors(weight_map: dict, lo: int, hi: int, host: bool, tail: bool) -> list[str]:
@@ -25,7 +32,7 @@ def select_tensors(weight_map: dict, lo: int, hi: int, host: bool, tail: bool) -
                 names.append(name)
         elif EMBED_RE.match(name) and host:
             names.append(name)
-        elif (name.startswith("lm_head.") or NORM_RE.match(name)) and tail:
+        elif (HEAD_RE.match(name) or NORM_RE.match(name)) and tail:
             names.append(name)
     return names
 
@@ -110,7 +117,7 @@ def estimate_slice_bytes(out_dir: str | Path, lo: int, hi: int) -> int:
     """Rough size of layers [lo, hi) from the index's total size, ignoring embeddings and head
     (fetch_meta first). Good enough for a memory check before downloading."""
     out_dir = Path(out_dir)
-    cfg = json.loads((out_dir / "config.json").read_text())
+    cfg = text_config(json.loads((out_dir / "config.json").read_text()))
     index = json.loads((out_dir / "model.safetensors.index.json").read_text())
     total = index.get("metadata", {}).get("total_size") or 0
     extra = 2 * cfg.get("vocab_size", 0) * cfg.get("hidden_size", 0) // 2  # embed + head, ~4-bit + scales

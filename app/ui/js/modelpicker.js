@@ -7,7 +7,7 @@ import { segmented } from "./ui.js";
 import { catalogSearch, catalogInfo } from "./engine.js";
 
 export const GB = 2 ** 30;
-const SUPPORTED = new Set(["qwen3_moe"]);   // architectures the peer can split (peer.py SUPPORTED)
+const SUPPORTED = new Set(["qwen3_moe", "qwen3_5_moe"]);   // architectures the peer can split (peer.py SUPPORTED)
 // Curated MLX models. Runnable ones carry layers and size (from each repo's index); the rest are
 // listed so people see what's coming, but can't be picked until the peer runs their architecture.
 const run = (id, name, family, quant, layers, gb, tag) => ({ repo: `mlx-community/${id}`, name, family, quant, layers, bytes: gb * 1e9, tag });
