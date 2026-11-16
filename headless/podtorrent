@@ -77,6 +77,7 @@ version_ge() {
 PF_KERNEL="${PODTORRENT_PF_KERNEL:-$(uname -r)}"
 PF_SYS="${PODTORRENT_PF_SYS:-/sys}"
 PF_KFD="${PODTORRENT_PF_KFD:-/dev/kfd}"
+PF_DRI="${PODTORRENT_PF_DRI:-/dev/dri}"
 
 preflight() {
   [[ "$FLAVOR" != jetson ]] || { preflight_jetson; return; }
@@ -192,11 +193,36 @@ preflight_jetson() {
           "flash a supported JetPack, or send PodTorrent support the output of: cat $TEGRA_RELEASE"
     fi
   fi
-  groups=" $(id -nG) "
-  if [[ "$groups" == *" video "* ]]; then
-    ok "$(id -un) is in the video group"
+  # CUDA reaches the GPU through /dev/nvmap and /dev/nvhost-* (group video) and, on JetPack 7, the
+  # host1x render node /dev/dri/renderD* (group render). Without the render node the video devices
+  # open fine but cuInit fails with CUDA error 801, so check video plus the groups owning those nodes.
+  local g node list want=(video) missing=()
+  for node in "$PF_DRI"/renderD*; do
+    [[ -e "$node" ]] || continue
+    g="$(stat -c %G "$node" 2>/dev/null)" || continue
+    [[ "$g" == root || " ${want[*]} " == *" $g "* ]] || want+=("$g")
+  done
+  groups=" $(id -nG) "   # this login's groups: what the GPU check and the peer run with
+  for g in "${want[@]}"; do [[ "$groups" == *" $g "* ]] || missing+=("$g"); done
+  printf -v list '%s and ' "${want[@]}"; list="${list% and }"
+  if (( ${#missing[@]} )); then
+    # In /etc/group already (usermod ran) but not in this login: a re-login fixes it, not usermod.
+    local added=1
+    for g in "${missing[@]}"; do [[ " $(id -nG "$(id -un)" 2>/dev/null) " == *" $g "* ]] || added=0; done
+    if (( added )); then
+      bad "$(id -un) was added to ${missing[*]} after this login started, so CUDA can't reach the GPU yet" \
+          "log out and back in; if PodTorrent runs as a background service, reboot so it gets the new groups too"
+    else
+      bad "$(id -un) is not in: ${missing[*]}, so CUDA can't reach the GPU" \
+          "sudo usermod -aG $(IFS=,; echo "${missing[*]}") $(id -un), then log out and back in (or reboot)"
+    fi
   else
-    bad "$(id -un) is not in the video group, so CUDA can't reach the GPU" "sudo usermod -aG video $(id -un), then log out and back in"
+    ok "$(id -un) is in the $list group$( (( ${#want[@]} > 1 )) && echo s)"
+    for node in "$PF_DRI"/renderD*; do
+      [[ ! -e "$node" || ( -r "$node" && -w "$node" ) ]] && continue
+      bad "$(id -un) can't open $node ($(stat -c '%U:%G %A' "$node" 2>/dev/null)), so CUDA fails with error 801" \
+          "its group needs read and write access (ls -l $PF_DRI); check the udev rules that set it"
+    done
   fi
   mkdir -p "$DATA"
   if [[ -x "$DATA/venv/bin/python" ]]; then
@@ -311,7 +337,7 @@ import torch
 if not torch.cuda.is_available():
     sys.exit("  FAIL  PyTorch can't see the GPU (torch.cuda.is_available() is False)\n"
              f"        fix: run {os.environ['PT_ME']} preflight; "
-             + ("check you are in the video group and CUDA_VISIBLE_DEVICES is unset" if os.environ["PT_FLAVOR"] == "jetson"
+             + ("check you are in the video and render groups (CUDA error 801 means render is missing) and CUDA_VISIBLE_DEVICES is unset" if os.environ["PT_FLAVOR"] == "jetson"
                 else "check rocminfo lists gfx1151 and HIP_VISIBLE_DEVICES is unset"))
 dev = torch.device("cuda")
 a = torch.randn(1024, 1024, generator=torch.Generator().manual_seed(0))
@@ -322,7 +348,7 @@ try:
     torch.cuda.synchronize(dev)
 except Exception as e:
     sys.exit(f"  FAIL  a matrix multiply on the GPU failed: {e}\n"
-             "        fix: " + ("check dmesg | grep -i nvgpu, and that JetPack is 6.x" if os.environ["PT_FLAVOR"] == "jetson"
+             "        fix: " + ("check dmesg | grep -i nvgpu, and that JetPack is 6 or 7" if os.environ["PT_FLAVOR"] == "jetson"
                                 else "check dmesg | grep amdgpu, and that the kernel is 6.14+"))
 err = ((got.cpu() - want).norm() / want.norm()).item()
 if err > 0.02:
