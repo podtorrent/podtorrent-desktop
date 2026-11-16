@@ -354,6 +354,24 @@ def pod_summary(r: dict | None) -> dict | None:
             "plans": r["plans"], "expires": r["expires"]}
 
 
+class TextPieces:
+    """Turns generated tokens into text, one piece per token. An emoji or CJK character can span
+    several byte-level tokens, and decoding each alone gives U+FFFD (shown as ��), so tokens are
+    held until they decode to whole characters: the piece is "" meanwhile. Gives up after 4 tokens
+    (a UTF-8 character has at most 4 bytes), so text that really is invalid still comes out."""
+
+    def __init__(self, tokenizer):
+        self.tokenizer, self.held = tokenizer, []
+
+    def push(self, tok: int) -> str:
+        self.held.append(tok)
+        text = self.tokenizer.decode(self.held)
+        if text.endswith("\ufffd") and len(self.held) < 4:
+            return ""
+        self.held = []
+        return text
+
+
 class HopFailed(Exception):
     def __init__(self, hop: Hop, reason: str):
         super().__init__(reason)
@@ -875,7 +893,8 @@ class PeerApp:
             s.close()
 
     def generate(self, ids: list[int], max_tokens: int, model: str | None = None):
-        """Yields (token, text, timing) per generated token. Raises if the model isn't covered.
+        """Yields (token, text, timing) per generated token; text is "" while a character spanning
+        several tokens is incomplete (TextPieces). Raises if the model isn't covered.
         If a remote hop fails, re-plans without that peer and replays prompt + output so far to
         rebuild the KV cache on the new route; tokens already yielded are kept."""
         model = model or self.repo
@@ -897,6 +916,7 @@ class PeerApp:
         eos |= {vocab[t] for t in ("<|im_end|>", "<|eot_id|>", "<|end|>", "<end_of_turn>", "<|endoftext|>")
                 if t in vocab}
         produced, reroutes = 0, 0
+        pieces = TextPieces(tok_)
         try:
             while produced < max_tokens:
                 t0 = time.perf_counter()
@@ -962,8 +982,8 @@ class PeerApp:
                 if tok in eos:  # stop without emitting the terminator's text
                     break
                 head = {"node": NAME, "compute_ms": pre + post, "pre_ms": pre, "post_ms": post}
-                yield tok, tok_.decode([tok]), {"stages": [head, *stages], "bytes": nbytes,
-                                                    "route": [[h_.name, h_.lo, h_.hi] for h_ in hops]}
+                yield tok, pieces.push(tok), {"stages": [head, *stages], "bytes": nbytes,
+                                              "route": [[h_.name, h_.lo, h_.hi] for h_ in hops]}
                 produced += 1
                 seq.append(tok)
                 x = B.token_ids([tok])
