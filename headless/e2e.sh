@@ -79,6 +79,41 @@ if [[ "$flavor" == jetson ]]; then
   PODTORRENT_SKIP_PREFLIGHT= PODTORRENT_TEGRA_RELEASE="$fake/jp5" ./podtorrent preflight >jp5p.log 2>&1 && fail "preflight passed JetPack 5"
   grep -q "FAIL  L4T 35.4.1 (JetPack 5) has no PyTorch" jp5p.log || { cat jp5p.log; fail "preflight didn't explain JetPack 5"; }
   endgroup
+
+  # JetPack 7's CUDA also needs the render node (/dev/dri/renderD*, group render), or cuInit fails with
+  # error 801. Stand-ins: a render node owned by this user's own group (a runner can't chgrp to render),
+  # and an `id` that reports the login's groups (FAKE_GROUPS) and /etc/group's (FAKE_DB_GROUPS).
+  group "Jetson: video and render groups"
+  mkdir -p "$fake/dri" "$fake/bin"
+  touch "$fake/dri/renderD128"; chmod 660 "$fake/dri/renderD128"
+  rgrp="$(stat -c %G "$fake/dri/renderD128")" realid="$(command -v id)"
+  cat >"$fake/bin/id" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  -un) echo tester ;;
+  -nG) echo "\$FAKE_GROUPS" ;;
+  "-nG tester") echo "\${FAKE_DB_GROUPS:-\$FAKE_GROUPS}" ;;
+  *) exec "$realid" "\$@" ;;
+esac
+EOF
+  chmod +x "$fake/bin/id"
+  jpf() { PATH="$fake/bin:$PATH" PODTORRENT_SKIP_PREFLIGHT= PODTORRENT_TEGRA_RELEASE="$fake/jp7" \
+          PODTORRENT_PF_DRI="$fake/dri" ./podtorrent preflight >grp.log 2>&1 || true; }
+  FAKE_GROUPS="tester video" jpf
+  grep -q "FAIL  tester is not in: $rgrp, so CUDA can't reach the GPU" grp.log \
+    && grep -q "sudo usermod -aG $rgrp tester" grp.log || { cat grp.log; fail "preflight didn't ask for the render node's group"; }
+  FAKE_GROUPS="tester" jpf
+  grep -q "sudo usermod -aG video,$rgrp tester" grp.log || { cat grp.log; fail "preflight didn't ask for video and render together"; }
+  FAKE_GROUPS="tester video" FAKE_DB_GROUPS="tester video $rgrp" jpf
+  grep -q "added to $rgrp after this login started" grp.log || { cat grp.log; fail "preflight didn't say to log in again"; }
+  FAKE_GROUPS="tester video $rgrp" jpf
+  grep -q "ok    tester is in the video and $rgrp groups" grp.log || { cat grp.log; fail "preflight didn't accept video and render"; }
+  if [[ "$(id -u)" != 0 ]]; then   # root opens anything
+    chmod 000 "$fake/dri/renderD128"; FAKE_GROUPS="tester video $rgrp" jpf; chmod 660 "$fake/dri/renderD128"
+    grep -q "can't open $fake/dri/renderD128" grp.log || { cat grp.log; fail "preflight didn't catch an unreadable render node"; }
+  fi
+  cat grp.log
+  endgroup
 fi
 
 group "GPU check blocks without a GPU (installs PyTorch first: the slow part)"

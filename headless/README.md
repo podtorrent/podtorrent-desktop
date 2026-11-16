@@ -19,8 +19,10 @@ you reach over SSH. It needs no desktop or display.
 
 The Jetson build (`podtorrent-…-linux-arm64-jetson-headless.tar.gz`; the install command picks it on a
 Jetson) needs instead: **JetPack 6 or 7** (L4T R36, or R38/R39; `cat /etc/nv_tegra_release` shows it), your user in the
-**`video`** group, and about 10 GB of free disk. On first run it installs NVIDIA's PyTorch for Jetson for
-your JetPack version; on another JetPack version it stops and says so. Everything else below is the same.
+**`video`** and **`render`** groups (`sudo usermod -aG video,render $USER`, then log out and back in; without
+`render`, CUDA fails with error 801 on JetPack 7), and about 10 GB of free disk. On first run it installs
+PyTorch with CUDA for your JetPack version (NVIDIA's Jetson build on JetPack 6, PyTorch's CUDA 13 build on
+JetPack 7); on another JetPack version it stops and says so. Everything else below is the same.
 For the most GPU speed, set the maximum power mode first: `sudo nvpmodel -m 0 && sudo jetson_clocks`.
 
 ## Install and set up
