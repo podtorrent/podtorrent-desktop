@@ -136,10 +136,17 @@ uv run --with pytest pytest tests/test_route.py
 
 Starts one peer process per slice (`[0,5)`, `[5,10)`, `[10,16)`), lets them connect over QUIC through the rendezvous, runs 20 prompts through the chain and requires token-exact output versus a single-process reference.
 
+PyTorch backend speed (machines without MLX): `scripts/bench_torch.py <model-dir> --lo 0 --hi 24` prints ms per
+token for a slice (`--compare` checks the fast path against the reference path, `--synthetic DIR` benchmarks
+Qwen3.5-122B-sized layers with random weights). On a GPU with Triton, decode runs fused 4-bit kernels replayed as
+a CUDA graph; `PODTORRENT_TORCH_FAST=0` turns that off, `PODTORRENT_CUDA_GRAPHS=0` keeps the kernels without graphs.
+`python tests/test_torch_kernels.py` runs the GPU kernel tests on a machine without pytest.
+
 ## Layout
 
 - `podtorrent/slicer.py`: downloads only the tensors for a layer range (HTTP range requests)
 - `podtorrent/shard.py`: loads a layer range into MLX
+- `podtorrent/shard_torch.py`, `podtorrent/torch_kernels.py`: the same layer range in PyTorch, with fused Triton decode kernels on GPUs
 - `podtorrent/peer.py`: the peer runtime (serving, requesting, local API and event stream)
 - `podtorrent/route.py`: plans which peers run which layers
 - `podtorrent/net/`: identity keys, STUN, rendezvous client, QUIC transport and hole punching
