@@ -1,12 +1,13 @@
 # Headless build for NVIDIA Jetson (AGX Orin; ARM64, JetPack, integrated Ampere GPU), reached over SSH: a
 # tarball with the aarch64 uv, the backend (locked to CPU PyTorch), podtorrent-agent and the `podtorrent`
-# launcher. PyPI's and pytorch.org's aarch64 wheels don't use the Jetson GPU, so on first run the launcher
-# reads the JetPack version from /etc/nv_tegra_release and installs NVIDIA's Jetson PyTorch for it from the
-# index in jetson-torch.txt; a JetPack with no index stops with a clear message.
+# launcher. The lock's CPU PyTorch doesn't use the Jetson GPU, so on first run the launcher reads the
+# JetPack version from /etc/nv_tegra_release and installs the CUDA PyTorch for it from the index in
+# jetson-torch.txt (JetPack 6: NVIDIA's Jetson build; 7: pytorch.org cu130); a JetPack with no index stops
+# with a clear message.
 #
 # The index per JetPack comes from repo variables JETSON_TORCH_INDEX_JP<N> / JETSON_TORCH_REQ_JP<N>
-# (like ROCM_TORCH_INDEX for AMD). JetPack 6 has a default (headless/package.sh); set JETSON_TORCH_INDEX_JP7
-# to add JetPack 7 once it is checked on an Orin.
+# (like ROCM_TORCH_INDEX for AMD) and override the defaults in headless/package.sh (JetPack 6 and 7).
+# JETSON_TORCH_REQ_JP<N> is the torch requirement, then any extra libraries installed from PyPI --no-deps.
 name: Linux Jetson build
 
 on:
@@ -83,13 +84,14 @@ jobs:
       - name: Check the Jetson PyTorch indexes
         run: |
           py="$(cat .python-version)"
-          grep -v '^#' x/*/jetson-torch.txt | while read -r jp idx req; do
-            echo "JetPack $jp: $req from $idx"
+          grep -v '^#' x/*/jetson-torch.txt | while read -r jp idx req extras; do
+            echo "JetPack $jp: $req from $idx${extras:+, plus $extras from PyPI (--no-deps)}"
             echo "$req" | uv pip compile - --python-version "$py" --python-platform aarch64-manylinux_2_35 \
-              --index-url "$idx" --extra-index-url https://pypi.org/simple --index-strategy first-index --no-header \
+              --index "$idx" --default-index https://pypi.org/simple --index-strategy first-index --no-header \
               | tee resolved.txt
             grep -q '^torch==' resolved.txt
-            ! grep -qE '^nvidia-|^cuda-' resolved.txt || { echo "::error::$idx pulls CUDA from pip instead of JetPack's"; exit 1; }
+            # JetPack 6 (L4T CUDA) must use JetPack's CUDA; JetPack 7 is standard aarch64 CUDA, from pip.
+            (( jp >= 7 )) || ! grep -qE '^nvidia-|^cuda-' resolved.txt || { echo "::error::$idx pulls CUDA from pip instead of JetPack's"; exit 1; }
           done
 
       - uses: actions/upload-artifact@v4

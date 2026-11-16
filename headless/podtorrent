@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PodTorrent headless launcher for Linux AMD (Ryzen AI Max / Strix Halo, gfx1151) and, in the Jetson build
-# (a PLATFORM file saying jetson), NVIDIA Jetson (AGX Orin, JetPack 6). No GUI needed.
+# (a PLATFORM file saying jetson), NVIDIA Jetson (AGX Orin, JetPack 6 or 7). No GUI needed.
 #
 #   ./podtorrent setup              guided first run: checks, GPU, name, model and layers, service, network
 #   ./podtorrent peer               preflight, install ROCm PyTorch on first run, run this machine's peer,
@@ -150,10 +150,14 @@ preflight() {
 
 # The L4T version of this Jetson, e.g. 36.4.3 (from "# R36 (release), REVISION: 4.3, ..."), or nothing.
 l4t_version() { sed -n 's/^# R\([0-9][0-9]*\) (release), REVISION: \([0-9.]*\).*/\1.\2/p' "$TEGRA_RELEASE" 2>/dev/null | head -n1; }
-# JetPack major for an L4T major: R35 = JetPack 5, R36 = JetPack 6, R38 = JetPack 7.
-jetpack_major() { case "$1" in 35) echo 5 ;; 36) echo 6 ;; 38) echo 7 ;; *) echo "?" ;; esac; }
-# The "<index> <requirement>" line for a JetPack major from jetson-torch.txt, or nothing.
-jetson_torch_for() { awk -v jp="$1" '$1 == jp && NF >= 3 { print $2, $3; exit }' "$JETSON_TORCH" 2>/dev/null; }
+# JetPack major for an L4T major: R35 = JetPack 5, R36 = JetPack 6, R38 (Thor) and R39 (Orin) = JetPack 7.
+jetpack_major() { case "$1" in 35) echo 5 ;; 36) echo 6 ;; 38|39) echo 7 ;; *) echo "?" ;; esac; }
+# "<index> <requirement> [<extra>...]" for a JetPack major from jetson-torch.txt, or nothing. Extras are
+# libraries the wheel links to without declaring them (JetPack 7: NVPL); they're installed from PyPI
+# without their dependencies.
+jetson_torch_for() {
+  awk -v jp="$1" '$1 == jp && NF >= 3 { $1 = ""; sub(/^ /, ""); print; exit }' "$JETSON_TORCH" 2>/dev/null
+}
 jetson_supported() { awk 'NF >= 3 && $1 !~ /^#/ { printf "%s%s", sep, "JetPack " $1; sep = ", " }' "$JETSON_TORCH" 2>/dev/null; }
 
 # The PyTorch index and requirement for this Jetson; exits with what to do when its JetPack has none.
@@ -166,7 +170,7 @@ jetson_torch() {
   jp="$(jetpack_major "${l4t%%.*}")"
   line="$(jetson_torch_for "$jp")"
   [[ -n "$line" ]] || die "this Jetson runs L4T $l4t (JetPack $jp), and this build has no PyTorch for it (it has: $(jetson_supported)).
-podtorrent: fix: flash JetPack 6 (L4T R36) with NVIDIA SDK Manager, or send PodTorrent support the output of: cat $TEGRA_RELEASE"
+podtorrent: fix: flash a supported JetPack with NVIDIA SDK Manager, or send PodTorrent support the output of: cat $TEGRA_RELEASE"
   echo "$line"
 }
 
@@ -178,14 +182,14 @@ preflight_jetson() {
   [[ "$(uname -s)" == Linux ]] || bad "this launcher is for Linux (found $(uname -s))" "use the desktop app on this machine"
   [[ "$(uname -m)" == aarch64 ]] || bad "this build is for ARM64 NVIDIA Jetson (found $(uname -m))" "on an x86_64 machine use the NVIDIA or AMD build"
   if [[ ! -r "$TEGRA_RELEASE" ]]; then
-    bad "$TEGRA_RELEASE is missing, so this is not an NVIDIA Jetson with JetPack" "this build is for Jetson AGX Orin with JetPack 6; flash it with NVIDIA SDK Manager"
+    bad "$TEGRA_RELEASE is missing, so this is not an NVIDIA Jetson with JetPack" "this build is for Jetson AGX Orin with JetPack 6 or 7; flash it with NVIDIA SDK Manager"
   else
     l4t="$(l4t_version)"; jp="$(jetpack_major "${l4t%%.*}")"
     if [[ -n "$(jetson_torch_for "$jp")" ]]; then
       ok "Jetson with L4T $l4t (JetPack $jp)"
     else
       bad "L4T ${l4t:-?} (JetPack $jp) has no PyTorch in this build (it has: $(jetson_supported))" \
-          "flash JetPack 6 (L4T R36), or send PodTorrent support the output of: cat $TEGRA_RELEASE"
+          "flash a supported JetPack, or send PodTorrent support the output of: cat $TEGRA_RELEASE"
     fi
   fi
   groups=" $(id -nG) "
@@ -226,6 +230,15 @@ uv_env() {
   [[ -z "${PODTORRENT_NAME:-}" ]] || export PODTORRENT_NAME
   # Jetson: PyTorch comes from NVIDIA's Jetson index, not the lock, so `uv run` must not re-sync it away.
   [[ "$FLAVOR" != jetson ]] || export UV_NO_SYNC=1
+  # Jetson: libraries from pip (JetPack 7's CUDA 13 wheels, and extras such as NVPL from jetson-torch.txt)
+  # live in the venv, where the loader doesn't look.
+  if [[ "$FLAVOR" == jetson ]]; then
+    local lib
+    for lib in "$DATA"/venv/lib/python3*/site-packages/{nvidia/cu*,nvpl}/lib; do
+      [[ -d "$lib" && ":${LD_LIBRARY_PATH:-}:" != *":$lib:"* ]] || continue
+      export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$lib"
+    done
+  fi
 }
 
 # Install Python and ROCm PyTorch (from the gfx1151 index this bundle is locked to) if they aren't yet.
@@ -243,16 +256,17 @@ setup_backend() {
   say "PyTorch with ROCm (HIP $hip)"
 }
 
-# Jetson: everything from the lock except PyTorch, then PyTorch from NVIDIA's index for this JetPack
-# (jetson-torch.txt). PyPI's and pytorch.org's aarch64 wheels don't use the Jetson's integrated GPU.
+# Jetson: everything from the lock except PyTorch, then the PyTorch for this JetPack (jetson-torch.txt):
+# JetPack 6 needs NVIDIA's Jetson build (L4T CUDA 12); JetPack 7 is standard aarch64 CUDA 13, so
+# pytorch.org's cu130 wheel. The lock's CPU PyTorch doesn't use the Jetson's GPU.
 # Not on a Jetson (CI), the lock's CPU PyTorch stays, and the GPU check blocks the peer as usual.
 setup_backend_jetson() {
-  local spec idx req cuda
+  local spec idx req extras cuda mark="$DATA/venv/jetson-torch.installed"
   spec="$(jetson_torch)" || exit 1   # says what to do if this JetPack has no index
   [[ -x "$DATA/venv/bin/python" ]] || say "first run: installing Python and PyTorch for Jetson into $DATA/venv (a few GB, this takes a while)"
-  "$UV" sync --frozen --project "$BACKEND" --no-install-package torch \
+  # --inexact: keep the Jetson PyTorch and its extras, which aren't in the lock (a plain sync removes them).
+  "$UV" sync --frozen --inexact --project "$BACKEND" --no-install-package torch \
     || stuck "installing Python and the backend failed (above); check the network and free disk, then run again"
-  cuda="$("$DATA/venv/bin/python" -c 'import torch; print(torch.version.cuda or "")' 2>/dev/null || true)"
   if [[ -z "$spec" ]]; then
     say "warning: $TEGRA_RELEASE not found, so this is not a Jetson; installing CPU PyTorch"
     [[ -n "$("$DATA/venv/bin/python" -c 'import torch' 2>/dev/null && echo y)" ]] \
@@ -261,15 +275,28 @@ setup_backend_jetson() {
     say "PyTorch $("$DATA/venv/bin/python" -c 'import torch; print(torch.__version__)') (CPU)"
     return 0
   fi
-  read -r idx req <<<"$spec"
-  if [[ -z "$cuda" ]]; then
+  read -r idx req extras <<<"$spec"
+  cuda="$("$DATA/venv/bin/python" -c 'import torch; print(torch.version.cuda or "")' 2>/dev/null || true)"
+  # Reinstall when there's no CUDA PyTorch yet, or this build's jetson-torch.txt line changed (an update).
+  if [[ -z "$cuda" || "$(cat "$mark" 2>/dev/null)" != "$spec" ]]; then
+    rm -f "$mark"
     say "installing $req for JetPack from $idx"
-    "$UV" pip install --python "$DATA/venv/bin/python" --index-url "$idx" --extra-index-url https://pypi.org/simple \
+    # --index, not --index-url: uv searches --index/--extra-index-url *before* the default index, so with
+    # --index-url "$idx" --extra-index-url pypi.org, PyPI's CPU torch would win.
+    "$UV" pip install --python "$DATA/venv/bin/python" --index "$idx" --default-index https://pypi.org/simple \
         --index-strategy first-index --reinstall-package torch "$req" \
       || stuck "installing PyTorch for Jetson from $idx failed (above); check the network, then run again"
+    if [[ -n "$extras" ]]; then
+      # Libraries the wheel links to that neither JetPack nor its dependencies provide; --no-deps.
+      # shellcheck disable=SC2086  # extras is a list of requirements
+      "$UV" pip install --quiet --python "$DATA/venv/bin/python" --index-url https://pypi.org/simple --no-deps $extras \
+        || stuck "installing $extras failed (above); check the network, then run again"
+    fi
+    uv_env   # library folders from the wheels exist now
     cuda="$("$DATA/venv/bin/python" -c 'import torch; print(torch.version.cuda or "")' 2>&1)" \
       || stuck "PyTorch for Jetson is installed but doesn't load: $cuda"
     [[ -n "$cuda" ]] || stuck "the PyTorch installed from $idx is not a CUDA build; remove $DATA/venv and run again"
+    printf '%s\n' "$spec" >"$mark"
   fi
   say "PyTorch for Jetson (CUDA $cuda)"
 }

@@ -62,6 +62,7 @@ if [[ "$flavor" == jetson ]]; then
   fake="$(mktemp -d)"
   echo "# R35 (release), REVISION: 4.1, GCID: 33958178, BOARD: t186ref, EABI: aarch64, DATE: Tue Aug  1 19:57:35 UTC 2023" >"$fake/jp5"
   echo "# R36 (release), REVISION: 4.3, GCID: 38968081, BOARD: generic, EABI: aarch64, DATE: Wed Jan  8 01:49:37 UTC 2025" >"$fake/jp6"
+  echo "# R39 (release), REVISION: 2.1, GCID: 46758480, BOARD: generic, EABI: aarch64, DATE: Fri Aug  7 05:54:22 AM UTC 2026" >"$fake/jp7"
   echo "garbage" >"$fake/bad"
   if PODTORRENT_TEGRA_RELEASE="$fake/jp5" ./podtorrent gpu-check >jp5.log 2>&1; then cat jp5.log; fail "gpu-check went ahead on JetPack 5"; fi
   cat jp5.log
@@ -72,6 +73,9 @@ if [[ "$flavor" == jetson ]]; then
   PODTORRENT_SKIP_PREFLIGHT= PODTORRENT_TEGRA_RELEASE="$fake/jp6" ./podtorrent preflight >jp6.log 2>&1 || true
   cat jp6.log
   grep -q "ok    Jetson with L4T 36.4.3 (JetPack 6)" jp6.log || fail "preflight didn't accept JetPack 6"
+  PODTORRENT_SKIP_PREFLIGHT= PODTORRENT_TEGRA_RELEASE="$fake/jp7" ./podtorrent preflight >jp7.log 2>&1 || true
+  cat jp7.log
+  grep -q "ok    Jetson with L4T 39.2.1 (JetPack 7)" jp7.log || fail "preflight didn't accept JetPack 7 (L4T R39, Orin)"
   PODTORRENT_SKIP_PREFLIGHT= PODTORRENT_TEGRA_RELEASE="$fake/jp5" ./podtorrent preflight >jp5p.log 2>&1 && fail "preflight passed JetPack 5"
   grep -q "FAIL  L4T 35.4.1 (JetPack 5) has no PyTorch" jp5p.log || { cat jp5p.log; fail "preflight didn't explain JetPack 5"; }
   endgroup
