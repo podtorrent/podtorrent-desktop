@@ -36,7 +36,7 @@ from .net.quic import M_FORWARD, M_LOAD, PeerNet, Stream, _frame, _read_frame
 from .net.rendezvous import RoomError, SwarmClient, join_pod
 from .route import Hop, Offer, coverage, plan
 from .backend import Shard
-from .slicer import download_slice, estimate_slice_bytes, fetch_meta
+from .slicer import download_slice, estimate_slice_bytes, fetch_meta, text_config
 from .video import api as video_api
 from .video.encoder_node import EncoderNode
 from .video.service import MIN_VRAM_GB
@@ -50,7 +50,7 @@ HOP_TIMEOUT_S = 120
 MAX_REROUTES = 3
 DECODE_HOP_TIMEOUT_S = 10  # one token's hop; a dead peer sends no close, so don't wait for the QUIC idle timeout
 LOAD_TIMEOUT_S = 3600
-SUPPORTED = {"qwen3_moe"}  # architectures Shard can run
+SUPPORTED = {"qwen3_moe", "qwen3_5_moe"}  # architectures Shard can run
 PLAN_RETRY_S = 60          # a plan hop that failed to load is tried again after this long
 SUPPLY_REFRESH_S = 60      # how often the lobby supply rescans the models on disk
 MEM_HEADROOM_GB = 1.0      # keep this much of the GPU budget free after loading a slice
@@ -191,7 +191,7 @@ class Slices:
     def hidden_size(self, model: str) -> int:
         if model not in self._hidden:
             cfg = json.loads((self.model_dir(model) / "config.json").read_text())
-            self._hidden[model] = cfg.get("text_config", cfg)["hidden_size"]
+            self._hidden[model] = text_config(cfg)["hidden_size"]
         return self._hidden[model]
 
     def check(self, req: pb.ForwardRequest, model: str):
@@ -262,7 +262,7 @@ class Slices:
             cfg = fetch_meta(model, d)
             if cfg.get("model_type") not in SUPPORTED:
                 raise ValueError(f"{model} is a {cfg.get('model_type')} model; PodTorrent runs {', '.join(SUPPORTED)}")
-            n = cfg["num_hidden_layers"]
+            n = text_config(cfg)["num_hidden_layers"]
             if not 0 <= lo < hi <= n:
                 raise ValueError(f"layers [{lo},{hi}) out of range: {model} has {n} layers")
             replaced = [s for s in self.loaded(model) if replace or (lo <= s.lo and s.hi <= hi)]
@@ -523,7 +523,7 @@ class PeerApp:
         if model in self._n_layers:
             return self._n_layers[model]
         try:
-            n = json.loads((self.model_dir(model) / "config.json").read_text())["num_hidden_layers"]
+            n = text_config(json.loads((self.model_dir(model) / "config.json").read_text()))["num_hidden_layers"]
         except (OSError, ValueError, KeyError):
             n = next((s["n_layers"] for p in self.peers for s in self.peer_slices(p)
                       if s.get("model") == model and s.get("n_layers")), None)

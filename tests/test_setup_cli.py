@@ -208,7 +208,8 @@ def test_no_peer_running():
 
 # ---- the peer side: /api/catalog/info says whether this engine can run the model ----
 
-@pytest.mark.parametrize("model_type,ok", [("qwen3_moe", True), ("qwen3", False), ("llama", False)])
+@pytest.mark.parametrize("model_type,ok", [("qwen3_moe", True), ("qwen3_5_moe", True), ("qwen3", False),
+                                           ("qwen3_5_moe_text", False), ("llama", False)])
 def test_catalog_info_reports_support(tmp_path, monkeypatch, model_type, ok):
     import asyncio
 
@@ -224,5 +225,5 @@ def test_catalog_info_reports_support(tmp_path, monkeypatch, model_type, ok):
     class Req:
         query = {"repo": "o/thing"}
     body = json.loads(asyncio.run(app.catalog_info(Req())).body)
-    assert body["supported"] is ok and body["supported_types"] == ["qwen3_moe"]
+    assert body["supported"] is ok and body["supported_types"] == ["qwen3_5_moe", "qwen3_moe"]
     identity.load_identity.cache_clear()

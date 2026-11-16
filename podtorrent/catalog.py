@@ -8,7 +8,7 @@ import httpx
 from huggingface_hub import hf_hub_url
 
 from .cli import default_dir
-from .slicer import LAYER_RE, _headers, local_tensors
+from .slicer import LAYER_RE, _headers, local_tensors, text_config
 
 HF_API = "https://huggingface.co/api/models"
 REPO_FILE = ".repo"   # written next to a model's files so the folder maps back to its HF repo
@@ -35,8 +35,8 @@ def info(repo: str) -> dict:
         r = httpx.get(hf_hub_url(repo, f), headers=_headers(), timeout=15, follow_redirects=True)
         r.raise_for_status()
         return r.json()
-    cfg = get("config.json")
-    cfg = cfg.get("text_config", cfg) if "num_hidden_layers" not in cfg else cfg
+    top = get("config.json")
+    cfg = text_config(top)
     n = cfg.get("num_hidden_layers")
     if not n:
         raise ValueError(f"{repo} has no num_hidden_layers in config.json")
@@ -45,7 +45,7 @@ def info(repo: str) -> dict:
     except httpx.HTTPStatusError:
         total = 0   # single-file model: size unknown up front
     return {"repo": repo, "n_layers": n, "size_bytes": total, "layer_bytes": total // n if total else 0,
-            "model_type": cfg.get("model_type", "")}
+            "model_type": top.get("model_type", "")}  # the top level's: text_config says e.g. qwen3_5_moe_text
 
 
 def _repo_of(d: Path, known: list[str]) -> str | None:
@@ -64,7 +64,7 @@ def local(known: list[str] = ()) -> list[dict]:
     for d in sorted(p for p in home.iterdir() if p.is_dir()):
         repo = _repo_of(d, list(known))
         try:
-            n = json.loads((d / "config.json").read_text()).get("num_hidden_layers")
+            n = text_config(json.loads((d / "config.json").read_text())).get("num_hidden_layers")
         except (OSError, ValueError):
             n = None
         layers = sorted({int(m.group(1)) for t in local_tensors(d) if (m := LAYER_RE.match(t))})

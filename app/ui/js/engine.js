@@ -266,7 +266,7 @@ async function hfInfo(repo) {
     const idx = await file("model.safetensors.index.json").catch(() => null);
     const total = (idx?.ok && idx.body?.metadata?.total_size) || 0;   // single-file model: size unknown up front
     return { offline: true, repo, n_layers: n, size_bytes: total, layer_bytes: total ? Math.floor(total / n) : 0,
-      model_type: cfg.model_type || "", mem_total_gb: state.health?.mem_total_gb || 0 };
+      model_type: c.body.model_type || cfg.model_type || "", mem_total_gb: state.health?.mem_total_gb || 0 };
   } catch (e) { return { error: `couldn't read ${repo}: ${e}` }; }
 }
 
