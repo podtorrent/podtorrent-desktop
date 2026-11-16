@@ -105,6 +105,8 @@ def routes(app) -> list:
                         await resp.write(chunk({"role": "assistant", "content": ""}))
                 elif kind == "piece":
                     completion_tokens += 1
+                    if not val:  # a token held back until its character is whole (peer.TextPieces)
+                        continue
                     if stream:
                         await resp.write(chunk({"content": val}))
                     else:

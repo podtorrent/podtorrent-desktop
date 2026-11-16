@@ -87,6 +87,20 @@ def test_stream_with_usage_and_length():
     assert chunks[-1]["usage"]["completion_tokens"] == 2
 
 
+def test_held_tokens_send_no_empty_chunks():
+    # peer.TextPieces yields "" for tokens of a character that isn't whole yet; they still count.
+    peer = FakePeer()
+    peer.generate = lambda ids, max_tokens, _m: iter([(0, "Hi ", {}), (1, "", {}), (2, "", {}), (3, "👋", {})])
+
+    async def fn(c):
+        r = await c.post("/v1/chat/completions", json={**BODY, "stream": True, "stream_options": {"include_usage": True}})
+        return await r.text()
+    events = [json.loads(line[6:]) for line in run(peer, fn).split("\n") if line.startswith("data: {")]
+    deltas = [c["choices"][0]["delta"].get("content") for c in events if c["choices"] and "content" in c["choices"][0]["delta"]]
+    assert deltas == ["", "Hi ", "👋"]  # the opening role chunk, then no empty pieces
+    assert events[-1]["usage"]["completion_tokens"] == 4
+
+
 def test_errors():
     async def fn(c):
         a = await c.post("/v1/chat/completions", json={"model": "example/model"})
