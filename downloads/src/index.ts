@@ -1,6 +1,6 @@
 // <your domain>/download — serves builds from R2. Download names follow one standard (src/builds.json):
-//   <os>-<arch>[-<gpu stack>][-headless]: macos-arm64, windows-x64-cuda, linux-x64-cuda, linux-x64-rocm,
-//   linux-x64-rocm-headless. Files: podtorrent-<version>-<name>.<ext>.
+//   <os>-<arch>[-<gpu stack>][-headless]: macos-arm64, macos-arm64-headless, windows-x64-cuda, linux-x64-cuda,
+//   linux-x64-rocm, linux-x64-rocm-headless, linux-arm64-jetson-headless. Files: podtorrent-<version>-<name>.<ext>.
 //   /download                        page with the latest builds and notes
 //   /download/<name>                 latest build (also /download/<name>.<ext>, a file name for plain wget)
 //   /download/<name>.sha256          its SHA-256, "<hash>  <file>" (for the installers)
@@ -22,7 +22,7 @@ interface Env {
 type Build = { key: string; file: string; sha256: string; size: number };
 type Release = { version: string; date: string; notes: string } & Partial<Record<Manifest, Build>>;
 
-const PLATFORMS = ["mac", "windows", "linux", "linux-amd", "linux-amd-cli"] as const;   // cards on the page
+const PLATFORMS = ["mac", "windows", "linux", "linux-amd", "linux-amd-cli", "mac-cli"] as const;   // cards on the page
 type Platform = (typeof PLATFORMS)[number];
 type Manifest = Platform;
 type Spec = { manifest: Manifest; ext: string; legacy: string[]; label: string };
@@ -155,7 +155,7 @@ const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: 
       "Preview: the first launch measures how much of the shared memory the GPU can use.",
     ],
   },
-  // The headless tarball (headless/README.md): for an AMD machine reached over SSH, no display.
+  // The headless tarballs (headless/README.md): for a machine reached over SSH, no display.
   "linux-amd-cli": {
     name: "Linux headless", arch: "x64 CLI · ROCm · over SSH",
     icon: `<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v12h16V6zm2.3 2.3a1 1 0 0 1 1.4 0l3 3a1 1 0 0 1 0 1.4l-3 3a1 1 0 1 1-1.4-1.4L8.6 12 6.3 9.7a1 1 0 0 1 0-1.4zM12 15h5a1 1 0 1 1 0 2h-5a1 1 0 1 1 0-2z"/>`,
@@ -164,6 +164,16 @@ const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: 
       `Install (no root; checks the SHA-256):<code class="cmd">curl -fsSL @ORIGIN@/install.sh | sh -s -- --headless</code>`,
       `Set it up: checks the machine, installs PyTorch, picks layers to serve:<code class="cmd">podtorrent setup</code>`,
       `Watch it live:<code class="cmd">podtorrent top</code>`,
+    ],
+  },
+  "mac-cli": {
+    name: "macOS headless", arch: "Apple Silicon CLI · MLX · over SSH",
+    icon: `<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v12h16V6zm2.3 2.3a1 1 0 0 1 1.4 0l3 3a1 1 0 0 1 0 1.4l-3 3a1 1 0 1 1-1.4-1.4L8.6 12 6.3 9.7a1 1 0 0 1 0-1.4zM12 15h5a1 1 0 1 1 0 2h-5a1 1 0 1 1 0-2z"/>`,
+    needs: ["Apple Silicon machine you reach over SSH, macOS 14 or newer", "16 GB memory or more recommended", "About 2 GB free disk, plus the model layers you serve"],
+    steps: [
+      `Install over SSH (no root; checks the SHA-256):<code class="cmd">curl -fsSL @ORIGIN@/install.sh | sh -s -- --headless</code>`,
+      `Set it up: checks the machine, installs MLX, picks layers to serve:<code class="cmd">podtorrent setup</code>`,
+      `Start it at boot with nobody logged in (asks for your password once):<code class="cmd">podtorrent install-service --at-boot</code>`,
     ],
   },
 };
@@ -280,7 +290,7 @@ ${STYLE}</style></head><body><main>
 ${rel ? `<span class="rel">Latest release v${esc(rel.version)} · ${esc(rel.date)}</span>` : ""}
 <div class="grid">${PLATFORMS.map(card).join("")}</div>
 <section class="how"><h3>Install from a terminal</h3>
-<p>macOS and Linux: picks the right build for this machine (desktop app, or the headless build over SSH on AMD Ryzen AI Max), checks it and installs it. Run it again to update.</p>
+<p>macOS and Linux: picks the right build for this machine (desktop app, or over SSH the headless build for Apple Silicon or AMD Ryzen AI Max), checks it and installs it. Run it again to update.</p>
 <code class="cmd">curl -fsSL @ORIGIN@/install.sh | sh</code>
 <p style="margin-top:12px">Windows (PowerShell):</p>
 <code class="cmd">irm @ORIGIN@/install.ps1 | iex</code>

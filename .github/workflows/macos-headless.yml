@@ -1,0 +1,112 @@
+# Headless build for Apple Silicon Macs reached over SSH (Mac mini, Mac Studio): a tarball with the arm64
+# uv, the backend (MLX from the lock, as in the Mac app), podtorrent-agent and the `podtorrent` launcher,
+# which runs the peer as a launchd job. install.sh picks it on a Mac over SSH (or with --headless).
+#
+# The end-to-end test (headless/e2e-macos.sh) runs the whole flow on the runner, including the launchd
+# service. If the runner has no Metal, it checks what it can and warns that it skipped the rest.
+name: macOS headless build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: ['podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', 'headless/**', 'install/**', 'app/scripts/bundle-backend.js', '.github/workflows/macos-headless.yml']
+  # A PR labelled `e2e` runs the end-to-end test too (a new workflow can't be run by hand until it's on main).
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths: ['podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', 'headless/**', 'install/**', 'app/scripts/bundle-backend.js', '.github/workflows/macos-headless.yml']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish this build to the download page
+        type: boolean
+        default: false
+
+concurrency:
+  group: macos-headless-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  headless:
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Download podtorrent-agent
+        run: |
+          tag="${{ vars.PODTORRENT_AGENT_VERSION }}"
+          gh release download $tag -R podtorrent/podtorrent-agent -p 'podtorrent-agent-v*-darwin-arm64' -p SHA256SUMS -D agent
+          (cd agent && shasum -a 256 -c --ignore-missing SHA256SUMS)
+          echo "PODTORRENT_AGENT_BIN=$(ls "$PWD"/agent/podtorrent-agent-v*-darwin-arm64)" >> "$GITHUB_ENV"
+
+      # The servers official builds talk to (podtorrent/endpoints.py), from the PODTORRENT_ENDPOINTS secret.
+      # A fork sets its own, or builds without servers; a release tag must have one.
+      - name: Write endpoints.json
+        shell: bash
+        env:
+          ENDPOINTS: ${{ secrets.PODTORRENT_ENDPOINTS }}
+        run: |
+          if [ -n "$ENDPOINTS" ]; then printf '%s' "$ENDPOINTS" > "$GITHUB_WORKSPACE/podtorrent/endpoints.json"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "::error::the PODTORRENT_ENDPOINTS secret is not set"; exit 1
+          else echo "::warning::no PODTORRENT_ENDPOINTS secret: this build has no servers"; fi
+
+      - name: Build tarball
+        env:
+          PODTORRENT_PLATFORM: macos
+        run: |
+          [[ "$GITHUB_REF" == refs/tags/v* ]] && export VERSION="${GITHUB_REF_NAME#v}"
+          headless/package.sh dist
+          tar -tzf dist/*.tar.gz | grep -v '\.py$' | sort
+          mkdir -p x && tar -xzf dist/*.tar.gz -C x
+          file x/*/backend/uv x/*/backend/podtorrent-agent
+          file x/*/backend/uv | grep -q arm64
+          ! tar -tzf dist/*.tar.gz | grep -q '/\._' || { echo "::error::the tarball has AppleDouble (._) files"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: podtorrent-macos-arm64-headless
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+      # Installed the way a user does it (install.sh under sh, as over SSH), twice so the update path runs
+      # too, then headless/e2e-macos.sh: MLX install, GPU check, setup, a real model slice and a forward
+      # pass, status, doctor, and the launchd service (crash restart, update restart, clean uninstall).
+      - if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'e2e')
+        name: End-to-end test
+        run: |
+          tarball="$(ls "$PWD"/dist/*.tar.gz)"
+          export SSH_CONNECTION="127.0.0.1 1 127.0.0.1 22"   # install.sh picks the headless build over SSH
+          PODTORRENT_FILE="$tarball" sh install/install.sh | tee install.txt
+          grep -q "installing macos-arm64-headless" install.txt
+          PODTORRENT_FILE="$tarball" sh install/install.sh
+          test -d "$HOME/.local/share/podtorrent/app.old"
+          export PATH="$HOME/.local/bin:$PATH"
+          E2E_TARBALL="$tarball" headless/e2e-macos.sh "$HOME/.local/share/podtorrent/app"
+
+      - if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        name: Publish to the download page
+        working-directory: downloads
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm ci
+          node scripts/publish.js macos-arm64-headless ../dist/*.tar.gz
+
+      - if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        name: Upload to the GitHub release
+        run: |
+          tag="$GITHUB_REF_NAME"
+          [[ "$GITHUB_REF" == refs/tags/v* ]] || tag="v$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n1)"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --verify-tag --title "$tag" --notes ""
+          gh release upload "$tag" dist/*.tar.gz --clobber

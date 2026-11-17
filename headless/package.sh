@@ -12,6 +12,8 @@
 #                   to CPU PyTorch, plus jetson-torch.txt, from which the launcher installs NVIDIA's Jetson
 #                   PyTorch for the machine's JetPack on first run. JETSON_TORCH_INDEX_JP<N> (with
 #                   JETSON_TORCH_REQ_JP<N>, default "torch") adds JetPack N; JetPack 6 and 7 have defaults.
+#   macos           podtorrent-X.Y.Z-macos-arm64-headless.tar.gz, on an Apple Silicon Mac: the backend as the Mac
+#                   app has it (MLX from the lock, no PyTorch), run by launchd instead of a window.
 # VERSION overrides the version in the file name (default: pyproject.toml's).
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,7 +25,8 @@ case "$platform" in
         torch_index="${PODTORRENT_TORCH_INDEX:-https://repo.amd.com/rocm/whl/gfx1151/}"; lock_check='repo.amd.com/rocm' ;;
   jetson) build=linux-arm64-jetson-headless; arch=aarch64
         torch_index=https://download.pytorch.org/whl/cpu; lock_check='download.pytorch.org/whl/cpu' ;;
-  *) echo "unknown PODTORRENT_PLATFORM $platform (rocm, jetson)" >&2; exit 1 ;;
+  macos) build=macos-arm64-headless; arch=arm64; torch_index=""; lock_check='' ;;
+  *) echo "unknown PODTORRENT_PLATFORM $platform (rocm, jetson, macos)" >&2; exit 1 ;;
 esac
 [[ "$(uname -m)" == "$arch" ]] || { echo "build $build on $arch (this is $(uname -m)): uv is copied in" >&2; exit 1; }
 name="podtorrent-$version-$build"   # the naming standard: downloads/src/builds.json
@@ -35,7 +38,7 @@ PODTORRENT_BACKEND_OUT="$stage/$name/backend" \
 PODTORRENT_TORCH_INDEX="$torch_index" \
   node "$root/app/scripts/bundle-backend.js"
 [[ -x "$stage/$name/backend/podtorrent-agent" ]] || { echo "podtorrent-agent was not staged; set PODTORRENT_AGENT_BIN" >&2; exit 1; }
-grep -q "$lock_check" "$stage/$name/backend/pyproject.toml" || { echo "backend is not locked to $lock_check" >&2; exit 1; }
+[[ -z "$lock_check" ]] || grep -q "$lock_check" "$stage/$name/backend/pyproject.toml" || { echo "backend is not locked to $lock_check" >&2; exit 1; }
 if [[ "$platform" == jetson ]]; then
   # JetPack major -> NVIDIA's Jetson PyTorch index and the requirement to install from it. JetPack 6 (L4T R36,
   # CUDA 12.x): jp6/cu129 is the index with Python 3.12 wheels (cu126 has 3.10 only, which the backend can't use).
@@ -61,5 +64,5 @@ cp "$root/headless/podtorrent" "$stage/$name/podtorrent"
 cp "$root/headless/README.md" "$stage/$name/README.md"
 printf '%s\n' "$version" >"$stage/$name/VERSION"
 chmod +x "$stage/$name/podtorrent"
-tar -C "$stage" -czf "$out/$name.tar.gz" "$name"
+COPYFILE_DISABLE=1 tar -C "$stage" -czf "$out/$name.tar.gz" "$name"
 echo "$out/$name.tar.gz"
