@@ -242,6 +242,10 @@ a{color:var(--acc)}
 .guide-link:hover{border-color:var(--acc)}.guide-link:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
 .go{margin-left:auto;font-size:24px;color:var(--acc)}
 .back{display:inline-block;margin-bottom:24px;font-size:14px;text-decoration:none}
+.site{display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px;margin:-32px 0 32px;font-size:14px}
+.site a{color:var(--mut);text-decoration:none}.site a:hover{color:var(--acc)}
+.site a:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:4px}
+.site .home{margin-right:auto;color:var(--fg);font-weight:600}
 .toc{display:flex;flex-wrap:wrap;gap:8px;margin:24px 0 8px;padding:0;list-style:none}
 .toc a{display:block;padding:4px 12px;border:1px solid var(--line);border-radius:999px;font-size:14px;text-decoration:none;color:var(--mut)}
 .toc a:hover{color:var(--acc);border-color:var(--acc)}
@@ -255,6 +259,8 @@ figcaption{margin-top:8px;color:var(--mut);font-size:13px}
 .tip{border-left:3px solid var(--acc);background:var(--card);padding:10px 14px;border-radius:0 8px 8px 0;margin:16px 0 0;font-size:14px;color:var(--mut);max-width:720px}
 `;
 const LOGO = `<svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><defs><radialGradient id="g"><stop offset="0" stop-color="#fff"/><stop offset=".25" stop-color="#3ee8ff"/><stop offset=".6" stop-color="#3ee8ff" stop-opacity=".35"/><stop offset="1" stop-color="#3ee8ff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="14" fill="#05070b"/><circle cx="32" cy="32" r="21" fill="none" stroke="#3ee8ff" stroke-opacity=".45" stroke-width="2"/><circle cx="32" cy="32" r="16" fill="url(#g)"/><circle cx="32" cy="32" r="5" fill="#eaffff"/></svg>`;
+// Links to the other PodTorrent sites, so /download is never a dead end.
+const SITE_NAV = `<nav class="site" aria-label="PodTorrent sites"><a class="home" href="https://podtorrent.com/">PodTorrent</a><a href="https://docs.podtorrent.com/">Docs</a><a href="https://podtorrent.com/register-node">Run a node</a><a href="https://playground.podtorrent.com/">Playground</a><a href="https://dashboard.podtorrent.com/">Dashboard</a></nav>`;
 
 function page(rel: Release | null, origin: string): Response {
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -284,6 +290,7 @@ function page(rel: Release | null, origin: string): Response {
 <meta name="description" content="Download PodTorrent for macOS, Windows and Linux (desktop or headless).">
 <style>
 ${STYLE}</style></head><body><main>
+${SITE_NAV}
 <div class="hero">${LOGO}
 <h1>Download PodTorrent</h1></div>
 <p class="lead">Run large language models together. Each machine holds a slice of the model's layers, and peers on macOS, Windows and Linux join the same chains over the internet.</p>
@@ -299,7 +306,7 @@ ${rel ? `<span class="rel">Latest release v${esc(rel.version)} · ${esc(rel.date
 ${rel?.notes ? `<div class="notes"><h3>What's new</h3><pre>${esc(rel.notes)}</pre></div>` : ""}
 <div class="how"><h3>Setting up</h3><p>The first launch downloads the inference engine and its dependencies (a few GB on Windows and Linux) into your home folder. After that, pick which layers to serve and your machine joins the swarm.</p></div>
 <a class="how guide-link" href="/download/guide"><div><h3>How to use PodTorrent</h3><p>A short tour with screenshots: name your machine, choose which layers it serves, see your peers, check which models can run, and chat with a model the whole swarm serves together. It also covers serving the PodTorrent network and fixing common problems.</p></div><span class="go" aria-hidden="true">→</span></a>
-<footer>SHA-256 checksums: <code>/download/&lt;name&gt;.sha256</code>. Older builds: <code>/download/v/&lt;version&gt;/&lt;platform&gt;</code>.</footer>
+<footer>SHA-256 checksums: <code>/download/&lt;name&gt;.sha256</code>. Older builds: <code>/download/v/&lt;version&gt;/&lt;platform&gt;</code>.<br>Setting up a node for the PodTorrent network? Read the <a href="https://docs.podtorrent.com/getting-started/node-quickstart">node quickstart</a>.</footer>
 </main>
 <script>
 const ua = navigator.userAgent, os = /Windows/.test(ua) ? "windows" : /Mac/.test(ua) && !/iPhone|iPad/.test(ua) ? "mac" : /Linux/.test(ua) && !/Android/.test(ua) ? "linux" : "";
@@ -357,7 +364,7 @@ function guide(): Response {
       <p>Once your swarm covers a whole model, it can answer requests from the PodTorrent network, and this machine's operator is paid for each one. In <b>Network</b>:</p>
       <ol>
         <li>Choose <b>Production</b> or <b>Staging</b>.</li>
-        <li>Enter your approved <b>node id</b> and <b>node token</b>.</li>
+        <li>Enter your approved <b>node id</b> and <b>node token</b>. No node yet? <a href="https://podtorrent.com/register-node">Register one</a>; the token is in the <a href="https://dashboard.podtorrent.com/operator">operator console</a> once it's approved.</li>
         <li>Set your price per million input and output tokens.</li>
         <li>Click <b>Join Network</b>. PodTorrent stays joined across restarts, and <b>Dashboard</b> opens your node's page.</li>
       </ol>
@@ -376,6 +383,7 @@ function guide(): Response {
 <meta name="description" content="How to install PodTorrent, serve layers of a model, and chat with the swarm.">
 <style>
 ${STYLE}</style></head><body><main>
+${SITE_NAV}
 <a class="back" href="/download">← Download PodTorrent</a>
 <div class="hero">${LOGO}<h1>Using PodTorrent</h1></div>
 <p class="lead">PodTorrent lets machines on different networks run one large language model together. Each machine serves a slice of the model's layers, and every token hops between them. Here's how to get set up and start chatting.</p>
