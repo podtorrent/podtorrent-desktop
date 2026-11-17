@@ -6,12 +6,14 @@
 #
 # Picks the build for this machine (names follow downloads/src/builds.json):
 #   macos-arm64               Mac app (Apple Silicon), into /Applications (or ~/Applications)
+#   macos-arm64-headless      Apple Silicon Mac with no one at the screen (e.g. a Mac mini over SSH): the
+#                             `podtorrent` command, run by launchd
 #   linux-x64-rocm            Linux desktop app for AMD Ryzen AI Max (Strix Halo, gfx1151)
 #   linux-x64-cuda            Linux desktop app for NVIDIA (and other machines)
 #   linux-x64-rocm-headless   no display (e.g. over SSH) on AMD Ryzen AI Max: the `podtorrent` command
 #   linux-arm64-jetson-headless   NVIDIA Jetson (AGX Orin, JetPack 6 or 7), headless: the `podtorrent` command
 # On Linux, a local desktop session (DISPLAY or WAYLAND_DISPLAY) means the desktop app; over SSH or with
-# no display, headless.
+# no display, headless. On macOS, over SSH means headless; otherwise the app.
 # The download's SHA-256 is checked. No root needed. Run it again to update: the previous version is
 # kept (".old"), and a running headless service is restarted on the new one. Models and settings in
 # ~/.podtorrent are never touched.
@@ -62,8 +64,11 @@ if [ -z "$BUILD" ]; then
   case "$os" in
     Darwin)
       [ "$arch" = arm64 ] || die "PodTorrent for macOS needs an Apple Silicon Mac (M1 or later); this one is $arch"
-      [ "$MODE" != headless ] || die "there's no headless build for macOS; the Mac app runs in the background on its own"
-      BUILD=macos-arm64 ;;
+      if [ -z "$MODE" ] && [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]; then
+        MODE=headless
+        say "over SSH: installing the headless build (the \`podtorrent\` command); add --desktop for the app"
+      fi
+      if [ "$MODE" = headless ]; then BUILD=macos-arm64-headless; else BUILD=macos-arm64; fi ;;
     Linux)
       case "$arch" in
         x86_64|amd64) ;;
@@ -102,9 +107,9 @@ fi
 case "$BUILD" in
   macos-arm64) EXT=dmg ;;
   linux-x64-cuda|linux-x64-rocm) EXT=AppImage ;;
-  linux-x64-rocm-headless|linux-arm64-jetson-headless) EXT=tar.gz ;;
+  linux-x64-rocm-headless|linux-arm64-jetson-headless|macos-arm64-headless) EXT=tar.gz ;;
   windows-x64-cuda) die "windows-x64-cuda installs from PowerShell: irm ${BASE%/download}/install.ps1 | iex" ;;
-  *) die "unknown build $BUILD (macos-arm64, linux-x64-cuda, linux-x64-rocm, linux-x64-rocm-headless, linux-arm64-jetson-headless)" ;;
+  *) die "unknown build $BUILD (macos-arm64, macos-arm64-headless, linux-x64-cuda, linux-x64-rocm, linux-x64-rocm-headless, linux-arm64-jetson-headless)" ;;
 esac
 say "installing $BUILD"
 
@@ -164,6 +169,11 @@ swap() {
 on_path() { case ":$PATH:" in *":$BIN_DIR:"*) return 0 ;; *) return 1 ;; esac; }
 path_hint() {
   on_path && return 0
+  if [ "$os" = Darwin ]; then   # macOS never adds ~/.local/bin by itself
+    say "$BIN_DIR isn't on your PATH: add it once, then open a new terminal (or SSH in again):"
+    say "  echo 'export PATH=\"$BIN_DIR:\$PATH\"' >> ~/.zprofile"
+    return 0
+  fi
   say "$BIN_DIR isn't on your PATH yet: log out and back in (most distributions add it then),"
   say "or run: export PATH=\"$BIN_DIR:\$PATH\""
 }
@@ -275,7 +285,39 @@ EOF
   path_hint
 }
 
-# ---- Linux headless (tarball) ----
+# ---- headless (tarball): Linux, and macOS with launchd ----
+
+# macOS: a launchd job from an earlier install (podtorrent install-service) runs the new version. The
+# LaunchDaemon (--at-boot) is root's, so for that one this says the command instead of running sudo.
+restart_launchd() {
+  label=com.podtorrent.peer
+  for plist in "$HOME/Library/LaunchAgents/$label.plist" "/Library/LaunchDaemons/$label.plist"; do
+    [ -f "$plist" ] || continue
+    cur="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist" 2>/dev/null || true)"
+    if [ -n "$cur" ] && [ "$cur" != "$APP/podtorrent" ]; then
+      say "the service runs $cur; to run this install instead: $APP/podtorrent install-service"
+      continue
+    fi
+    case "$plist" in
+      /Library/*)
+        if launchctl print "system/$label" >/dev/null 2>&1; then
+          say "to restart the service on the new version: podtorrent install-service --at-boot"
+        fi ;;
+      *)
+        for d in "gui/$(id -u)" "user/$(id -u)"; do
+          launchctl print "$d/$label" 2>/dev/null | grep -q 'state = running' || continue
+          # SIGTERM and wait: the launcher stops the peer itself (kickstart -k would leave it running).
+          launchctl kill TERM "$d/$label" 2>/dev/null || true
+          i=0
+          while [ $i -lt 40 ] && launchctl print "$d/$label" 2>/dev/null | grep -q 'state = running'; do
+            sleep 0.5; i=$((i + 1))
+          done
+          launchctl kickstart "$d/$label" && say "restarted the PodTorrent service on the new version"
+          break
+        done ;;
+    esac
+  done
+}
 
 install_headless() {
   APP="$INSTALL_DIR/app"
@@ -299,8 +341,11 @@ install_headless() {
 
   # A service from before keeps running, on the new version (an earlier install may have run from an
   # unpacked tarball elsewhere).
+  if [ "$os" = Darwin ]; then
+    restart_launchd
+  fi
   unit="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/podtorrent.service"
-  if [ -f "$unit" ]; then
+  if [ "$os" = Linux ] && [ -f "$unit" ]; then
     sed "s|^ExecStart=\"[^\"]*/podtorrent\"|ExecStart=\"$APP/podtorrent\"|" "$unit" >"$unit.new" && mv "$unit.new" "$unit"
     if command -v systemctl >/dev/null 2>&1; then
       systemctl --user daemon-reload 2>/dev/null || true
@@ -313,6 +358,32 @@ install_headless() {
   cmd=podtorrent
   on_path || cmd="$BIN_DIR/podtorrent"
   host="$(hostname 2>/dev/null || echo this-machine)"
+  if [ "$os" = Darwin ]; then
+    cat <<EOF
+
+PodTorrent is installed. Next:
+
+  $cmd setup
+      checks this machine, installs Python and MLX (the first time: about 1 GB, a few minutes),
+      suggests a model and layers, starts PodTorrent as a launchd service, and offers to join the network
+  $cmd top
+      live view of this machine and the network (Ctrl-C quits)
+  $cmd doctor
+      if anything goes wrong: writes one file to send to PodTorrent support
+
+To start PodTorrent at boot with nobody logged in (once; asks for your password):
+
+  $cmd install-service --at-boot
+
+To open the dashboard, run this on your own computer, then open http://127.0.0.1:27183 :
+
+  ssh -L 27183:127.0.0.1:27183 $(id -un)@$host
+
+EOF
+    path_hint
+    say "the guide is $APP/README.md"
+    return 0
+  fi
   cat <<EOF
 
 PodTorrent is installed. Next:
@@ -340,7 +411,7 @@ EOF
 
 case "$BUILD" in
   macos-arm64) install_macos ;;
-  linux-x64-rocm-headless|linux-arm64-jetson-headless) install_headless ;;
+  linux-x64-rocm-headless|linux-arm64-jetson-headless|macos-arm64-headless) install_headless ;;
   *) install_appimage ;;
 esac
 say "update any time by running the same install command again"

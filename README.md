@@ -113,7 +113,7 @@ PodTorrent is built so a careful buyer, a bank's risk team for example, can see 
 
 | Machine | GPU | Engine | How you run it | Download name |
 | --- | --- | --- | --- | --- |
-| **Mac**, Apple Silicon (M1 or newer) | Apple GPU | MLX | Desktop app (`.dmg`) | `macos-arm64` |
+| **Mac**, Apple Silicon (M1 or newer) | Apple GPU | MLX | Desktop app (`.dmg`) **or** headless over SSH | `macos-arm64`, `macos-arm64-headless` |
 | **Windows** x64 | NVIDIA (driver 570+, RTX 50-series included) | PyTorch, CUDA 12.8 | Desktop app (`.exe` installer) | `windows-x64-cuda` |
 | **Linux** x64 | NVIDIA (driver 570+) | PyTorch, CUDA 12.8 | Desktop app (AppImage) | `linux-x64-cuda` |
 | **Linux** x64, AMD Ryzen AI Max (Strix Halo, gfx1151) | Radeon 8050S / 8060S / 8065S | PyTorch, ROCm | Desktop app (AppImage) **or** headless over SSH | `linux-x64-rocm`, `linux-x64-rocm-headless` |
@@ -141,7 +141,7 @@ irm https://podtorrent.com/install.ps1 | iex
 | `macos-arm64` | `/Applications/PodTorrent.app` (or `~/Applications`) | `open -a PodTorrent` |
 | `windows-x64-cuda` | `%LOCALAPPDATA%\PodTorrent` (per user) | Start menu |
 | `linux-x64-cuda`, `linux-x64-rocm` | `~/.local/share/podtorrent/desktop/PodTorrent.AppImage` + menu entry | `podtorrent-desktop` |
-| `linux-x64-rocm-headless`, `linux-arm64-jetson-headless` | `~/.local/share/podtorrent/app` | `podtorrent` |
+| `linux-x64-rocm-headless`, `linux-arm64-jetson-headless`, `macos-arm64-headless` | `~/.local/share/podtorrent/app` | `podtorrent` |
 
 Prefer a direct download? [podtorrent.com/download](https://podtorrent.com/download) lists every build; `https://podtorrent.com/download/<name>` always serves the latest, and `/download/<name>.sha256` its checksum. Every name, URL and installer rule: [docs/DOWNLOADS.md](docs/DOWNLOADS.md).
 
@@ -217,6 +217,10 @@ ssh -L 27183:127.0.0.1:27183 user@halo-box
 ```
 
 The full guide for the person running the machine, including uninstalling, is [headless/README.md](headless/README.md); it ships in the tarball.
+
+### Headless Macs over SSH
+
+An Apple Silicon Mac you reach over SSH (a Mac mini or Mac Studio with no one at the screen) runs the same launcher and commands: `install.sh` run over SSH (or with `--headless`) installs `macos-arm64-headless`. It runs on MLX instead of PyTorch (macOS 14+, about 1 GB on first run), keeps the Mac awake while the peer runs, and runs as a launchd job (`com.podtorrent.peer`) instead of systemd: a LaunchAgent by default, or with `podtorrent install-service --at-boot` a LaunchDaemon that runs as your user from boot with nobody logged in (asks for sudo once). Logs: `tail -f ~/.podtorrent/service.log`. `setup` also warns when FileVault is on (a restart waits for someone to unlock it) and when the Mac stays off after a power cut (`sudo pmset -a autorestart 1`). `headless/package.sh` builds it with `PODTORRENT_PLATFORM=macos`; CI: [macos-headless.yml](.github/workflows/macos-headless.yml).
 
 ## Bigger models: machines that team up
 
@@ -457,7 +461,7 @@ flowchart LR
 | `podtorrent/video/` | Text-to-video: roles, job routing, the encoder and the ComfyUI render worker |
 | `podtorrent/pipeline.proto` | Message schema (regenerate with `uv run python -m grpc_tools.protoc -I podtorrent --python_out=podtorrent podtorrent/pipeline.proto`) |
 | `app/` | The Tauri desktop app: `ui/` (front end), `src-tauri/` (Rust), `scripts/` (bundling, version bump, UI preview) |
-| `headless/` | The headless Linux launcher, packaging and its user guide |
+| `headless/` | The headless launcher (Linux and macOS), packaging, end-to-end tests and its user guide |
 | `install/` | The `install.sh` and `install.ps1` installers |
 | `rendezvous/` | The Cloudflare Worker that keeps the peer registry and signs public pods |
 | `downloads/` | The Cloudflare Worker that serves builds from R2 (`src/builds.json` is the naming standard) |
@@ -465,7 +469,7 @@ flowchart LR
 | `tests/` | Parity, golden-output, routing, pod, API and kernel tests |
 | `scripts/bench_torch.py` | PyTorch slice benchmark |
 | `spikes/` | Throwaway experiments kept for reference (iOS QUIC, video phase 0) |
-| `.github/workflows/` | CI: Windows, Linux (NVIDIA), Linux AMD and Jetson builds |
+| `.github/workflows/` | CI: Windows, Linux (NVIDIA), Linux AMD, Jetson and macOS headless builds |
 
 ## Building the desktop app
 
@@ -506,7 +510,7 @@ PyTorch backend speed (machines without MLX): `scripts/bench_torch.py <model-dir
 | [docs.podtorrent.com](https://docs.podtorrent.com) | Running a node, using the API, prices, privacy, receipts, the operator dashboard |
 | [podtorrent-agent](https://github.com/podtorrent/podtorrent-agent) | Connecting your own engine; the node protocol spec |
 | [docs/DOWNLOADS.md](docs/DOWNLOADS.md) | Build names, download URLs, installers |
-| [headless/README.md](headless/README.md) | Running a headless Linux machine (AMD, Jetson) |
+| [headless/README.md](headless/README.md) | Running a headless machine (AMD, Jetson, Apple Silicon over SSH) |
 | [docs/ENGINE.md](docs/ENGINE.md) | The app's engine: why it runs layers itself, fast paths, model families |
 | [docs/P2P_PLAN.md](docs/P2P_PLAN.md) | Peer-to-peer design: rendezvous, QUIC, hole punching, routing |
 | [docs/PODS_PLAN.md](docs/PODS_PLAN.md) | Pods: private and public chains, rosters, matchmaker |

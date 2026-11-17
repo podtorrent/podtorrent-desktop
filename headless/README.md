@@ -1,8 +1,9 @@
-# PodTorrent for Linux AMD (headless)
+# PodTorrent headless
 
 PodTorrent lets this machine serve part of a large language model, together with other machines.
-This build is for an AMD Ryzen AI Max machine (Strix Halo: Radeon 8050S / 8060S / 8065S, gfx1151) that
-you reach over SSH. It needs no desktop or display.
+This build is for a machine you reach over SSH, with no one at the screen: an AMD Ryzen AI Max machine
+(Strix Halo: Radeon 8050S / 8060S / 8065S, gfx1151), an NVIDIA Jetson, or an Apple Silicon Mac such as a
+Mac mini. It needs no desktop or display.
 
 ## Before you start
 
@@ -24,6 +25,28 @@ Jetson) needs instead: **JetPack 6 or 7** (L4T R36, or R38/R39; `cat /etc/nv_teg
 PyTorch with CUDA for your JetPack version (NVIDIA's Jetson build on JetPack 6, PyTorch's CUDA 13 build on
 JetPack 7); on another JetPack version it stops and says so. Everything else below is the same.
 For the most GPU speed, set the maximum power mode first: `sudo nvpmodel -m 0 && sudo jetson_clocks`.
+
+### On an Apple Silicon Mac (Mac mini, Mac Studio)
+
+The Mac build (`podtorrent-…-macos-arm64-headless.tar.gz`; the install command picks it when you run it
+over SSH, or add `--headless`) needs instead: **an Apple Silicon Mac (M1 or later) with macOS 14 or newer**,
+16 GB of memory or more, and about 2 GB of free disk plus the model layers. It runs on MLX, so there's no
+PyTorch download and no GPU driver to set up. On first run it installs Python and MLX (about 1 GB).
+
+It runs as a launchd service instead of systemd, and keeps the Mac awake while it runs. For a Mac you
+reach only over SSH:
+
+- **Start at boot with nobody logged in:** `podtorrent install-service --at-boot` (asks for your password
+  once; it runs as your user). Without it, the service starts when you log in.
+- **Come back after a power cut:** `sudo pmset -a autorestart 1`.
+- **FileVault:** if it's on, the Mac waits for someone to unlock it after a restart, so nothing starts.
+  Restart it with `sudo fdesetup authrestart`, which unlocks once by itself.
+- **PATH:** macOS doesn't add `~/.local/bin` by itself. Run
+  `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile` once, then SSH in again.
+
+`setup` checks all of this and says what to fix. Logs go to `~/.podtorrent/service.log`
+(`tail -f ~/.podtorrent/service.log`) instead of `journalctl`; to restart the service, run
+`podtorrent install-service` again (`--at-boot` if you used it).
 
 ## Install and set up
 
@@ -64,14 +87,16 @@ To keep PodTorrent running after you log out and start it at boot, run this once
 sudo loginctl enable-linger $USER
 ```
 
+(On a Mac: `podtorrent install-service --at-boot` instead.)
+
 ## Day to day
 
 | Command | What it does |
 |---|---|
 | `podtorrent top` | Live view: what this machine serves, tokens per second, the models and every machine in the network (Ctrl-C to quit) |
 | `podtorrent status` | The same, once (`--json` for scripts) |
-| `journalctl --user -u podtorrent -f` | Follow the logs |
-| `systemctl --user restart podtorrent` | Restart it |
+| `journalctl --user -u podtorrent -f` | Follow the logs (Mac: `tail -f ~/.podtorrent/service.log`) |
+| `systemctl --user restart podtorrent` | Restart it (Mac: `podtorrent install-service` again) |
 | `podtorrent join` / `podtorrent leave` | Join or leave the PodTorrent network |
 
 To see the web dashboard, forward the port from your own computer and open http://127.0.0.1:27183:
