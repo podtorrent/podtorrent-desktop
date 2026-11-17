@@ -14,7 +14,8 @@
 # E2E_MODEL / E2E_LO / E2E_HI pick the slice (default: layers 0–3 of Qwen3-30B-A3B-4bit, about 1.4 GB).
 # E2E_TARBALL (optional): the tarball to reinstall for the update check.
 # It uses ~/.podtorrent and the com.podtorrent.peer launchd job, so run it on a throwaway machine or user
-# (or with HOME pointing at an empty folder). Runs on macOS's bash 3.2.
+# (or with HOME pointing at an empty folder). Runs on macOS's bash 3.2: write ${var} before non-ASCII
+# text such as "–", or bash takes its first byte as part of the name.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -41,9 +42,15 @@ fail() {
   done
   exit 1
 }
+# bash 3.2 with an EXIT trap exits 0 after a crash such as an unbound variable ($? is 0 in the trap too),
+# so the test counts as passed only if it reached its end (DONE=1).
+DONE=0
 cleanup() {
+  local rc=$?
   if [[ -n "$PEER" ]]; then kill -TERM "$PEER" 2>/dev/null || true; wait "$PEER" 2>/dev/null || true; fi
   ./podtorrent uninstall-service >/dev/null 2>&1 || true
+  if (( ! DONE )) && (( rc == 0 )); then echo "E2E FAIL: the test stopped before the end (see the error above)" >&2; rc=1; fi
+  exit "$rc"
 }
 trap cleanup EXIT
 
@@ -99,6 +106,7 @@ if (( ! metal )); then
   rm -f "$data/node-token"
   endgroup
   echo "E2E OK (no Metal: partial)"
+  DONE=1
   exit 0
 fi
 
@@ -113,7 +121,7 @@ endgroup
 
 group "setup (peer just for setup, real download)"
 ./podtorrent setup --yes --no-service --no-join --name ci-e2e --model "$model" --serve "$lo:$hi" | tee "$work/setup.log"
-grep -q "Serving layers $lo–$((hi - 1)) of $model" "$work/setup.log" || fail "setup didn't report serving the slice"
+grep -q "Serving layers ${lo}–$((hi - 1)) of $model" "$work/setup.log" || fail "setup didn't report serving the slice"
 if curl -sf "$api/status" >/dev/null; then fail "the setup peer is still running after setup"; fi
 [[ -z "$(peer_procs)" ]] || fail "setup left peer processes behind: $(peer_procs)"
 endgroup
@@ -218,3 +226,4 @@ sleep 2
 endgroup
 
 echo "E2E OK"
+DONE=1
