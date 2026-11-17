@@ -1,6 +1,6 @@
 [project]
 name = "podtorrent"
-version = "0.1.34"
+version = "0.1.35"
 description = "Run large language models across machines: each peer serves a slice of the layers"
 readme = "README.md"
 license = "Apache-2.0"
