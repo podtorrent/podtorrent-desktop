@@ -359,7 +359,7 @@ body:has(#m-app:checked) :is(#server,#rq-srv,.path.srv,.sw-app),body:has(#m-srv:
 .go-btn:hover{opacity:.88}
 .tx{border:0;background:none;color:var(--mut);font-size:20px;line-height:1;padding:4px 6px;cursor:pointer}.tx:hover{color:var(--fg)}
 @keyframes rise{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translateX(-50%)}}
-.paths{max-width:640px;margin:40px auto 0;text-align:left}
+.paths{max-width:700px;margin:40px auto 0;text-align:left}
 .path{display:flex;flex-direction:column;align-items:center;text-align:center;padding:28px;border:1px solid var(--line);border-radius:20px;background:var(--card)}
 .path .cta{margin-top:auto}
 .pl{display:flex;align-items:center;gap:8px;margin:0;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)}
