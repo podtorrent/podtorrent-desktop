@@ -52,6 +52,29 @@ export PODTORRENT_CMD="$ME"
 
 say() { printf 'podtorrent: %s\n' "$*"; }
 die() { printf 'podtorrent: %s\n' "$*" >&2; exit 1; }
+# Colors and the setup banner: only on a terminal, and never with NO_COLOR.
+if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != dumb ]]; then
+  C_ACC=$'\033[38;5;209m' C_DIM=$'\033[2m' C_BOLD=$'\033[1m' C_OFF=$'\033[0m'
+else
+  C_ACC="" C_DIM="" C_BOLD="" C_OFF=""
+fi
+# step N TOTAL TITLE: a step header that stands out from the lines under it.
+step() { printf '\n%s●%s %sstep %s/%s%s  %s\n' "$C_ACC" "$C_OFF" "$C_BOLD" "$1" "$2" "$C_OFF" "$3"; }
+# banner LINE...: a rounded box with "✱ PodTorrent vX" on top. Lines are ASCII so padding is by width.
+banner() {
+  local v w=54 line i hr=""
+  v="$(head -n1 "$HERE/VERSION" 2>/dev/null || true)"
+  for ((i = 0; i < w; i++)); do hr="$hr─"; done
+  printf '%s╭%s╮%s\n' "$C_ACC" "$hr" "$C_OFF"
+  printf '%s│%s %s✱%s %sPodTorrent%s %-*s%s│%s\n' "$C_ACC" "$C_OFF" "$C_ACC" "$C_OFF" "$C_BOLD" "$C_OFF" \
+    $((w - 14)) "${v:+v$v}" "$C_ACC" "$C_OFF"
+  printf '%s│%s%*s%s│%s\n' "$C_ACC" "$C_OFF" "$w" "" "$C_ACC" "$C_OFF"
+  for line in "$@"; do
+    printf '%s│%s   %s%-*s%s%s│%s\n' "$C_ACC" "$C_OFF" "$C_DIM" $((w - 3)) "${line:0:$((w - 3))}" "$C_OFF" "$C_ACC" "$C_OFF"
+  done
+  printf '%s╰%s╯%s\n' "$C_ACC" "$hr" "$C_OFF"
+}
+
 # A failure the user can't fix from the message alone: point them at doctor.
 HELP="if this keeps happening, run $ME doctor and send us the file it writes"
 stuck() { printf 'podtorrent: %s\npodtorrent: %s\n' "$*" "$HELP" >&2; exit 1; }
@@ -93,7 +116,7 @@ preflight() {
   ok() { printf '  ok    %s\n' "$*"; }
   bad() { printf '  FAIL  %s\n' "$1"; printf '        fix: %s\n' "$2"; fail=1; }
   warn() { printf '  warn  %s\n' "$*"; }
-  say "checking this machine"
+  [[ -n "${IN_SETUP:-}" ]] || say "checking this machine"   # setup has its own step header
 
   [[ "$(uname -s)" == Linux ]] || bad "this launcher is for Linux (found $(uname -s))" "use the desktop app on this machine"
   [[ "$(uname -m)" == x86_64 ]] || bad "this build is for x86_64 (found $(uname -m))" "use a Ryzen AI Max (Strix Halo) machine"
@@ -187,7 +210,7 @@ preflight_jetson() {
   local fail=0 groups free_kb l4t jp
   ok() { printf '  ok    %s\n' "$*"; }
   bad() { printf '  FAIL  %s\n' "$1"; printf '        fix: %s\n' "$2"; fail=1; }
-  say "checking this machine"
+  [[ -n "${IN_SETUP:-}" ]] || say "checking this machine"   # setup has its own step header
   [[ "$(uname -s)" == Linux ]] || bad "this launcher is for Linux (found $(uname -s))" "use the desktop app on this machine"
   [[ "$(uname -m)" == aarch64 ]] || bad "this build is for ARM64 NVIDIA Jetson (found $(uname -m))" "on an x86_64 machine use the NVIDIA or AMD build"
   if [[ ! -r "$TEGRA_RELEASE" ]]; then
@@ -259,7 +282,7 @@ preflight_macos() {
   ok() { printf '  ok    %s\n' "$*"; }
   bad() { printf '  FAIL  %s\n' "$1"; printf '        fix: %s\n' "$2"; fail=1; }
   warn() { printf '  warn  %s\n' "$1"; [[ -z "${2:-}" ]] || printf '        fix: %s\n' "$2"; }
-  say "checking this machine"
+  [[ -n "${IN_SETUP:-}" ]] || say "checking this machine"   # setup has its own step header
   [[ "$(uname -s)" == Darwin ]] || bad "this build is for macOS (found $(uname -s))" "use the Linux headless build on this machine"
   [[ "$(uname -m)" == arm64 ]] || bad "this build needs Apple Silicon (M1 or later; found $(uname -m))" "use an Apple Silicon machine"
   os="$(sw_vers -productVersion 2>/dev/null || echo 0)"
@@ -652,7 +675,7 @@ wait_for_peer() {
 }
 
 cmd_setup() {
-  local name="" network=production use_service=1 join=ask yes=0 pass=() old
+  local name="" network=production use_service=1 join=ask yes=0 pass=() old IN_SETUP=1
   while (( $# )); do
     case "$1" in
       --name) name="$2"; shift 2 ;;
@@ -672,15 +695,23 @@ cmd_setup() {
     use_service=0
   fi
 
-  say "step 1/5: checking this machine"
+  local os_desc mem data_desc="$DATA"
+  [[ "$DATA" == "$HOME"/* ]] && data_desc="~${DATA#"$HOME"}"
+  if is_mac; then os_desc="macOS $(sw_vers -productVersion 2>/dev/null)"; mem=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1073741824 ))
+  else os_desc="$(uname -sr)"; mem=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1048576 )); fi
+  banner "guided setup: 5 steps, then join the network" \
+    "$(hostname -s 2>/dev/null) | $os_desc | $(uname -m) | ${mem} GB" \
+    "data: $data_desc" \
+    "stuck? $ME doctor  |  Ctrl-C to stop"
+  step 1 5 "checking this machine"
   if [[ "${PODTORRENT_SKIP_PREFLIGHT:-}" != 1 ]]; then preflight || exit 1; fi
 
-  say "step 2/5: PyTorch and the GPU"
+  step 2 5 "$(is_mac && echo "Python and MLX" || echo "PyTorch and the GPU")"
   uv_env
   setup_backend
   gpu_check
 
-  say "step 3/5: this machine's name"
+  step 3 5 "this machine's name"
   old="$(saved_name)"
   if [[ -z "$name" ]]; then
     if (( yes )); then
@@ -695,7 +726,7 @@ cmd_setup() {
   save_name "$name"
   say "name: $name"
 
-  say "step 4/5: starting the peer"
+  step 4 5 "starting the peer"
   if node_up; then
     if [[ "$name" != "$old" ]]; then
       if service_active; then
@@ -729,7 +760,7 @@ cmd_setup() {
     stuck "the peer didn't start; its log is above (all of it: $log)"
   fi
 
-  say "step 5/5: model and layers"
+  step 5 5 "model and layers"
   "$UV" run --frozen --project "$BACKEND" podtorrent setup --port "$PORT" ${pass[@]+"${pass[@]}"} \
     || stuck "setup didn't finish; run $ME setup again to pick up where it stopped"
 
