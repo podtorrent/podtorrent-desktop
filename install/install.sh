@@ -4,7 +4,7 @@
 #   curl -fsSL https://podtorrent.com/install.sh | sh
 #   curl -fsSL https://podtorrent.com/install.sh | sh -s -- --headless     (or --desktop, --build NAME)
 #
-# Picks the build for this machine (names follow downloads/src/builds.json):
+# Picks the build for this machine (names follow release/builds.json):
 #   macos-arm64               Mac app (Apple Silicon), into /Applications (or ~/Applications)
 #   macos-arm64-headless      Apple Silicon Mac with no one at the screen (e.g. a Mac mini over SSH): the
 #                             `podtorrent` command, run by launchd

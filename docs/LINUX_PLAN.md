@@ -43,7 +43,7 @@ Ubuntu 22.04/24.04 desktop, x86_64, NVIDIA RTX GPU with a 570+ driver (needed fo
    - Run `npx tauri build --bundles appimage,deb`.
    - Upload the artifacts.
    - On a `v*` tag, run `publish.js linux <AppImage>`.
-2. **`downloads/`:**
+2. **`release/`:**
    - Add `"linux"` to `PLATFORMS`, the route regexes, the `Release` type and the download page row ("Linux (x64, AppImage)").
    - Add it to the `publish.js` usage check and to its latest-keeping loop.
 

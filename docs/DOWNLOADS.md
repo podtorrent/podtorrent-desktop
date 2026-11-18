@@ -1,8 +1,8 @@
 # Downloads: names, URLs and installers
 
 Every PodTorrent download follows one naming standard, defined in
-[`downloads/src/builds.json`](../downloads/src/builds.json) (used by the download Worker and
-`publish.js`).
+[`release/builds.json`](../release/builds.json) (used by `publish.js`, and copied into the podtorrent.com site Worker that serves
+`/download`).
 
 **Name:** `<os>-<arch>[-<gpu stack>][-headless]`
 **File:** `podtorrent-<version>-<name>.<ext>`

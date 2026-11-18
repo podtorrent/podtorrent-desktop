@@ -29,7 +29,7 @@ case "$platform" in
   *) echo "unknown PODTORRENT_PLATFORM $platform (rocm, jetson, macos)" >&2; exit 1 ;;
 esac
 [[ "$(uname -m)" == "$arch" ]] || { echo "build $build on $arch (this is $(uname -m)): uv is copied in" >&2; exit 1; }
-name="podtorrent-$version-$build"   # the naming standard: downloads/src/builds.json
+name="podtorrent-$version-$build"   # the naming standard: release/builds.json
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 

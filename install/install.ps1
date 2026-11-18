@@ -2,7 +2,7 @@
 #
 #   irm https://podtorrent.com/install.ps1 | iex
 #
-# Downloads the latest windows-x64-cuda build (names follow downloads/src/builds.json), checks its SHA-256
+# Downloads the latest windows-x64-cuda build (names follow release/builds.json), checks its SHA-256
 # and runs the installer silently for this user (no admin needed). Run it again to update; models and
 # settings are kept.
 #

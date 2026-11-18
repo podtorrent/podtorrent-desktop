@@ -429,7 +429,7 @@ flowchart LR
     NETP <--> RZ["rendezvous/<br/>(Cloudflare Worker)"]
     AGT <--> GWN(["PodTorrent network"])
     SL --> HF[("Hugging Face")]
-    INST["install/ · downloads/"] -. "ships builds" .-> Client
+    INST["install/ · release/"] -. "ships builds" .-> Client
 ```
 
 **Suggested reading order:**
@@ -464,7 +464,7 @@ flowchart LR
 | `headless/` | The headless launcher (Linux and macOS), packaging, end-to-end tests and its user guide |
 | `install/` | The `install.sh` and `install.ps1` installers |
 | `rendezvous/` | The Cloudflare Worker that keeps the peer registry and signs public pods |
-| `downloads/` | `publish.js`, which uploads builds to R2 (`src/builds.json` is the naming standard). The download page is served by the podtorrent.com site |
+| `release/` | `publish.js`, which uploads builds to R2 (`builds.json` is the naming standard). The download page is served by the podtorrent.com site |
 | `ios/` | The iOS peer's core (Swift package `PodTorrentKit`) |
 | `tests/` | Parity, golden-output, routing, pod, API and kernel tests |
 | `scripts/bench_torch.py` | PyTorch slice benchmark |
