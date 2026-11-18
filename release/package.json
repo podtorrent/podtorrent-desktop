@@ -1,0 +1,12 @@
+{
+  "name": "podtorrent-release",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "publish-build": "node publish.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.148.0"
+  }
+}

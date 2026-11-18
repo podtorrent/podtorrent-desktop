@@ -4,7 +4,7 @@
 #   curl -fsSL https://podtorrent.com/install.sh | sh
 #   curl -fsSL https://podtorrent.com/install.sh | sh -s -- --headless     (or --desktop, --build NAME)
 #
-# Picks the build for this machine (names follow downloads/src/builds.json):
+# Picks the build for this machine (names follow release/builds.json):
 #   macos-arm64               Mac app (Apple Silicon), into /Applications (or ~/Applications)
 #   macos-arm64-headless      Apple Silicon Mac with no one at the screen (e.g. a Mac mini over SSH): the
 #                             `podtorrent` command, run by launchd
@@ -27,7 +27,7 @@
 # POSIX sh on purpose: `| sh` is dash on Ubuntu and Debian.
 set -eu
 
-# The downloads Worker that serves this script fills in its own origin (downloads/src/index.ts).
+# The site that serves this script (podtorrent.com) fills in its own origin.
 BASE="${PODTORRENT_BASE_URL:-@PODTORRENT_BASE_URL@}"
 INSTALL_DIR="${PODTORRENT_INSTALL_DIR:-$HOME/.local/share/podtorrent}"
 BIN_DIR="${PODTORRENT_BIN_DIR:-$HOME/.local/bin}"

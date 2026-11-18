@@ -6,7 +6,7 @@ on:
     branches: [main]
     tags: ['v*']
     # Build only when something that goes into the installer changes, or this workflow itself: not for the
-    # downloads site, docs, tests, iOS, the rendezvous, or another platform's workflow.
+    # release/ publishing, docs, tests, iOS, the rendezvous, or another platform's workflow.
     # Tag pushes always build (GitHub skips path filters for tags).
     paths: ['app/**', 'podtorrent/**', 'pyproject.toml', 'uv.lock', '.python-version', 'install/**', '.github/workflows/linux.yml']
   pull_request:
@@ -123,10 +123,10 @@ jobs:
       # On a v* tag (or a manual run that asks for it), upload the AppImage to R2 and make it the latest at
       # podtorrent.com/download/linux-x64-cuda, as podtorrent-<version>-linux-x64-cuda.AppImage.
       - if: (startsWith(github.ref, 'refs/tags/v') || inputs.publish)
-        working-directory: downloads
+        working-directory: release
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           npm ci
-          node scripts/publish.js linux-x64-cuda ../app/src-tauri/target/release/bundle/appimage/*.AppImage
+          node publish.js linux-x64-cuda ../app/src-tauri/target/release/bundle/appimage/*.AppImage

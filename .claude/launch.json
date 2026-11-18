@@ -11,22 +11,6 @@
       "port": 27184
     },
     {
-      "name": "downloads",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": [
-        "--prefix",
-        "downloads",
-        "wrangler",
-        "dev",
-        "-c",
-        "downloads/wrangler.jsonc",
-        "--remote",
-        "--port",
-        "8788"
-      ],
-      "port": 8788
-    },
-    {
       "name": "ui-alt",
       "runtimeExecutable": "python3",
       "runtimeArgs": [

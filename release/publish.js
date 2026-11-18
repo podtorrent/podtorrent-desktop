@@ -1,10 +1,10 @@
 // Upload one build to R2 and point latest.json at it. Safe to run for several builds at once.
-//   node downloads/scripts/publish.js <name> <path-to-build> [--notes "..."] [--no-latest]
-// <name> is a download name from src/builds.json (macos-arm64, windows-x64-cuda, linux-x64-cuda,
+//   node release/publish.js <name> <path-to-build> [--notes "..."] [--no-latest]
+// <name> is a download name from builds.json (macos-arm64, windows-x64-cuda, linux-x64-cuda,
 // linux-x64-rocm, linux-x64-rocm-headless, linux-arm64-jetson-headless, macos-arm64-headless) or its older name (mac, windows, linux, linux-amd, linux-amd-cli).
 // The file is stored under the standard name podtorrent-<version>-<name>.<ext>, whatever it was built as.
 // The version comes from app/src-tauri/tauri.conf.json. Versioned files are never overwritten;
-// to roll back, re-point latest.json with: node downloads/scripts/publish.js promote <version>
+// to roll back, re-point latest.json with: node release/publish.js promote <version>
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -13,9 +13,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(here, "../..");
+const root = path.resolve(here, "..");
 const BUCKET = "podtorrent-releases";
-const { builds: BUILDS } = JSON.parse(fs.readFileSync(path.join(here, "../src/builds.json"), "utf8"));
+const { builds: BUILDS } = JSON.parse(fs.readFileSync(path.join(here, "builds.json"), "utf8"));
 // Every accepted name (standard or older) -> its standard name.
 const NAMES = Object.fromEntries(Object.entries(BUILDS).flatMap(([n, b]) => [[n, n], ...b.legacy.map((l) => [l, n])]));
 const PLATFORMS = Object.values(BUILDS).map((b) => b.manifest);   // latest.json / release.json fields
@@ -33,7 +33,7 @@ const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 
 // Run wrangler's JS entry with node: `npx` is a .cmd shim on Windows that execFileSync can't spawn,
 // and going through a shell instead would split arguments with spaces (e.g. --notes).
-const wranglerBin = path.join(here, "../node_modules/wrangler/bin/wrangler.js");
+const wranglerBin = path.join(here, "node_modules/wrangler/bin/wrangler.js");
 // PODTORRENT_R2_LOCAL=<dir>: use a local bucket kept in <dir> instead of the real one (for tests).
 const local = process.env.PODTORRENT_R2_LOCAL;
 const r2Where = local ? ["--local", "--persist-to", local] : ["--remote"];
@@ -44,7 +44,7 @@ const wrangler = (...a) => {
   for (let attempt = 1; ; attempt++) {
     try {
       return execFileSync(process.execPath, [wranglerBin, "r2", "object", ...a, ...r2Where], {
-        cwd: path.join(here, ".."),
+        cwd: here,
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (e) {

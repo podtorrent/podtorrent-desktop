@@ -2,12 +2,12 @@
 #
 #   irm https://podtorrent.com/install.ps1 | iex
 #
-# Downloads the latest windows-x64-cuda build (names follow downloads/src/builds.json), checks its SHA-256
+# Downloads the latest windows-x64-cuda build (names follow release/builds.json), checks its SHA-256
 # and runs the installer silently for this user (no admin needed). Run it again to update; models and
 # settings are kept.
 #
 # Environment (optional): PODTORRENT_FILE=PATH installs a local installer instead of downloading (tests);
-# PODTORRENT_BASE_URL overrides the download server (the downloads Worker that serves this script fills in its own).
+# PODTORRENT_BASE_URL overrides the download server (the site that serves this script, podtorrent.com, fills in its own).
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is many times slower with the progress bar
