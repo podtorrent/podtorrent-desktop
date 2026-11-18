@@ -22,7 +22,7 @@ interface Env {
 type Build = { key: string; file: string; sha256: string; size: number };
 type Release = { version: string; date: string; notes: string } & Partial<Record<Manifest, Build>>;
 
-const PLATFORMS = ["mac", "windows", "linux", "linux-amd", "linux-amd-cli", "mac-cli"] as const;   // cards on the page
+const PLATFORMS = ["mac", "windows", "linux", "linux-amd", "linux-amd-cli", "mac-cli", "linux-jetson-cli"] as const;   // builds on the page
 type Platform = (typeof PLATFORMS)[number];
 type Manifest = Platform;
 type Spec = { manifest: Manifest; ext: string; legacy: string[]; label: string };
@@ -79,7 +79,7 @@ export default {
       return serveBuild(env, req, build.key, build.file, !!want.version);
     }
 
-    if (path === "/download") return page(await latestRelease(env), origin);
+    if (path === "/download") return page(await latestRelease(env), origin, req.headers.get("user-agent") ?? "");
     if (path === "/download/guide") return guide();
 
     // Guide screenshots live in R2 under guide/.
@@ -176,7 +176,18 @@ const INFO: Record<Platform, { name: string; arch: string; icon: string; needs: 
       `Start it at boot with nobody logged in (asks for your password once):<code class="cmd">podtorrent install-service --at-boot</code>`,
     ],
   },
+  "linux-jetson-cli": {
+    name: "Jetson headless", arch: "ARM64 CLI · CUDA · over SSH",
+    icon: `<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm0 2v12h16V6zm2.3 2.3a1 1 0 0 1 1.4 0l3 3a1 1 0 0 1 0 1.4l-3 3a1 1 0 1 1-1.4-1.4L8.6 12 6.3 9.7a1 1 0 0 1 0-1.4zM12 15h5a1 1 0 1 1 0 2h-5a1 1 0 1 1 0-2z"/>`,
+    needs: ["NVIDIA Jetson AGX Orin you reach over SSH, JetPack 6 or 7", "About 10 GB free disk for PyTorch, plus the model layers you serve"],
+    steps: [
+      `Install over SSH (no root; checks the SHA-256):<code class="cmd">curl -fsSL @ORIGIN@/install.sh | sh -s -- --headless</code>`,
+      `Set it up: checks the machine, installs PyTorch for your JetPack, picks layers to serve:<code class="cmd">podtorrent setup</code>`,
+      `Watch it live:<code class="cmd">podtorrent top</code>`,
+    ],
+  },
 };
+
 
 // Shared by the download page and the guide.
 const STYLE = `:root{color-scheme:light dark;--bg:#f6f8fa;--card:#fff;--fg:#0b0f14;--mut:#5b6573;--line:#dde3ea;--acc:#0097b2;--accfg:#fff;--soft:#e6f7fa}
@@ -256,64 +267,305 @@ a{color:var(--acc)}
 figure{margin:20px 0 0}
 figure img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:12px}
 figcaption{margin-top:8px;color:var(--mut);font-size:13px}
+.term{border-radius:12px;overflow:hidden;background:#0b0f14;border:1px solid #1e2630;box-shadow:0 8px 24px -8px rgba(0,0,0,.35)}
+.tbar{display:flex;align-items:center;gap:14px;padding:8px 12px;background:#121821;border-bottom:1px solid #1e2630}
+.dots{display:flex;gap:6px}.dots i{width:10px;height:10px;border-radius:50%;background:#2d3846}
+.tabs{display:flex;gap:2px}
+.tab{position:relative;display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:7px;color:#8b96a3;font-size:12.5px;font-weight:500;cursor:pointer}
+.tab input{position:absolute;opacity:0;pointer-events:none}
+.tab:hover{color:#e8eef4}
+.tab:has(input:checked){background:#1e2630;color:#e8eef4}
+.tab:has(input:focus-visible){outline:2px solid #3ee8ff;outline-offset:1px}
+.ti{width:13px;height:13px}
+.tbody{display:flex;align-items:center;gap:12px;padding:18px 14px 18px 18px}
+.prompt{font:600 15px ui-monospace,Menlo,monospace;color:#3ee8ff;user-select:none;flex:none}
+.tbody code{flex:1;min-width:0;background:none;padding:0;border-radius:0;font:15px/1.5 ui-monospace,Menlo,monospace;color:#e8eef4;white-space:normal;overflow-wrap:anywhere;user-select:all}
+.copy{display:inline-flex;align-items:center;gap:6px;flex:none;padding:7px 12px;border:1px solid #2d3846;border-radius:8px;background:#121821;color:#e8eef4;font:inherit;font-size:13px;font-weight:600;cursor:pointer;transition:border-color .15s,background .15s}
+.copy:hover{border-color:#3ee8ff;background:#0b2a31}.copy:focus-visible{outline:2px solid #3ee8ff;outline-offset:2px}
+.dl main{max-width:1160px;padding:0 24px 64px}
+.top{border-bottom:1px solid var(--line)}
+.top .in{max-width:1160px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;gap:6px 24px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;margin-right:auto;color:var(--fg);font-weight:650;font-size:17px;letter-spacing:-.01em;text-decoration:none}
+.brand .logo{width:28px;height:28px;border-radius:7px}
+.top nav{display:flex;flex-wrap:wrap;gap:4px 22px;font-size:14.5px}
+.top nav a{color:var(--mut);text-decoration:none}.top nav a:hover{color:var(--fg)}
+.top a:focus-visible,.dl a:focus-visible,.dl button:focus-visible{outline:2px solid var(--acc);outline-offset:3px;border-radius:6px}
+.hx{text-align:center;padding:96px 0 104px;border-bottom:1px solid var(--line);margin:0 -24px;padding-inline:24px}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:4px 12px 4px 6px;border:1px solid var(--line);border-radius:999px;font-size:13px;color:var(--mut);text-decoration:none;margin-bottom:28px}
+.pill b{padding:1px 8px;border-radius:999px;background:var(--soft);color:var(--acc);font-size:12px;font-weight:600}
+.dl h1{font-size:clamp(40px,7.4vw,76px);font-weight:650;letter-spacing:-.04em;line-height:1.02}
+.sub{margin:20px auto 0;max-width:620px;color:var(--mut);font-size:clamp(17px,2.2vw,20px);line-height:1.5}
+.cta{display:inline-flex;align-items:center;gap:10px;height:52px;padding:0 26px;border-radius:12px;background:var(--fg);color:var(--bg);font-size:17px;font-weight:600;text-decoration:none;transition:opacity .15s,transform .15s}
+.cta:hover{opacity:.9}.cta:active{transform:translateY(1px)}
+.cta svg{width:20px;height:20px}
+.fine{margin:14px 0 0;color:var(--mut);font-size:13.5px}
+.fine a{color:var(--mut);text-decoration:underline;text-underline-offset:3px}.fine a:hover{color:var(--fg)}
+.start{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,8fr);gap:32px 64px;padding:88px 0}
+.intro{position:sticky;top:24px;align-self:start}
+.start+.start{border-top:1px solid var(--line)}
+.dl h2{font-size:clamp(30px,4vw,42px);font-weight:650;letter-spacing:-.03em;line-height:1.1;margin:0}
+.intro>p{margin:14px 0 0;color:var(--mut);font-size:17px;max-width:340px}
+.flow{list-style:none;margin:36px 0 0;padding:0;counter-reset:f}
+.flow li{position:relative;padding:0 0 26px 44px;counter-increment:f}
+.flow li::before{content:counter(f);position:absolute;left:0;top:-2px;width:28px;height:28px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;font-size:13px;font-weight:600;color:var(--mut)}
+.flow li:not(:last-child)::after{content:"";position:absolute;left:14px;top:30px;bottom:2px;border-left:1px solid var(--line)}
+.flow li:first-child::before{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.flow b{display:block;font-size:15.5px}.flow span{display:block;color:var(--mut);font-size:14px;margin-top:2px}
+.tk{display:inline-flex;margin-top:10px;padding:7px 14px;border-radius:9px;border:1px solid var(--line);color:var(--fg);font-size:14px;font-weight:600;text-decoration:none}.tk:hover{border-color:var(--acc);color:var(--acc)}
+.cards{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
+body:has(#m-app:checked) :is(#server,#rq-srv,.path.srv,.sw-app),body:has(#m-srv:checked) :is(#desktop,#rq-app,.path.app,.sw-srv){display:none!important}
+.sw{display:flex;align-items:center;justify-content:center;gap:8px;width:max-content;max-width:100%;margin:0 auto 14px;padding:8px 16px;border:1px solid var(--line);border-radius:999px;background:var(--card);font-size:14px;color:var(--mut);cursor:pointer;transition:border-color .15s,color .15s}
+.sw b{color:var(--fg);font-weight:600}
+.sw:hover{border-color:var(--acc)}.sw:hover b{color:var(--acc)}
+.sw:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.rq h3{font-size:20px;margin:0 0 14px}
+.rq .rpick{margin-bottom:18px}
+.rq .hint{margin-top:16px}
+#start,#requirements{scroll-margin-top:16px}
+.pc{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:30px 30px 22px}
+.pc h3{font-size:24px;font-weight:600;letter-spacing:-.02em;margin:0}
+.pc>p{margin:8px 0 18px;color:var(--mut);font-size:14.5px;line-height:1.55}
+.r{display:flex;align-items:center;gap:12px;padding:14px 0;border-top:1px solid var(--line)}
+.r .ai{width:22px;height:22px;flex:none;color:var(--mut)}
+.rn{display:grid;margin-right:auto;min-width:0;line-height:1.3}.rn b{font-weight:500;font-size:15.5px;display:flex;align-items:center;gap:8px}.rn small{color:var(--mut);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.you{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:var(--soft);color:var(--acc);white-space:nowrap}
+.ob{flex:none;padding:7px 15px;border-radius:9px;border:1px solid color-mix(in srgb,var(--fg) 30%,var(--line));color:var(--fg);font-size:14px;font-weight:500;text-decoration:none;transition:background .15s,border-color .15s}
+.ob:hover{border-color:var(--fg)}
+.r.me .ai{color:var(--acc)}.r.me .ob{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.ob.off{border-style:dashed;color:var(--mut)}
+.pc .more{margin-top:0;border-top:1px solid var(--line)}.pc .more summary{padding-top:14px;font-size:13.5px}
+.pc .term{margin-top:4px}
+.tbar .copy{margin-left:auto;padding:4px 10px;font-size:12.5px}
+.tbody{padding:20px 18px;align-items:flex-start}
+.tbody code{font-size:14px}
+.hint{margin:14px 2px 0;color:var(--mut);font-size:13.5px}
+.reqs{display:grid;gap:16px}.req{display:none}
+.rpick{display:flex;flex-wrap:wrap;gap:6px}
+.rpick label{position:relative;padding:5px 12px;border:1px solid var(--line);border-radius:999px;font-size:13px;color:var(--mut);cursor:pointer}
+.rpick input{position:absolute;opacity:0;pointer-events:none}
+.rpick label:hover{color:var(--fg)}
+.rpick label:has(input:checked){background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.rpick label:has(input:focus-visible){outline:2px solid var(--acc);outline-offset:2px}
+.req h4{margin:0 0 6px;font-size:14px}.req h4 span{color:var(--mut);font-weight:400;font-size:12.5px}
+.req .needs{margin-bottom:8px}
+.notes2 pre{white-space:pre-wrap;font:inherit;font-size:15px;color:var(--mut);margin:0}
+.dl footer{margin:0;padding-top:32px;border-top:1px solid var(--line);font-size:13px;line-height:1.8}
+.toast{position:fixed;left:50%;bottom:24px;z-index:9;display:flex;align-items:center;gap:14px;width:min(640px,calc(100% - 32px));padding:14px 14px 14px 18px;border-radius:16px;background:var(--card);border:1px solid color-mix(in srgb,var(--acc) 45%,var(--line));box-shadow:0 18px 50px -12px rgba(0,0,0,.45);transform:translateX(-50%);animation:rise .35s ease}
+.toast[hidden]{display:none}
+.nb{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--acc);color:var(--accfg);font-weight:700;flex:none}
+.nt{display:grid;margin-right:auto;line-height:1.35}.nt b{font-size:15px}.nt span{color:var(--mut);font-size:13.5px}
+.go-btn{padding:10px 16px;border-radius:10px;background:var(--fg);color:var(--bg);font-weight:600;font-size:14px;text-decoration:none;white-space:nowrap}
+.go-btn:hover{opacity:.88}
+.tx{border:0;background:none;color:var(--mut);font-size:20px;line-height:1;padding:4px 6px;cursor:pointer}.tx:hover{color:var(--fg)}
+@keyframes rise{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translateX(-50%)}}
+.paths{max-width:700px;margin:40px auto 0;text-align:left}
+.path{display:flex;flex-direction:column;align-items:center;text-align:center;padding:28px;border:1px solid var(--line);border-radius:20px;background:var(--card)}
+.path .cta{margin-top:auto}
+.pl{display:flex;align-items:center;gap:8px;margin:0;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--mut)}
+.pi{width:15px;height:15px}
+.pd{margin:8px 0 22px;font-size:17px;font-weight:550;letter-spacing:-.01em}
+.path .fine{margin-top:12px}
+.path .cta{margin-top:auto;height:50px}
+.mini{text-align:left;display:flex;align-items:center;gap:10px;width:100%;margin-top:auto;padding:10px 8px 10px 16px;border-radius:12px;background:#0b0f14;border:1px solid #1e2630}
+.mini code,.sx code{white-space:nowrap!important;overflow-x:auto;scrollbar-width:none}.mini code::-webkit-scrollbar,.sx code::-webkit-scrollbar{display:none}
+.mini code{flex:1;min-width:0;background:none;padding:0;font:12.5px/1.6 ui-monospace,Menlo,monospace;color:#e8eef4;user-select:all}
+.mini .copy{padding:7px 9px}.mini .copy span{display:none}
+.mini .prompt{font-size:12.5px;line-height:1.6}
+.mini .copy{align-self:center}
+.nw{white-space:nowrap}
+.copy.ok,.cp.ok{border-color:#3ee8ff;color:#3ee8ff}
+.pc h3{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tt{color:#8b96a3;font:12.5px ui-monospace,Menlo,monospace}
+.sb{padding:8px 0 10px}
+.sl{padding:8px 14px 8px 18px}
+.sc{display:block;color:#6b7785;font:12.5px/1.5 ui-monospace,Menlo,monospace}
+.sx{display:flex;align-items:center;gap:10px;margin-top:2px}
+.sx code{flex:1;min-width:0;background:none;padding:0;font:12.5px/1.6 ui-monospace,Menlo,monospace;color:#e8eef4;user-select:all}
+.sx .prompt{font-size:12.5px;line-height:1.6}
+.cp{display:grid;place-items:center;flex:none;width:28px;height:28px;margin:-3px 0;border:1px solid #2d3846;border-radius:7px;background:#121821;color:#8b96a3;cursor:pointer;opacity:.75;transition:opacity .15s,color .15s,border-color .15s}
+.cp span{display:none}.cp .ic{width:14px;height:14px}
+.sl:hover .cp,.cp:focus-visible{opacity:1;color:#e8eef4}
+.cp:hover{border-color:#3ee8ff}
+.dterm{margin-top:16px}
+.dterm .tbar{flex-wrap:wrap}
+@media (max-width:560px){.mini code,.sx code{white-space:normal!important;overflow-wrap:anywhere}.sw span{display:none}.sw b{white-space:nowrap}.mini,.sx{align-items:flex-start}.path{padding:20px}.mini .copy span{display:none}.sl{padding:8px 12px}.dl .tt{display:none}}
+@media (max-width:1100px){.start{grid-template-columns:minmax(0,1fr);padding:64px 0}.intro{position:static}.intro>p{max-width:none}}
+@media (max-width:560px){.dl main{padding:0 16px 48px}.top .in{padding:12px 16px}.top nav{gap:4px 14px;font-size:13.5px}.hx{padding:64px 16px 72px;margin:0 -16px}.cta{width:100%;justify-content:center}.pc{padding:22px 18px 16px;border-radius:18px}.dl .tab .ti,.dl .dots,.dl .tbar .copy span{display:none}.dl .tbar{gap:6px;padding:8px}.dl .tab{padding:5px 8px;white-space:nowrap}.toast{flex-wrap:wrap;bottom:12px}.go-btn{flex:1;text-align:center}}
 .tip{border-left:3px solid var(--acc);background:var(--card);padding:10px 14px;border-radius:0 8px 8px 0;margin:16px 0 0;font-size:14px;color:var(--mut);max-width:720px}
 `;
 const LOGO = `<svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><defs><radialGradient id="g"><stop offset="0" stop-color="#fff"/><stop offset=".25" stop-color="#3ee8ff"/><stop offset=".6" stop-color="#3ee8ff" stop-opacity=".35"/><stop offset="1" stop-color="#3ee8ff" stop-opacity="0"/></radialGradient></defs><rect width="64" height="64" rx="14" fill="#05070b"/><circle cx="32" cy="32" r="21" fill="none" stroke="#3ee8ff" stroke-opacity=".45" stroke-width="2"/><circle cx="32" cy="32" r="16" fill="url(#g)"/><circle cx="32" cy="32" r="5" fill="#eaffff"/></svg>`;
 // Links to the other PodTorrent sites, so /download is never a dead end.
 const SITE_NAV = `<nav class="site" aria-label="PodTorrent sites"><a class="home" href="https://podtorrent.com/">PodTorrent</a><a href="https://docs.podtorrent.com/">Docs</a><a href="https://podtorrent.com/register-node">Run a node</a><a href="https://playground.podtorrent.com/">Playground</a><a href="https://dashboard.podtorrent.com/">Dashboard</a></nav>`;
 
-function page(rel: Release | null, origin: string): Response {
+function page(rel: Release | null, origin: string, ua: string): Response {
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
   const mb = (b: Build) => `${(b.size / 1e6).toFixed(0)} MB`;
   // A platform's latest build can be older than the release (Mac builds aren't made in CI).
   const ver = (b: Build) => b.key.match(/^releases\/v([^/]+)\//)?.[1] ?? rel!.version;
   const svg = (d: string, cls = "") => `<svg class="${cls}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${d}</svg>`;
-  const dl = `<path d="M12 3a1 1 0 0 1 1 1v9.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.4l3.3 3.3V4a1 1 0 0 1 1-1zM5 19h14a1 1 0 1 1 0 2H5a1 1 0 1 1 0-2z"/>`;
   const chev = `<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`;
-  const card = (p: Platform) => {
-    const i = INFO[p], b = rel?.[p];
-    const action = b
-      ? `<a class="btn" href="/download/${SLUG[p]}">${svg(dl, "ic")}Download</a>
-         <p class="meta">v${esc(ver(b))} · ${mb(b)}</p>`
-      : `<span class="btn off">Coming soon</span><p class="meta">No build yet</p>`;
-    return `<section class="card" data-os="${p}">
-      <div class="head">${svg(i.icon, "os")}<div class="ttl"><h2>${i.name}</h2><p class="arch">${i.arch}</p></div><span class="tag">Your system</span></div>
-      <div class="row">${action}</div>
-      <details class="more"><summary>Requirements &amp; setup${chev}</summary><div class="body">
-        <p class="label">Requirements</p><ul class="needs">${i.needs.map((n) => `<li>${n}</li>`).join("")}</ul>
-        <p class="label">Install</p><ol class="steps">${i.steps.map((n) => `<li>${n}</li>`).join("")}</ol>
-      </div></details>
-    </section>`;
+  const copyIc = `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`;
+  const copyBtn = (text: string, label = "Copy", cls = "copy") =>
+    `<button type="button" class="${cls}" data-copy="${esc(text)}" title="Copy" aria-label="Copy ${esc(text)}">${copyIc}<span>${label}</span></button>`;
+  // The installers. install.sh picks the build for the machine; --headless makes the server choice explicit.
+  const SH = "curl -fsSL @ORIGIN@/install.sh | sh", HL = "curl -fsSL @ORIGIN@/install.sh | sh -s -- --headless", PS = "irm @ORIGIN@/install.ps1 | iex";
+  // Shown with the flag kept on one line (hyphens are line-break points); copied as plain text.
+  const HLshow = HL.replace(" -s -- --headless", ' <span class="nw">-s -- --headless</span>');
+  const APPS = PLATFORMS.filter((p) => !p.endsWith("-cli"));
+  const SERVERS: { p: Platform; label: string }[] = [
+    { p: "mac-cli", label: "Apple Silicon Mac" }, { p: "linux-amd-cli", label: "AMD Ryzen AI Max" }, { p: "linux-jetson-cli", label: "Jetson Orin" }];
+  const OS_NAME: Partial<Record<Platform, string>> = { mac: "macOS", windows: "Windows", linux: "Linux" };
+  const SUB: Partial<Record<Platform, string>> = { mac: "Apple Silicon", windows: "x64 · NVIDIA", linux: "x64 · NVIDIA", "linux-amd": "AMD Ryzen AI Max" };
+  // This visitor's machine, from the user agent (phones and tablets get the full list).
+  const me: Platform | "" = /iPhone|iPad|Android/.test(ua) ? "" : /Windows/.test(ua) ? "windows" : /Mac/.test(ua) ? "mac" : /Linux|X11|CrOS/.test(ua) ? "linux" : "";
+  const meta = (p: Platform) => { const b = rel?.[p]; return b ? `${SUB[p]} · .${esc(BUILDS[SLUG[p]].ext)} · v${esc(ver(b))} · ${mb(b)}` : "No build yet"; };
+  const termIc = svg(INFO["mac-cli"].icon);
+
+  // Hero: two equal ways in. This computer (the app) or a server over SSH (one line).
+  const desk = me && rel?.[me]
+    ? `<a class="cta" id="cta" data-dl data-p="${me}" href="/download/${SLUG[me]}">${svg(INFO[me].icon)}Download for ${OS_NAME[me]}</a>
+      <p class="fine" id="fine">${meta(me)} · <a href="#start">Other platforms</a></p>`
+    : `<a class="cta" href="#start">See desktop downloads</a>
+      <p class="fine">For macOS, Windows and Linux.</p>`;
+  // One card: the desktop app by default; the switch line above it swaps in the headless install (and the
+  // setup and requirements below follow). Hidden radios keep it working without JS.
+  const sw = (to: string, icon: string, q: string, go: string) =>
+    `<label class="sw sw-${to}" for="m-${to}" tabindex="0" role="button">${icon}<span>${q}</span><b>${go} →</b></label>`;
+  const hero = `<input type="radio" name="mode" id="m-app" class="sr" checked tabindex="-1" aria-hidden="true"><input type="radio" name="mode" id="m-srv" class="sr" tabindex="-1" aria-hidden="true">
+  <div class="paths">
+    ${sw("srv", termIc.replace('class=""', 'class="pi"'), "Installing on a server?", "Use the headless install")}
+    ${sw("app", svg(INFO.mac.icon, "pi"), "On this computer?", "Get the desktop app")}
+    <div class="path app"><p class="pl">${svg(INFO.mac.icon, "pi")}On this computer</p><p class="pd">The desktop app. Click and run.</p>${desk}</div>
+    <div class="path srv"><p class="pl">${termIc.replace('class=""', 'class="pi"')}On a server, over SSH</p><p class="pd">No screen needed. Paste this in your SSH session.</p>
+      <div class="mini"><span class="prompt" aria-hidden="true">$</span><code>${HLshow}</code>${copyBtn(HL, "Copy", "copy")}</div>
+      <p class="fine">Mac mini, AMD Ryzen AI Max or Jetson · <a href="#start">Step by step</a></p></div>
+  </div>`;
+
+  // Requirements, one platform at a time (radio pills; works without JS).
+  const reqBlock = (group: string, items: { p: Platform; label: string }[], pick: Platform, steps: boolean) =>
+    `<div class="rpick" role="radiogroup" aria-label="Show requirements for">${items.map(({ p, label }) =>
+      `<label><input type="radio" name="${group}" value="${p}"${p === pick ? " checked" : ""}>${label}</label>`).join("")}</div>` +
+    items.map(({ p }) => `<div class="req" data-p="${p}"><h4>${INFO[p].name} <span>${INFO[p].arch}</span></h4>
+      <ul class="needs">${INFO[p].needs.map((n) => `<li>${n}</li>`).join("")}</ul>
+      ${steps ? `<ol class="steps">${INFO[p].steps.map((n) => `<li>${n}</li>`).join("")}</ol>` : ""}</div>`).join("");
+  const reqCss = PLATFORMS.map((p) => `.reqs:has(input[value="${p}"]:checked) .req[data-p="${p}"]`).join(",") + "{display:block}";
+  const appItems = APPS.map((p) => ({ p, label: INFO[p].name }));
+
+  const row = (p: Platform) => {
+    const b = rel?.[p];
+    return `<div class="r${p === me ? " me" : ""}">${svg(INFO[p].icon, "ai")}<span class="rn"><b>${INFO[p].name}${p === me ? `<span class="you">This machine</span>` : ""}</b><small>${meta(p)}</small></span>${
+      b ? `<a class="ob" data-dl data-p="${p}" href="/download/${SLUG[p]}" aria-label="Download for ${INFO[p].name}">Download</a>` : `<span class="ob off">Soon</span>`}</div>`;
   };
+  // The server walk-through, as one terminal session.
+  const line = (c: string, cmd: string, copy = true, show = cmd) =>
+    `<div class="sl"><span class="sc"># ${c}</span><div class="sx"><span class="prompt" aria-hidden="true">$</span><code>${show}</code>${copy ? copyBtn(cmd, "", "cp") : ""}</div></div>`;
+  const win = me === "windows";
+  const tab = (v: string, label: string, icons: string[], on: boolean) =>
+    `<label class="tab"><input type="radio" name="sys" value="${v}"${on ? " checked" : ""}>${icons.map((i) => svg(i, "ti")).join("")}<span>${label}</span></label>`;
+  const TOKEN = "https://dashboard.podtorrent.com/operator?run=app";
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Download PodTorrent</title>
-<meta name="description" content="Download PodTorrent for macOS, Windows and Linux (desktop or headless).">
+<meta name="description" content="Download PodTorrent for macOS, Windows and Linux, or install it on a server over SSH.">
 <style>
-${STYLE}</style></head><body><main>
-${SITE_NAV}
-<div class="hero">${LOGO}
-<h1>Download PodTorrent</h1></div>
-<p class="lead">Run large language models together. Each machine holds a slice of the model's layers, and peers on macOS, Windows and Linux join the same chains over the internet.</p>
-${rel ? `<span class="rel">Latest release v${esc(rel.version)} · ${esc(rel.date)}</span>` : ""}
-<div class="grid">${PLATFORMS.map(card).join("")}</div>
-<section class="how"><h3>Install from a terminal</h3>
-<p>macOS and Linux: picks the right build for this machine (desktop app, or over SSH the headless build for Apple Silicon or AMD Ryzen AI Max), checks it and installs it. Run it again to update.</p>
-<code class="cmd">curl -fsSL @ORIGIN@/install.sh | sh</code>
-<p style="margin-top:12px">Windows (PowerShell):</p>
-<code class="cmd">irm @ORIGIN@/install.ps1 | iex</code>
-<p class="links">Direct links: ${Object.keys(BUILDS).map((n) => `<a href="/download/${n}">${n}</a>`).join(" · ")}</p>
+${STYLE}${reqCss}</style></head><body class="dl">
+<header class="top"><div class="in"><a class="brand" href="https://podtorrent.com/">${LOGO}PodTorrent</a>
+<nav aria-label="PodTorrent sites"><a href="https://docs.podtorrent.com/">Docs</a><a href="https://podtorrent.com/register-node">Run a node</a><a href="https://playground.podtorrent.com/">Playground</a><a href="https://dashboard.podtorrent.com/">Dashboard</a></nav></div></header>
+<main>
+<section class="hx">
+  ${rel ? `<a class="pill" href="#new"><b>v${esc(rel.version)}</b>Released ${esc(rel.date)}</a>` : ""}
+  <h1>Download PodTorrent</h1>
+  <p class="sub">Run large AI models together.<br>Every machine serves a slice, and peers join over the internet.</p>
+  ${hero}
 </section>
-${rel?.notes ? `<div class="notes"><h3>What's new</h3><pre>${esc(rel.notes)}</pre></div>` : ""}
-<div class="how"><h3>Setting up</h3><p>The first launch downloads the inference engine and its dependencies (a few GB on Windows and Linux) into your home folder. After that, pick which layers to serve and your machine joins the swarm.</p></div>
-<a class="how guide-link" href="/download/guide"><div><h3>How to use PodTorrent</h3><p>A short tour with screenshots: name your machine, choose which layers it serves, see your peers, check which models can run, and chat with a model the whole swarm serves together. It also covers serving the PodTorrent network and fixing common problems.</p></div><span class="go" aria-hidden="true">→</span></a>
-<footer>SHA-256 checksums: <code>/download/&lt;name&gt;.sha256</code>. Older builds: <code>/download/v/&lt;version&gt;/&lt;platform&gt;</code>.<br>Setting up a node for the PodTorrent network? Read the <a href="https://docs.podtorrent.com/getting-started/node-quickstart">node quickstart</a>.</footer>
+<section class="start" id="start">
+  <div class="intro"><h2>Get started</h2>
+    <p>Two steps on each machine you want to add.</p>
+    <ol class="flow">
+      <li><b>Install PodTorrent</b><span>One line over SSH, or the desktop app.</span></li>
+      <li><b>Get your node token</b><span>Sign in with your email. About a minute.</span><a class="tk" href="${TOKEN}">Get your node token →</a></li>
+      <li><b>Serve together</b><span>The machine picks its layers and joins your peers.</span></li>
+    </ol></div>
+  <div class="cards">
+    <article class="pc" id="desktop"><h3>Desktop app</h3><p>Click and run. Downloads models for you and pools machines for big models.</p>
+      ${APPS.map(row).join("")}
+      <div class="term dterm">
+        <div class="tbar"><span class="tt">Or in a terminal</span>
+          <div class="tabs" role="radiogroup" aria-label="Your system">${tab("sh", "macOS · Linux", [INFO.mac.icon, INFO.linux.icon], !win)}${tab("ps", "Windows", [INFO.windows.icon], win)}</div>
+          ${copyBtn(win ? PS : SH, "Copy", "copy dcopy")}</div>
+        <div class="tbody"><span class="prompt" id="prompt" aria-hidden="true">${win ? "PS>" : "$"}</span><code id="cmd">${win ? PS : SH}</code></div>
+      </div>
+    </article>
+    <article class="pc" id="server"><h3>Server over SSH <span class="you">No screen needed</span></h3>
+      <p>For a Mac mini, an AMD Ryzen AI Max box or a Jetson. Installs the <code>podtorrent</code> command, no app.</p>
+      <div class="term sess">
+        <div class="tbar"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="tt">your-server — ssh</span></div>
+        <div class="sb">
+          ${line("1. From your computer, connect", "ssh you@your-server", false)}
+          ${line("2. Install (no root needed)", HL, true, HLshow)}
+          ${line("3. Check the machine, pick layers, start serving", "podtorrent setup")}
+          ${line("Watch it live", "podtorrent top")}
+        </div>
+      </div>
+      <p class="hint">Run step 2 again to update. On a Mac, <code>podtorrent install-service --at-boot</code> starts it at boot with nobody logged in.</p>
+    </article>
+  </div>
+</section>
+<section class="start" id="requirements">
+  <div class="intro"><h2>Requirements</h2>
+    <p>Check these before you install. If something doesn't start, the steps here do it by hand.</p></div>
+  <div class="pc reqs">
+    <div class="rq" id="rq-app">${reqBlock("req", appItems, me || "mac", true)}</div>
+    <div class="rq" id="rq-srv">${reqBlock("sreq", SERVERS, "mac-cli", false)}
+      <p class="hint">Linux PC with an NVIDIA GPU? There's no headless build for it yet: use the desktop app.</p></div>
+  </div>
+</section>
+${rel?.notes ? `<section class="start" id="new"><div class="intro"><h2>What's new</h2><p>v${esc(rel.version)} · ${esc(rel.date)}</p></div><div class="pc notes2"><pre>${esc(rel.notes)}</pre></div></section>` : ""}
+<footer>New to PodTorrent? <a href="/download/guide">How to use PodTorrent</a>, a short tour with screenshots.<br>SHA-256 checksums: <code>/download/&lt;name&gt;.sha256</code>. Older builds: <code>/download/v/&lt;version&gt;/&lt;platform&gt;</code>.<br>Setting up a node for the PodTorrent network? Read the <a href="https://docs.podtorrent.com/getting-started/node-quickstart">node quickstart</a>.</footer>
 </main>
+<div class="toast" id="toast" role="status" hidden>
+  <span class="nb" aria-hidden="true">✓</span>
+  <div class="nt"><b id="tt">Your download has started</b><span>Next: get your node token so this machine can join.</span></div>
+  <a class="go-btn" href="${TOKEN}">Get your node token →</a>
+  <button type="button" class="tx" id="tx" aria-label="Close">×</button>
+</div>
 <script>
-const ua = navigator.userAgent, os = /Windows/.test(ua) ? "windows" : /Mac/.test(ua) && !/iPhone|iPad/.test(ua) ? "mac" : /Linux/.test(ua) && !/Android/.test(ua) ? "linux" : "";
-const el = os && document.querySelector('.card[data-os="' + os + '"]');
-if (el) { el.classList.add("me"); el.parentNode.prepend(el); }
+const CMDS = { sh: ${JSON.stringify(SH)}, ps: ${JSON.stringify(PS)} };
+const $ = (id) => document.getElementById(id);
+document.querySelector(".tabs").addEventListener("change", (e) => {
+  const v = e.target.value;
+  $("cmd").textContent = CMDS[v]; document.querySelector(".dcopy").dataset.copy = CMDS[v];
+  $("prompt").textContent = v === "ps" ? "PS>" : "$";
+});
+// Desktop app or headless: /download#server opens on headless, and switching updates the link.
+const fromHash = () => { if (location.hash === "#server") $("m-srv").checked = true; else if (location.hash === "#desktop") { $("m-app").checked = true; $("start").scrollIntoView(); } };
+fromHash(); addEventListener("hashchange", fromHash);
+document.querySelectorAll("input[name=mode]").forEach((r) => r.addEventListener("change", () =>
+  history.replaceState(null, "", $("m-srv").checked ? "#server" : location.pathname + location.search)));
+document.querySelectorAll(".sw").forEach((l) => l.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); l.click(); }
+}));
+// iPads say "Macintosh": send them to the full list instead.
+if ($("cta") && /Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1) {
+  $("cta").removeAttribute("data-dl"); $("cta").href = "#desktop"; $("cta").textContent = "See desktop downloads"; $("fine").textContent = "For macOS, Windows and Linux.";
+}
+// After a download or an install command is copied, point them at their node token.
+const next = (t) => { $("tt").textContent = t; $("toast").hidden = false; };
+document.querySelectorAll("a[data-dl]").forEach((a) => a.addEventListener("click", () => {
+  next("Your download has started");
+  const r = document.querySelector('input[name=req][value="' + a.dataset.p + '"]'); if (r) r.checked = true;
+}));
+$("tx").addEventListener("click", () => { $("toast").hidden = true; });
+const says = (t) => (/headless|^podtorrent|^ssh/.test(t) ? "Copied. Paste it in your SSH session" : "Copied. Paste it in a terminal");
+document.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
+  const t = b.dataset.copy, s = b.querySelector("span"), was = s.textContent;
+  try { await navigator.clipboard.writeText(t); b.classList.add("ok"); if (was) s.textContent = "Copied"; } catch { if (was) s.textContent = "Select it"; }
+  setTimeout(() => { b.classList.remove("ok"); s.textContent = was; }, 1500);
+  if (t.includes("install.")) next(says(t));
+}));
+document.addEventListener("copy", () => { const t = getSelection()?.toString() ?? ""; if (t.includes("install.")) next(says(t)); });
 </script></body></html>`;
-  return new Response(html.replaceAll("@ORIGIN@", origin), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } });
+  return new Response(html.replaceAll("@ORIGIN@", origin), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache", vary: "user-agent" } });
 }
 
 /** The installers download from the origin that served them: no download server is baked into the repo. */
