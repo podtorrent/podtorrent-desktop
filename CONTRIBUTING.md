@@ -30,9 +30,10 @@ builds only, so a fork or a source checkout runs its own:
    Worker's `wss://` URL and `matchmakers` to the public key above. Leave `networks` out unless you run a
    PodTorrent-network API for [podtorrent-agent](https://github.com/podtorrent/podtorrent-agent).
    The file is gitignored; `app/scripts/bundle-backend.js` copies it into app and headless builds.
-3. **Downloads site** (optional). `downloads/` serves builds from an R2 bucket. Set its `routes` and
-   `bucket_name` in `wrangler.jsonc` to your own. The installers it serves download from whatever origin
-   served them.
+3. **Downloads** (optional). `downloads/scripts/publish.js` uploads builds to an R2 bucket (set `BUCKET`
+   to your own). The download page and installer URLs (`/download`, `/install.sh`, `/install.ps1`) are served
+   by the podtorrent.com site Worker, which reads that bucket; for a fork, serve the bucket and
+   `install/install.sh` from your own site (the installers take `PODTORRENT_BASE_URL`).
 4. **CI.** In your fork's repository secrets, set `PODTORRENT_ENDPOINTS` (the contents of your
    endpoints.json), and `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` if you publish to R2. Without
    `PODTORRENT_ENDPOINTS`, branch builds work but have no servers; release tags (`v*`) fail.

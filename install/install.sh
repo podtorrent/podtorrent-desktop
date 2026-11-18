@@ -27,7 +27,7 @@
 # POSIX sh on purpose: `| sh` is dash on Ubuntu and Debian.
 set -eu
 
-# The downloads Worker that serves this script fills in its own origin (downloads/src/index.ts).
+# The site that serves this script (podtorrent.com) fills in its own origin.
 BASE="${PODTORRENT_BASE_URL:-@PODTORRENT_BASE_URL@}"
 INSTALL_DIR="${PODTORRENT_INSTALL_DIR:-$HOME/.local/share/podtorrent}"
 BIN_DIR="${PODTORRENT_BIN_DIR:-$HOME/.local/bin}"

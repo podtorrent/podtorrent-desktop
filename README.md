@@ -193,7 +193,7 @@ curl -fsSL https://podtorrent.com/install.sh | sh     # picks the AMD or Jetson 
 podtorrent setup
 ```
 
-`install.sh` (`install/install.sh`, served by the downloads Worker) installs the headless build in `~/.local/share/podtorrent` and puts `podtorrent` in `~/.local/bin`; running it again updates. For a manual download: `wget https://podtorrent.com/download/linux-x64-rocm-headless.tar.gz` (its checksum is at `/download/linux-x64-rocm-headless.sha256`).
+`install.sh` (`install/install.sh`, served at podtorrent.com/install.sh by the podtorrent.com site) installs the headless build in `~/.local/share/podtorrent` and puts `podtorrent` in `~/.local/bin`; running it again updates. For a manual download: `wget https://podtorrent.com/download/linux-x64-rocm-headless.tar.gz` (its checksum is at `/download/linux-x64-rocm-headless.sha256`).
 
 `setup` walks through the first run: it checks the machine, installs PyTorch for the GPU and tests it, asks for the name other peers see, starts the peer as a systemd user service, suggests a model and the layers this machine should serve (the swarm's missing layers, sized to free GPU memory), downloads them, and offers to join the PodTorrent network (production; `--network staging` for staging). Run it again any time to add a slice. Scripted install:
 
@@ -464,7 +464,7 @@ flowchart LR
 | `headless/` | The headless launcher (Linux and macOS), packaging, end-to-end tests and its user guide |
 | `install/` | The `install.sh` and `install.ps1` installers |
 | `rendezvous/` | The Cloudflare Worker that keeps the peer registry and signs public pods |
-| `downloads/` | The Cloudflare Worker that serves builds from R2 (`src/builds.json` is the naming standard) |
+| `downloads/` | `publish.js`, which uploads builds to R2 (`src/builds.json` is the naming standard). The download page is served by the podtorrent.com site |
 | `ios/` | The iOS peer's core (Swift package `PodTorrentKit`) |
 | `tests/` | Parity, golden-output, routing, pod, API and kernel tests |
 | `scripts/bench_torch.py` | PyTorch slice benchmark |

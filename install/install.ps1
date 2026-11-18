@@ -7,7 +7,7 @@
 # settings are kept.
 #
 # Environment (optional): PODTORRENT_FILE=PATH installs a local installer instead of downloading (tests);
-# PODTORRENT_BASE_URL overrides the download server (the downloads Worker that serves this script fills in its own).
+# PODTORRENT_BASE_URL overrides the download server (the site that serves this script, podtorrent.com, fills in its own).
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is many times slower with the progress bar
