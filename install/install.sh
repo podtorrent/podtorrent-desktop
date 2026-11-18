@@ -13,7 +13,8 @@
 #   linux-x64-rocm-headless   no display (e.g. over SSH) on AMD Ryzen AI Max: the `podtorrent` command
 #   linux-arm64-jetson-headless   NVIDIA Jetson (AGX Orin, JetPack 6 or 7), headless: the `podtorrent` command
 # On Linux, a local desktop session (DISPLAY or WAYLAND_DISPLAY) means the desktop app; over SSH or with
-# no display, headless. On macOS, over SSH means headless; otherwise the app.
+# no display, headless. On macOS, over SSH, with nobody logged in at the screen, or with no screen
+# attached means headless; otherwise the app.
 # The download's SHA-256 is checked. No root needed. Run it again to update: the previous version is
 # kept (".old"), and a running headless service is restarted on the new one. Models and settings in
 # ~/.podtorrent are never touched.
@@ -64,9 +65,17 @@ if [ -z "$BUILD" ]; then
   case "$os" in
     Darwin)
       [ "$arch" = arm64 ] || die "PodTorrent for macOS needs an Apple Silicon Mac (M1 or later); this one is $arch"
-      if [ -z "$MODE" ] && [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]; then
-        MODE=headless
-        say "over SSH: installing the headless build (the \`podtorrent\` command); add --desktop for the app"
+      if [ -z "$MODE" ]; then
+        # Headless: over SSH, nobody logged in at the screen (e.g. MDM or cron), or no screen attached.
+        console_user="$(stat -f %Su /dev/console 2>/dev/null || true)"
+        if [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}" ]; then
+          MODE=headless why="over SSH"
+        elif [ -z "$console_user" ] || [ "$console_user" = root ] || [ "$console_user" = loginwindow ]; then
+          MODE=headless why="nobody is logged in at the screen"
+        elif ! system_profiler SPDisplaysDataType 2>/dev/null | grep -q 'Resolution:'; then
+          MODE=headless why="no screen is attached"
+        fi
+        [ "$MODE" = headless ] && say "$why: installing the headless build (the \`podtorrent\` command); add --desktop for the app"
       fi
       if [ "$MODE" = headless ]; then BUILD=macos-arm64-headless; else BUILD=macos-arm64; fi ;;
     Linux)
